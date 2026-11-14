@@ -1,4 +1,4 @@
-# InputPrint
+# Inquisitor
 
 ## Continuous Behavioral Authentication for Windows PCs
 
@@ -12,17 +12,17 @@
 
 ## 1. Executive Summary
 
-**InputPrint** is an opt-in, continuous authentication system that learns how a particular person normally interacts with their Windows computer. A small desktop application runs in the background and measures *keyboard input behavior*—for example, how long keys are held, how quickly successive keystrokes occur, how consistently the person types, and how often they pause. It does **not** record what keys produce, the words being typed, passwords, or the text displayed on screen.
+**Inquisitor** is an opt-in, continuous authentication system that learns how a particular person normally interacts with their Windows computer. A small desktop application runs in the background and measures *keyboard input behavior*—for example, how long keys are held, how quickly successive keystrokes occur, how consistently the person types, and how often they pause. It does **not** record what keys produce, the words being typed, passwords, or the text displayed on screen.
 
 The user creates an account in a web application, links their PC, and completes an enrollment period. During enrollment, the Windows agent converts activity into small numerical feature summaries and sends those summaries to a backend. The backend trains a user-specific machine learning model. During subsequent normal PC use, the desktop agent periodically sends new summaries. The backend scores these against the enrolled user's baseline and returns a risk assessment. The web dashboard shows monitoring status, authentication confidence trends, and alerts when behavior deviates significantly from the baseline.
 
 **Primary question:** *Does the current input behavior resemble the enrolled user's usual behavior, or is it sufficiently unusual to warrant re-verification?*
 
-**Important distinction:** InputPrint detects **behavioral anomalies**. It should not claim to know which other person used the computer, conclusively prove an account takeover, or replace strong authentication such as passwords, passkeys, or MFA. Changes in fatigue, injury, keyboard, task type, and environment may legitimately alter typing patterns.
+**Important distinction:** Inquisitor detects **behavioral anomalies**. It should not claim to know which other person used the computer, conclusively prove an account takeover, or replace strong authentication such as passwords, passkeys, or MFA. Changes in fatigue, injury, keyboard, task type, and environment may legitimately alter typing patterns.
 
 ### One-sentence pitch
 
-> Your password proves who logged in. InputPrint checks whether the person still using the PC behaves like you—without reading what you type.
+> Your password proves who logged in. Inquisitor checks whether the person still using the PC behaves like you—without reading what you type.
 
 ### Why this is a compelling hackathon project
 
@@ -68,7 +68,7 @@ The user creates an account in a web application, links their PC, and completes 
 
 ### 3.1 First-time setup
 
-1. A person visits the InputPrint website and creates an account.
+1. A person visits the Inquisitor website and creates an account.
 2. They log in and see an empty dashboard with an **Add PC** action.
 3. The website explains exactly what will be measured and what will *never* be collected.
 4. The user installs and opens the Windows desktop agent.
@@ -78,7 +78,7 @@ The user creates an account in a web application, links their PC, and completes 
 
 ### 3.2 Enrollment
 
-1. The dashboard explains that InputPrint needs several short samples of the user's natural typing.
+1. The dashboard explains that Inquisitor needs several short samples of the user's natural typing.
 2. The user completes one or more ordinary typing activities while the background agent collects *timing-only* data.
 3. Every 30–60 seconds, or after a sufficient number of keystrokes, the agent calculates aggregate feature windows.
 4. The agent transmits those feature windows; no typed text or per-keystroke sequence leaves the PC.
@@ -105,7 +105,7 @@ The user creates an account in a web application, links their PC, and completes 
 
 ### 3.4 User account versus OS account
 
-The **InputPrint website login** controls access to enrollment, devices, model management, and history. It is **not** the Windows logon mechanism. In the MVP, an unusual pattern creates a dashboard alert or an application-level request to re-verify identity. Operating-system lock and enterprise policy integration are future possibilities, not assumed capabilities.
+The **Inquisitor website login** controls access to enrollment, devices, model management, and history. It is **not** the Windows logon mechanism. In the MVP, an unusual pattern creates a dashboard alert or an application-level request to re-verify identity. Operating-system lock and enterprise policy integration are future possibilities, not assumed capabilities.
 
 ---
 
@@ -638,7 +638,7 @@ Windows Raw Input supports registered background keyboard/mouse events, and Micr
 ## 12. Repository Layout (Illustrative)
 
 ```text
-inputprint/
+Inquisitor/
 ├── README.md
 ├── docs/
 │   ├── architecture.md
@@ -792,7 +792,7 @@ This plan assumes a small team. One developer can own the **PC agent/data pipeli
 
 **0:00–0:20 — Problem**
 
-> "A password tells us who signed in, but not necessarily who's still using the computer later. InputPrint attempts to recognize unusual behavior from the way someone types, without recording the text itself."
+> "A password tells us who signed in, but not necessarily who's still using the computer later. Inquisitor attempts to recognize unusual behavior from the way someone types, without recording the text itself."
 
 **0:20–0:45 — Privacy and architecture**
 
@@ -896,6 +896,6 @@ Pick the Windows agent implementation first and build a **tiny proof of concept*
 
 ---
 
-**Working project name:** InputPrint  
+**Working project name:** Inquisitor  
 **Core promise:** *Learn how you interact, not what you type.*  
 **MVP boundary:** Windows PC background agent + login/enrollment website + authenticated backend + user-trained anomaly detector + dashboard alerts.
