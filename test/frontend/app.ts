@@ -12,7 +12,13 @@ const modes: Mode[] = [
 ];
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 const grid = $("#gameGrid");
-grid.innerHTML = modes.map(m => `<article class="game-card"><div class="card-copy"><h3>${m.name}</h3><p>${m.description}</p><div class="card-bottom"><span>${m.keys}</span><button class="play-button" data-game="${m.id}" aria-label="Play ${m.name}">Play</button></div></div></article>`).join("");
+function gamePreview(id: GameId) {
+  if (id === "aim") return `<div class="game-preview preview-aim" aria-hidden="true"><i></i><i></i><span>+</span><b></b></div>`;
+  if (id === "tetris") return `<div class="game-preview preview-tetris" aria-hidden="true">${Array.from({ length: 20 }, (_, i) => `<i class="preview-cell${[1, 2, 5, 6, 7, 11, 12, 16, 17, 18].includes(i) ? " filled" : ""}"></i>`).join("")}</div>`;
+  if (id === "typing") return `<div class="game-preview preview-typing" aria-hidden="true"><small>TYPE THIS WORD</small><strong><i>OR</i>BIT</strong><span>3 WORDS CLEARED</span></div>`;
+  return `<div class="game-preview preview-arena" aria-hidden="true"><i class="preview-ship"></i><b></b><b></b><span></span></div>`;
+}
+grid.innerHTML = modes.map(m => `<article class="game-card">${gamePreview(m.id)}<div class="card-copy"><h3>${m.name}</h3><p>${m.description}</p><div class="card-bottom"><span>${m.keys}</span><button class="play-button" data-game="${m.id}" aria-label="Play ${m.name}">Play</button></div></div></article>`).join("");
 
 const overlay = $("#gameOverlay"), stage = $("#gameStage");
 let active: GameId | null = null, sprint = false, running = false, remaining = 60, score = 0, tick = 0, timerId = 0, gravityTimerId = 0, animation = 0;
@@ -352,7 +358,7 @@ function updateArena(now: number) {
   context.beginPath(); context.arc(arenaAim.x, arenaAim.y, 9, 0, Math.PI * 2);
   context.moveTo(arenaAim.x - 13, arenaAim.y); context.lineTo(arenaAim.x + 13, arenaAim.y);
   context.moveTo(arenaAim.x, arenaAim.y - 13); context.lineTo(arenaAim.x, arenaAim.y + 13);
-  context.strokeStyle = "#8B5CF6"; context.stroke();
+  context.strokeStyle = "#C4B5FD"; context.stroke();
   animation = requestAnimationFrame(updateArena);
 }
 function endArena() {

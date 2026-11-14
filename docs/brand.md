@@ -5,9 +5,9 @@
 ## Brand direction
 
 Inquisitor should feel focused, capable, calm, and respectful of the user's
-privacy. The visual identity uses a near-black foundation, purple as the primary
-brand color, and green for restrained accents and positive states. Keep the
-interface clear and welcoming rather than ominous or surveillance-themed.
+privacy. The visual identity uses a near-black foundation with purple for
+primary actions and green for recurring highlights and positive states. Keep
+the interface clear and welcoming rather than ominous or surveillance-themed.
 
 ## Color palette
 
@@ -22,7 +22,8 @@ accessibility checks before treating them as final brand colors.
 | Border | `#393243` | Dividers and control boundaries |
 | Primary purple | `#7C3AED` | Primary buttons, selected controls, and key links |
 | Light purple | `#C4B5FD` | Purple text, icons, and highlights on dark surfaces |
-| Green accent | `#A3E635` | Focus details, positive feedback, and small highlights |
+| Green accent | `#A3E635` | Recurring highlights, focus details, and positive feedback |
+| Light green | `#D9F99D` | Supporting green text and icons on dark surfaces |
 | Primary text | `#F7F4FC` | Headlines and body text |
 | Secondary text | `#B9B3C4` | Supporting labels and descriptions |
 | Error | `#FB7185` | Errors and destructive warnings |
@@ -30,14 +31,12 @@ accessibility checks before treating them as final brand colors.
 
 ### Color use
 
-- Keep most of each screen near-black; use purple for the main action or current
-  selection, not as a large decorative fill everywhere.
-- Use green sparingly as an accent. Reserve it for positive status or a clear
-  interaction cue, not for unrelated decoration.
+- Keep most of each screen near-black; use purple for primary actions and green
+  for recurring highlights and clear interaction cues.
 - Use semantic error and warning colors consistently. Do not rely on color
   alone to communicate status; pair it with text, an icon, or another cue.
-- Use `#7C3AED` with light text for primary buttons. Use the lighter purple and
-  green values for foreground details on dark surfaces.
+- Use `#7C3AED` with light text for primary buttons. Use `#C4B5FD` and
+  `#A3E635` for foreground details on dark surfaces.
 - Check text, focus indicators, hover states, and disabled states for contrast
   before shipping. The proposed palette is not a substitute for testing.
 
@@ -57,7 +56,8 @@ production use.
 
 - Prefer simple layouts, clear hierarchy, and generous spacing over decorative
   effects.
-- Use restrained purple highlights and subtle borders to distinguish surfaces.
+- Use restrained purple and green highlights with subtle borders to distinguish
+  surfaces.
 - Keep icons simple and consistent in stroke weight. Do not use an icon as the
   only label for an important action.
 - Make keyboard focus visible, provide hover and pressed states, and respect
