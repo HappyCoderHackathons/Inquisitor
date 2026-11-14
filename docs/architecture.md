@@ -2,7 +2,7 @@
 
 This document resolves [issue #1](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/1).
 It supersedes the open stack options in sections 11 and 19 of the
-[original project specification](../InputPrint_Continuous_Behavioral_Authentication_Project_Spec.md).
+[original project specification](../Inquisitor_Continuous_Behavioral_Authentication_Project_Spec.md).
 These are implementation decisions, not claims that the integrations already work.
 
 ## Selected stack
