@@ -1,23 +1,53 @@
-type GameId = "aim" | "tetris" | "typing" | "wiki";
+type GameId = "aim" | "tetris" | "typing" | "arena";
 type Mode = { id: GameId; name: string; category: string; description: string; keys: string; icon: string; accent: string };
+type TetrisPiece = { type: number; shape: number[][]; x: number; y: number };
+type ArenaEnemy = { x: number; y: number; radius: number; speed: number };
+type ArenaBullet = { x: number; y: number; vx: number; vy: number };
+type ArenaPoint = { x: number; y: number };
 const modes: Mode[] = [
   { id: "aim", name: "Aim Trainer", category: "REFLEX / PRECISION", description: "Track the pulse. Hit as many targets as you can before they disappear.", keys: "MOUSE · A / RT", icon: "◎", accent: "coral" },
   { id: "tetris", name: "Block Stack", category: "SPATIAL / RHYTHM", description: "Rotate, slide, and clear lines as the stack picks up speed.", keys: "← → ↓ · A / B", icon: "▦", accent: "violet" },
   { id: "typing", name: "Word Sprint", category: "CADENCE / FLOW", description: "Type the shown words at your own pace. We only keep timing summaries.", keys: "KEYBOARD · GAMEPAD", icon: "⌁", accent: "mint" },
-  { id: "wiki", name: "Wiki Hop", category: "SEARCH / SWITCHING", description: "Navigate a tiny knowledge maze. Reach the goal using the fewest moves.", keys: "WASD · D-PAD", icon: "↗", accent: "amber" },
+  { id: "arena", name: "Arena Rush", category: "ARCADE / SURVIVAL", description: "Dodge incoming drones, aim with the mouse, and hold your ground.", keys: "WASD / ARROWS · MOUSE AIM · CLICK FIRE", icon: "✣", accent: "amber" },
 ];
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 const grid = $("#gameGrid");
 grid.innerHTML = modes.map((m, i) => `<article class="game-card ${m.accent}" style="--delay:${i * 70}ms"><div class="card-top"><span class="card-num">0${i + 1}</span><span class="tag">${m.category}</span></div><div class="card-art art-${m.id}"><span>${m.icon}</span><i></i><i></i><i></i></div><div class="card-copy"><h3>${m.name}</h3><p>${m.description}</p><div class="card-bottom"><span>${m.keys}</span><button class="play-button" data-game="${m.id}" aria-label="Play ${m.name}">↗</button></div></div></article>`).join("");
 
 const overlay = $("#gameOverlay"), stage = $("#gameStage");
-let active: GameId | null = null, sprint = false, running = false, remaining = 60, score = 0, tick = 0, timerId = 0, animation = 0;
+let active: GameId | null = null, sprint = false, running = false, remaining = 60, score = 0, tick = 0, timerId = 0, gravityTimerId = 0, animation = 0;
 let lastInput = 0, intervals: number[] = [], holds: number[] = [], down = new Map<string, number>();
-let inputCounts = { keyboard: 0, controller: 0 }, wordIndex = 0, wikiPos = 0, board: number[][] = [];
-const words = "orbit velvet lantern meadow copper drift mango pocket ripple comet garden signal".split(" ");
-const wordGoals = ["ORBIT", "VELVET", "LANTERN", "MEADOW", "COPPER", "DRIFT", "MANGO", "POCKET", "RIPPLE", "COMET", "GARDEN", "SIGNAL"];
+let inputCounts = { keyboard: 0, controller: 0 }, wordIndex = 0, linesCleared = 0, board: number[][] = [], currentPiece: TetrisPiece | null = null;
+let wordDeck: string[] = [];
+let arenaKeys = new Set<string>(), arenaEnemies: ArenaEnemy[] = [], arenaBullets: ArenaBullet[] = [];
+let arenaPlayer = { x: 360, y: 158 }, arenaAim = { x: 500, y: 158 }, arenaHull = 1;
+let arenaCanvas: HTMLCanvasElement | null = null, arenaLastFrame = 0, arenaLastSpawn = 0, arenaLastShot = 0;
+const arenaPlayerShape: ArenaPoint[] = [{ x: 15, y: 0 }, { x: -10, y: -9 }, { x: -7, y: 0 }, { x: -10, y: 9 }];
+const tetrominoes: number[][][] = [
+  [[1, 1, 1, 1]],
+  [[1, 1], [1, 1]],
+  [[0, 1, 0], [1, 1, 1]],
+  [[0, 1, 1], [1, 1, 0]],
+  [[1, 1, 0], [0, 1, 1]],
+  [[1, 0, 0], [1, 1, 1]],
+  [[0, 0, 1], [1, 1, 1]],
+];
+const wordGoals = ["ORBIT", "VELVET", "LANTERN", "MEADOW", "COPPER", "DRIFT", "MANGO", "POCKET", "RIPPLE", "COMET", "GARDEN", "SIGNAL", "BRIDGE", "CANDLE", "PLANET", "MARBLE", "RIVER", "CASTLE", "BREEZE", "PILLOW", "CLOUD", "SPARK", "FOREST", "BUTTON", "CIRCLE", "THUNDER", "PEBBLE", "SILVER", "HARBOR", "MELLOW", "JOURNEY", "ORANGE", "SPRING", "ANCHOR", "STREAM", "GALAXY"];
+function shuffleWords(previousDeck: string[] = []) {
+  const shuffled = [...wordGoals];
+  for (let index = shuffled.length - 1; index > 0; index--) {
+    const other = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[other]] = [shuffled[other], shuffled[index]];
+  }
+  const repeatsPreviousDeck = shuffled.every((word, index) => word === previousDeck[index]);
+  if (shuffled.length > 1 && (shuffled[0] === previousDeck[previousDeck.length - 1] || repeatsPreviousDeck)) {
+    [shuffled[0], shuffled[1]] = [shuffled[1], shuffled[0]];
+  }
+  return shuffled;
+}
+wordDeck = shuffleWords();
 function openGame(id: GameId, isSprint = false) {
-  active = id; sprint = isSprint; running = false; remaining = 60; score = 0; intervals = []; holds = []; down.clear(); inputCounts = { keyboard: 0, controller: 0 };
+  active = id; sprint = isSprint; running = false; remaining = 60; score = 0; intervals = []; holds = []; down.clear(); inputCounts = { keyboard: 0, controller: 0 }; wordIndex = 0; linesCleared = 0; board = []; currentPiece = null; arenaKeys.clear();
   const m = modes.find(x => x.id === id)!;
   $("#modalMode").textContent = isSprint ? "ARCADE SPRINT · ROTATING MODE" : m.category;
   $("#modalTitle").textContent = m.name; $("#gameTimer").textContent = "60"; $("#gameScore").textContent = "0";
@@ -25,37 +55,315 @@ function openGame(id: GameId, isSprint = false) {
   $("#startGame").classList.remove("hidden"); $("#startGame").textContent = "START GAME";
   stage.className = `game-stage stage-${id}`; renderStage(); overlay.classList.remove("hidden");
 }
-function instruction(id: GameId) { return ({ aim: "Click or tap each target", tetris: "Clear lines · ← → move · ↑ rotate", typing: "Type the word shown, then space", wiki: "Find the route to the goal" } as Record<GameId,string>)[id]; }
-function start() { if (!active) return; running = true; tick = Date.now(); $("#startGame").classList.add("hidden"); stage.focus(); timerId = window.setInterval(() => { if (!running) return; remaining--; $("#gameTimer").textContent = String(remaining); if (remaining <= 0) finish(); }, 1000); if (active === "aim") spawnTarget(); if (active === "tetris") initBoard(); renderStage(); }
-function finish() { running = false; clearInterval(timerId); cancelAnimationFrame(animation); saveSample(); if (sprint && active) { const next = modes[(modes.findIndex(x => x.id === active) + 1) % modes.length].id; openGame(next, true); start(); } else { $("#gameHint").textContent = `Round complete · ${score} points · sample saved`; $("#startGame").textContent = "PLAY AGAIN"; $("#startGame").classList.remove("hidden"); refreshSummary(); } }
-function close() { running = false; clearInterval(timerId); cancelAnimationFrame(animation); overlay.classList.add("hidden"); active = null; sprint = false; refreshSummary(); }
+function instruction(id: GameId) { return ({ aim: "Click or tap each target", tetris: "← → move · ↓ soft drop · ↑ rotate · SPACE hard drop", typing: "Type each word; correct letters turn green", arena: "Move with WASD or arrows; aim and fire with the mouse" } as Record<GameId,string>)[id]; }
+function start() {
+  if (!active) return;
+  clearInterval(timerId); clearInterval(gravityTimerId); cancelAnimationFrame(animation);
+  running = true; remaining = 60; score = 0; tick = Date.now(); intervals = []; holds = []; lastInput = 0; inputCounts = { keyboard: 0, controller: 0 }; wordIndex = 0; linesCleared = 0; arenaKeys.clear();
+  if (active === "typing") wordDeck = shuffleWords(wordDeck);
+  $("#gameTimer").textContent = "60"; $("#gameScore").textContent = "0"; $("#startGame").classList.add("hidden"); stage.focus();
+  if (active === "tetris") { initBoard(); gravityTimerId = window.setInterval(stepTetris, 650); }
+  if (active === "arena") {
+    arenaPlayer = { x: 360, y: 158 }; arenaAim = { x: 500, y: 158 }; arenaHull = 1;
+    arenaEnemies = []; arenaBullets = []; arenaLastFrame = 0; arenaLastSpawn = 0; arenaLastShot = 0;
+  }
+  renderStage();
+  if (active === "aim") spawnTarget();
+  timerId = window.setInterval(() => { if (!running) return; remaining--; $("#gameTimer").textContent = String(remaining); if (remaining <= 0) finish(); }, 1000);
+  if (active === "arena") animation = requestAnimationFrame(updateArena);
+}
+function finish() {
+  running = false; clearInterval(timerId); clearInterval(gravityTimerId); cancelAnimationFrame(animation); arenaKeys.clear(); saveSample();
+  if (sprint && active) { const next = modes[(modes.findIndex(x => x.id === active) + 1) % modes.length].id; openGame(next, true); start(); }
+  else { $("#gameHint").textContent = `Round complete · ${score} points · sample saved`; $("#startGame").textContent = "PLAY AGAIN"; $("#startGame").classList.remove("hidden"); refreshSummary(); }
+}
+function close() { running = false; clearInterval(timerId); clearInterval(gravityTimerId); cancelAnimationFrame(animation); arenaKeys.clear(); overlay.classList.add("hidden"); active = null; sprint = false; refreshSummary(); }
 $("#gameGrid").addEventListener("click", e => { const btn = (e.target as HTMLElement).closest("[data-game]") as HTMLElement | null; if (btn) openGame(btn.dataset.game as GameId); });
 $("#sprintBtn").addEventListener("click", () => openGame("aim", true)); $("#closeGame").addEventListener("click", close); $("#startGame").addEventListener("click", () => running ? start() : start());
 function recordInput(source: "keyboard"|"controller") { const now = performance.now(); if (lastInput) intervals.push(Math.min(now - lastInput, 3000)); lastInput = now; inputCounts[source]++; }
-window.addEventListener("keydown", e => { if (e.key === "Escape" && !overlay.classList.contains("hidden")) { close(); return; } if (!overlay.classList.contains("hidden") && running && active) { if (e.repeat) return; recordInput("keyboard"); down.set(e.code, performance.now()); handleAction(e.key, "keyboard"); if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key)) e.preventDefault(); } });
-window.addEventListener("keyup", e => { const t = down.get(e.code); if (t) { holds.push(Math.min(performance.now() - t, 2000)); down.delete(e.code); } });
-function handleAction(key: string, source: string) {
+window.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !overlay.classList.contains("hidden")) { close(); return; }
+  if (!overlay.classList.contains("hidden") && running && active) {
+    const key = e.key.toLowerCase();
+    if (active === "arena" && ["arrowleft", "arrowright", "arrowup", "arrowdown", "a", "d", "w", "s"].includes(key)) arenaKeys.add(key);
+    if (e.repeat) return;
+    recordInput("keyboard"); down.set(e.code, performance.now()); handleAction(e.key);
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) e.preventDefault();
+  }
+});
+window.addEventListener("keyup", e => {
+  arenaKeys.delete(e.key.toLowerCase());
+  const t = down.get(e.code); if (t) { holds.push(Math.min(performance.now() - t, 2000)); down.delete(e.code); }
+});
+function handleAction(key: string) {
   if (!active) return;
   if (active === "aim") { if (key === " " || key.toLowerCase() === "a") hitTarget(); }
-  if (active === "tetris") { if (["ArrowLeft","a","A"].includes(key)) move(-1); if (["ArrowRight","d","D"].includes(key)) move(1); if (["ArrowDown","s","S"].includes(key)) drop(); if (["ArrowUp","w","W"," "].includes(key)) rotate(); }
-  if (active === "typing" && key === " ") { score += 10; wordIndex++; renderStage(); }
-  if (active === "wiki") { const d: Record<string,number> = { ArrowRight:1,d:1,D:1,ArrowDown:4,s:4,S:4,ArrowLeft:-1,a:-1,A:-1,ArrowUp:-4,w:-4,W:-4 }; wikiPos = Math.max(0, Math.min(15, wikiPos + (d[key] || 0))); score++; renderStage(); if (wikiPos === 15) { score += 20; wikiPos = 0; renderStage(); } }
+  if (active === "tetris") {
+    if (["ArrowLeft", "a", "A"].includes(key)) moveTetris(-1);
+    if (["ArrowRight", "d", "D"].includes(key)) moveTetris(1);
+    if (["ArrowDown", "s", "S"].includes(key)) stepTetris();
+    if (["ArrowUp", "w", "W"].includes(key)) rotateTetris();
+    if (key === " ") hardDropTetris();
+  }
 }
 function renderStage() {
   if (!active) return;
   if (active === "aim") { stage.innerHTML = `<div class="aim-field"><div class="aim-cross">+</div><div class="target" id="target" aria-label="target"></div><div class="aim-caption">CLICK THE TARGET</div></div>`; $("#target")?.addEventListener("click", hitTarget); }
-  if (active === "typing") { const w = wordGoals[wordIndex % wordGoals.length]; stage.innerHTML = `<div class="typing-game"><div class="word-label">TYPE THIS WORD</div><div class="word-prompt">${w.split("").map((c,i)=>`<span class="${i===0?"next-letter":""}">${c}</span>`).join("")}</div><div class="type-progress">${wordIndex} WORDS CLEARED <span>·</span> PRESS SPACE WHEN DONE</div><input class="typing-input" id="typingInput" autocomplete="off" autocapitalize="characters" placeholder="start typing here…" aria-label="Type the prompt" /></div>`; const input = $("#typingInput") as HTMLInputElement; input.focus(); input.addEventListener("input", () => { recordInput("keyboard"); const desired = w; if (input.value.trim().toUpperCase() === desired) { score += 10; wordIndex++; renderStage(); } }); }
-  if (active === "wiki") { const tiles = ["START","MAP","FIND","LINK","FACT","IDEA","PAGE","OPEN","SEARCH","CLUE","JUMP","NOTE","READ","PATH","KNOW","GOAL"]; stage.innerHTML = `<div class="wiki-board">${tiles.map((t,i)=>`<div class="wiki-tile ${i===wikiPos?"player":""} ${i===15?"goal":""}">${i===wikiPos?"YOU":t}</div>`).join("")}</div><div class="wiki-caption">Use arrow keys or D-pad to explore the links</div>`; }
-  if (active === "tetris") { if (!board.length) initBoard(); stage.innerHTML = `<div class="tetris-wrap"><div class="tetris-board">${board.flat().map(v=>`<i class="cell ${v?"filled":""}"></i>`).join("")}</div><div class="tetris-aside"><b>${score}</b><span>POINTS</span><hr><span>LINES</span><b>${Math.floor(score / 100)}</b><small>← → MOVE<br>↑ ROTATE<br>↓ DROP</small></div></div>`; }
+  if (active === "typing") {
+    const word = wordDeck[wordIndex];
+    stage.innerHTML = `<div class="typing-game"><div class="word-label">TYPE THIS WORD</div><div class="word-prompt">${word.split("").map(letter => `<span>${letter}</span>`).join("")}</div><div class="type-progress">${wordIndex} WORDS CLEARED <span>·</span> CORRECT LETTERS TURN GREEN</div><input class="typing-input" id="typingInput" maxlength="${word.length}" autocomplete="off" autocapitalize="characters" placeholder="start typing here…" aria-label="Type the prompt" /></div>`;
+    const input = $("#typingInput") as HTMLInputElement;
+    const letters = stage.querySelectorAll(".word-prompt span");
+    let completionPending = false;
+    const updateLetters = () => {
+      if (!running) return;
+      const typed = input.value.toUpperCase();
+      letters.forEach((letter, index) => {
+        const correct = index < typed.length && typed[index] === word[index];
+        letter.className = correct ? "correct-letter" : index < typed.length ? "incorrect-letter" : "";
+      });
+      letters[Math.min(input.value.length, word.length - 1)]?.classList.add("current-letter");
+      if (typed === word && !completionPending) {
+        completionPending = true;
+        window.setTimeout(() => {
+          if (running && active === "typing" && input.isConnected && input.value.toUpperCase() === word) {
+            score += 10; wordIndex++;
+            if (wordIndex === wordDeck.length) { wordDeck = shuffleWords(wordDeck); wordIndex = 0; }
+            renderStage();
+          }
+        }, 250);
+      }
+    };
+    input.addEventListener("input", updateLetters);
+    input.focus();
+    updateLetters();
+  }
+  if (active === "arena") {
+    stage.innerHTML = `<div class="arena-game"><div class="arena-hud"><span>WASD / ARROWS MOVE</span><span>MOUSE AIM · LEFT CLICK FIRE</span><b id="arenaHull">HULL 1</b></div><canvas class="arena-canvas" id="arenaCanvas" width="720" height="316" aria-label="Arena game field"></canvas></div>`;
+    arenaCanvas = $("#arenaCanvas") as HTMLCanvasElement;
+    const updateAim = (event: PointerEvent) => {
+      if (!arenaCanvas) return;
+      const bounds = arenaCanvas.getBoundingClientRect();
+      arenaAim = {
+        x: (event.clientX - bounds.left) * arenaCanvas.width / bounds.width,
+        y: (event.clientY - bounds.top) * arenaCanvas.height / bounds.height,
+      };
+    };
+    arenaCanvas.addEventListener("pointermove", updateAim);
+    arenaCanvas.addEventListener("pointerdown", event => {
+      if (event.pointerType === "mouse" && event.button === 0) { updateAim(event); fireArena(); event.preventDefault(); }
+    });
+  }
+  if (active === "tetris") renderTetris();
 }
-function spawnTarget() { const target = $("#target"); if (!target) return; target.style.left = `${12 + Math.random()*76}%`; target.style.top = `${12 + Math.random()*70}%`; target.style.transform = `scale(${.72 + Math.random()*.55})`; }
+function spawnTarget() { const target = $("#target"); if (!target) return; target.style.left = `${8 + Math.random() * 84}%`; target.style.top = `${10 + Math.random() * 76}%`; target.style.transform = `translate(-50%, -50%) scale(${1.15 + Math.random() * .45})`; }
 function hitTarget() { if (!running || active !== "aim") return; score += 10; $("#gameScore").textContent = String(score); spawnTarget(); }
-function initBoard() { board = Array.from({length:16},()=>Array(10).fill(0)); board[0][4] = 1; }
-function move(dx:number) { const c = board[0].indexOf(1); board[0].fill(0); board[0][Math.max(0,Math.min(9,c+dx))] = 1; renderStage(); }
-function rotate() { const c = board[0].indexOf(1); board[0].fill(0); board[1][c] = 1; renderStage(); }
-function drop() { const r = board.findIndex(row => row.includes(1)); const c = board[r]?.indexOf(1) ?? 4; board[r][c] = 0; if (r < 15) board[r+1][c] = 1; else { board[15][c] = 1; board.unshift(Array(10).fill(0)); board.pop(); score += 20; $("#gameScore").textContent = String(score); } renderStage(); }
-function saveSample() { const avg = (a:number[]) => a.length ? a.reduce((x,y)=>x+y,0)/a.length : 0; const mean = avg(intervals), std = Math.sqrt(avg(intervals.map(x => (x-mean)**2))); const d = { game: active, duration_ms: 60000, input_count: inputCounts.keyboard + inputCounts.controller, keyboard_count: inputCounts.keyboard, controller_count: inputCounts.controller, mean_interval_ms: Math.round(mean), interval_std_ms: Math.round(std), mean_hold_ms: Math.round(avg(holds)), score, source: inputCounts.controller ? "mixed" : "keyboard" }; void fetch("/api/samples", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(d) }).then(refreshSummary).catch(()=>{}); }
+function initBoard() {
+  board = Array.from({ length: 20 }, () => Array(10).fill(0));
+  spawnPiece();
+}
+function canPlace(shape: number[][], x: number, y: number) {
+  return shape.every((row, rowIndex) => row.every((cell, colIndex) => {
+    if (!cell) return true;
+    const nextX = x + colIndex, nextY = y + rowIndex;
+    return nextX >= 0 && nextX < 10 && nextY < 20 && (nextY < 0 || !board[nextY][nextX]);
+  }));
+}
+function spawnPiece() {
+  const type = Math.floor(Math.random() * tetrominoes.length) + 1;
+  const shape = tetrominoes[type - 1].map(row => [...row]);
+  currentPiece = { type, shape, x: Math.floor((10 - shape[0].length) / 2), y: 0 };
+  if (!canPlace(shape, currentPiece.x, currentPiece.y)) endTetris();
+}
+function moveTetris(dx: number) {
+  if (currentPiece && canPlace(currentPiece.shape, currentPiece.x + dx, currentPiece.y)) {
+    currentPiece.x += dx;
+    renderTetris();
+  }
+}
+function rotateTetris() {
+  if (!currentPiece) return;
+  const shape = currentPiece.shape[0].map((_, col) => currentPiece!.shape.map(row => row[col]).reverse());
+  for (const offset of [0, -1, 1, -2, 2]) {
+    if (canPlace(shape, currentPiece.x + offset, currentPiece.y)) {
+      currentPiece.shape = shape;
+      currentPiece.x += offset;
+      renderTetris();
+      return;
+    }
+  }
+}
+function stepTetris() {
+  if (!running || active !== "tetris" || !currentPiece) return;
+  if (canPlace(currentPiece.shape, currentPiece.x, currentPiece.y + 1)) currentPiece.y++;
+  else lockPiece();
+  renderTetris();
+}
+function hardDropTetris() {
+  if (!currentPiece) return;
+  while (canPlace(currentPiece.shape, currentPiece.x, currentPiece.y + 1)) {
+    currentPiece.y++;
+    score += 2;
+  }
+  lockPiece();
+  $("#gameScore").textContent = String(score);
+  renderTetris();
+}
+function lockPiece() {
+  if (!currentPiece) return;
+  currentPiece.shape.forEach((row, rowIndex) => row.forEach((cell, colIndex) => {
+    if (cell) board[currentPiece!.y + rowIndex][currentPiece!.x + colIndex] = currentPiece!.type;
+  }));
+  const remainingRows = board.filter(row => row.some(cell => !cell));
+  const cleared = 20 - remainingRows.length;
+  if (cleared) {
+    board = Array.from({ length: cleared }, () => Array(10).fill(0)).concat(remainingRows);
+    linesCleared += cleared;
+    score += [0, 100, 300, 500, 800][cleared] ?? cleared * 200;
+    $("#gameScore").textContent = String(score);
+  }
+  spawnPiece();
+}
+function endTetris() {
+  if (!running) return;
+  if (sprint) { finish(); return; }
+  running = false; clearInterval(timerId); clearInterval(gravityTimerId); cancelAnimationFrame(animation); saveSample(); refreshSummary();
+  $("#gameHint").textContent = `Stack topped out · ${score} points`;
+  $("#startGame").textContent = "PLAY AGAIN"; $("#startGame").classList.remove("hidden");
+}
+function renderTetris() {
+  if (active !== "tetris") return;
+  if (!board.length) initBoard();
+  const visible = board.map(row => [...row]);
+  currentPiece?.shape.forEach((row, rowIndex) => row.forEach((cell, colIndex) => {
+    if (cell) visible[currentPiece!.y + rowIndex][currentPiece!.x + colIndex] = currentPiece!.type;
+  }));
+  stage.innerHTML = `<div class="tetris-wrap"><div class="tetris-board">${visible.flat().map(value => `<i class="cell${value ? ` color-${value}` : ""}"></i>`).join("")}</div><div class="tetris-aside"><b>${score}</b><span>POINTS</span><hr><span>LINES</span><b>${linesCleared}</b><small>← → MOVE<br>↓ SOFT DROP<br>↑ ROTATE<br>SPACE HARD DROP</small></div></div>`;
+}
+function fireArena() {
+  const now = performance.now();
+  if (!running || active !== "arena" || now - arenaLastShot < 160) return;
+  const dx = arenaAim.x - arenaPlayer.x, dy = arenaAim.y - arenaPlayer.y;
+  const distance = Math.hypot(dx, dy) || 1;
+  const speed = 440;
+  arenaBullets.push({ x: arenaPlayer.x, y: arenaPlayer.y, vx: dx / distance * speed, vy: dy / distance * speed });
+  arenaLastShot = now;
+}
+function spawnArenaEnemy() {
+  const side = Math.floor(Math.random() * 4);
+  const enemy: ArenaEnemy = { x: 0, y: 0, radius: 11, speed: 38 + Math.random() * 20 };
+  if (side === 0) { enemy.x = Math.random() * 720; enemy.y = -enemy.radius; }
+  else if (side === 1) { enemy.x = 720 + enemy.radius; enemy.y = Math.random() * 316; }
+  else if (side === 2) { enemy.x = Math.random() * 720; enemy.y = 316 + enemy.radius; }
+  else { enemy.x = -enemy.radius; enemy.y = Math.random() * 316; }
+  arenaEnemies.push(enemy);
+}
+function enemyTouchesPlayer(enemy: ArenaEnemy) {
+  const angle = Math.atan2(arenaAim.y - arenaPlayer.y, arenaAim.x - arenaPlayer.x);
+  const dx = enemy.x - arenaPlayer.x, dy = enemy.y - arenaPlayer.y;
+  const localX = dx * Math.cos(angle) + dy * Math.sin(angle);
+  const localY = -dx * Math.sin(angle) + dy * Math.cos(angle);
+  let inside = false, nearestEdgeDistance = Infinity;
+  for (let index = 0, previous = arenaPlayerShape.length - 1; index < arenaPlayerShape.length; previous = index++) {
+    const start = arenaPlayerShape[previous], end = arenaPlayerShape[index];
+    if ((start.y > localY) !== (end.y > localY) &&
+      localX < (end.x - start.x) * (localY - start.y) / (end.y - start.y) + start.x) inside = !inside;
+    const edgeX = end.x - start.x, edgeY = end.y - start.y;
+    const edgeLength = edgeX * edgeX + edgeY * edgeY;
+    const projection = Math.max(0, Math.min(1, ((localX - start.x) * edgeX + (localY - start.y) * edgeY) / edgeLength));
+    const nearestX = start.x + projection * edgeX, nearestY = start.y + projection * edgeY;
+    nearestEdgeDistance = Math.min(nearestEdgeDistance, (localX - nearestX) ** 2 + (localY - nearestY) ** 2);
+  }
+  return inside || nearestEdgeDistance <= enemy.radius * enemy.radius;
+}
+function updateArena(now: number) {
+  if (!running || active !== "arena") return;
+  const context = arenaCanvas?.getContext("2d");
+  if (!arenaCanvas || !context) {
+    console.error("Arena canvas is unavailable.");
+    return;
+  }
+  const elapsed = arenaLastFrame ? Math.min((now - arenaLastFrame) / 1000, 0.05) : 0;
+  arenaLastFrame = now;
+  const horizontal = Number(arenaKeys.has("arrowright") || arenaKeys.has("d")) - Number(arenaKeys.has("arrowleft") || arenaKeys.has("a"));
+  const vertical = Number(arenaKeys.has("arrowdown") || arenaKeys.has("s")) - Number(arenaKeys.has("arrowup") || arenaKeys.has("w"));
+  const movementLength = Math.hypot(horizontal, vertical) || 1;
+  arenaPlayer.x = Math.max(13, Math.min(707, arenaPlayer.x + horizontal / movementLength * 190 * elapsed));
+  arenaPlayer.y = Math.max(13, Math.min(303, arenaPlayer.y + vertical / movementLength * 190 * elapsed));
+
+  const spawnDelay = Math.max(500, 1400 - score * 3);
+  if (now - arenaLastSpawn >= spawnDelay) { spawnArenaEnemy(); arenaLastSpawn = now; }
+
+  const remainingBullets: ArenaBullet[] = [];
+  arenaBullets.forEach(bullet => {
+    bullet.x += bullet.vx * elapsed;
+    bullet.y += bullet.vy * elapsed;
+    const hitIndex = arenaEnemies.findIndex(enemy => Math.hypot(enemy.x - bullet.x, enemy.y - bullet.y) < enemy.radius + 4);
+    if (hitIndex >= 0) {
+      arenaEnemies.splice(hitIndex, 1);
+      score += 10;
+      $("#gameScore").textContent = String(score);
+    } else if (bullet.x >= 0 && bullet.x <= 720 && bullet.y >= 0 && bullet.y <= 316) remainingBullets.push(bullet);
+  });
+  arenaBullets = remainingBullets;
+
+  const remainingEnemies: ArenaEnemy[] = [];
+  for (const enemy of arenaEnemies) {
+    const dx = arenaPlayer.x - enemy.x, dy = arenaPlayer.y - enemy.y;
+    const distance = Math.hypot(dx, dy) || 1;
+    enemy.x += dx / distance * enemy.speed * elapsed;
+    enemy.y += dy / distance * enemy.speed * elapsed;
+    if (enemyTouchesPlayer(enemy)) {
+      arenaHull = 0;
+      $("#arenaHull").textContent = "DESTROYED";
+      endArena();
+      return;
+    }
+    remainingEnemies.push(enemy);
+  }
+  arenaEnemies = remainingEnemies;
+
+  context.fillStyle = "#0e141a";
+  context.fillRect(0, 0, arenaCanvas.width, arenaCanvas.height);
+  context.strokeStyle = "#28333a";
+  context.lineWidth = 1;
+  for (let x = 36; x < arenaCanvas.width; x += 36) {
+    context.beginPath(); context.moveTo(x, 0); context.lineTo(x, arenaCanvas.height); context.stroke();
+  }
+  for (let y = 36; y < arenaCanvas.height; y += 36) {
+    context.beginPath(); context.moveTo(0, y); context.lineTo(arenaCanvas.width, y); context.stroke();
+  }
+  arenaEnemies.forEach(enemy => {
+    context.beginPath(); context.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
+    context.fillStyle = "#d96677"; context.fill();
+    context.beginPath(); context.arc(enemy.x, enemy.y, 4, 0, Math.PI * 2);
+    context.fillStyle = "#ffd1aa"; context.fill();
+  });
+  arenaBullets.forEach(bullet => {
+    context.beginPath(); context.arc(bullet.x, bullet.y, 3, 0, Math.PI * 2);
+    context.fillStyle = "#f4d477"; context.fill();
+  });
+  const aimAngle = Math.atan2(arenaAim.y - arenaPlayer.y, arenaAim.x - arenaPlayer.x);
+  context.save(); context.translate(arenaPlayer.x, arenaPlayer.y); context.rotate(aimAngle);
+  context.beginPath(); context.moveTo(arenaPlayerShape[0].x, arenaPlayerShape[0].y);
+  arenaPlayerShape.slice(1).forEach(point => context.lineTo(point.x, point.y));
+  context.closePath();
+  context.fillStyle = "#9fceac"; context.fill(); context.restore();
+  context.beginPath(); context.arc(arenaAim.x, arenaAim.y, 9, 0, Math.PI * 2);
+  context.moveTo(arenaAim.x - 13, arenaAim.y); context.lineTo(arenaAim.x + 13, arenaAim.y);
+  context.moveTo(arenaAim.x, arenaAim.y - 13); context.lineTo(arenaAim.x, arenaAim.y + 13);
+  context.strokeStyle = "#f4d477"; context.stroke();
+  animation = requestAnimationFrame(updateArena);
+}
+function endArena() {
+  if (!running) return;
+  if (sprint) { finish(); return; }
+  running = false; clearInterval(timerId); cancelAnimationFrame(animation); arenaKeys.clear(); saveSample(); refreshSummary();
+  $("#gameHint").textContent = `Hull breached · ${score} points`;
+  $("#startGame").textContent = "PLAY AGAIN"; $("#startGame").classList.remove("hidden");
+}
+function saveSample() { const avg = (a:number[]) => a.length ? a.reduce((x,y)=>x+y,0)/a.length : 0; const mean = avg(intervals), std = Math.sqrt(avg(intervals.map(x => (x-mean)**2))); const d = { game: active, duration_ms: Math.min(Date.now() - tick, 600000), input_count: inputCounts.keyboard + inputCounts.controller, keyboard_count: inputCounts.keyboard, controller_count: inputCounts.controller, mean_interval_ms: Math.round(mean), interval_std_ms: Math.round(std), mean_hold_ms: Math.round(avg(holds)), score, source: inputCounts.controller ? "mixed" : "keyboard" }; void fetch("/api/samples", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(d) }).then(refreshSummary).catch(()=>{}); }
 async function refreshSummary() { try { const d = await (await fetch("/api/summary")).json(); $("#sampleCount").textContent = d.samples; const list = $("#recentList"); list.innerHTML = d.recent.length ? d.recent.map((x:any)=>`<div class="recent-item"><span class="recent-icon">${modes.find(m=>m.id===x.game)?.icon || "·"}</span><span><b>${modes.find(m=>m.id===x.game)?.name || x.game}</b><small>${x.input_count} inputs · ${new Date(x.created_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</small></span><strong>${x.score}</strong></div>`).join("") : `<div class="empty">Finish a game to collect your first sample.</div>`; } catch {} }
 $("#clearBtn").addEventListener("click", async () => { await fetch("/api/samples",{method:"DELETE"}); refreshSummary(); });
-window.setInterval(() => { const pads = navigator.getGamepads?.() || []; const pad = Array.from(pads).find(Boolean); if (pad) { $("#padState").textContent = "CONNECTED"; $("#inputStatus").textContent = "INPUT READY"; $("#controllerName").textContent = pad.id.slice(0,48); $("#controllerHint").textContent = "Controller connected · press A / Cross to interact"; pad.buttons.forEach((b, i) => { const key = `pad${i}`; if (b.pressed) { if (!down.has(key)) { recordInput("controller"); down.set(key, performance.now()); if (running) { const map: Record<number,string> = {0:" ", 1:"ArrowDown", 2:"ArrowLeft", 3:"ArrowRight", 12:"ArrowUp", 13:"ArrowDown", 14:"ArrowLeft", 15:"ArrowRight"}; handleAction(map[i] || " ", "controller"); } } } else if (down.has(key)) { holds.push(performance.now()-down.get(key)!); down.delete(key); } }); } else { $("#padState").textContent = "SEARCHING"; $("#controllerName").textContent = "Waiting for controller"; $("#controllerHint").textContent = "Connect an Xbox or Nintendo controller, then press any button."; } },100);
+window.setInterval(() => { const pads = navigator.getGamepads?.() || []; const pad = Array.from(pads).find(Boolean); if (pad) { $("#padState").textContent = "CONNECTED"; $("#inputStatus").textContent = "INPUT READY"; $("#controllerName").textContent = pad.id.slice(0,48); $("#controllerHint").textContent = "Controller connected · press A / Cross to interact"; pad.buttons.forEach((b, i) => { const key = `pad${i}`; if (b.pressed) { if (!down.has(key)) { recordInput("controller"); down.set(key, performance.now()); if (running) { const map: Record<number,string> = {0:" ", 1:"ArrowDown", 2:"ArrowLeft", 3:"ArrowRight", 12:"ArrowUp", 13:"ArrowDown", 14:"ArrowLeft", 15:"ArrowRight"}; handleAction(map[i] || " "); } } } else if (down.has(key)) { holds.push(performance.now()-down.get(key)!); down.delete(key); } }); } else { $("#padState").textContent = "SEARCHING"; $("#controllerName").textContent = "Waiting for controller"; $("#controllerHint").textContent = "Connect an Xbox or Nintendo controller, then press any button."; } },100);
 void refreshSummary();

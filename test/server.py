@@ -52,7 +52,7 @@ def save_sample():
     required = ("game", "duration_ms", "input_count", "keyboard_count", "controller_count", "mean_interval_ms", "interval_std_ms", "mean_hold_ms", "score", "source")
     if any(k not in data for k in required):
         return jsonify(error="Missing aggregate fields"), 400
-    if data["game"] not in {"aim", "tetris", "typing", "wiki"}:
+    if data["game"] not in {"aim", "tetris", "typing", "arena", "switch", "wiki"}:
         return jsonify(error="Unknown activity"), 400
     try:
         values = [int(data[k]) for k in ("duration_ms", "input_count", "keyboard_count", "controller_count", "score")]
