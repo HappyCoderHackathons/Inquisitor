@@ -88,3 +88,9 @@ application ingestion and auth integration, enrollment retention/deletion policy
 and the hosted application's HTTPS or SSH-tunnel connection to the model service.
 The workstation's development tunnel is not that deployed application connection.
 Never upload the collector's raw per-event log directly to this service.
+
+For session-separated median/MAD versus Isolation Forest comparison, see
+[model evaluation](../docs/model-evaluation.md). The evaluation command runs only
+on the designated training host, uses temporary artifacts, and does not activate
+a production model. Real-data metrics remain unavailable until collected sessions
+are evaluated.
