@@ -26,4 +26,4 @@ Xbox and Nintendo controllers work through the browser Gamepad API. Connect the 
 - Flask stores those aggregate samples in a local SQLite database (`inputprint.sqlite3`). **Clear Data** removes them.
 - This is an arcade data-collection prototype. It does not include the Windows background agent or the authentication/model pipeline described in the InputPrint project brief.
 
-The aim trainer uses mouse clicks or the A button. Block Stack uses arrows/WASD or the gamepad face buttons and D-pad. Wiki Hop uses arrows/WASD or the D-pad. Word Sprint is keyboard-first; A/space advances the prompt.
+The aim trainer uses mouse clicks or the A button. Block Stack uses arrows/WASD or the gamepad face buttons and D-pad. Arena Rush uses WASD or the arrow keys to move, the mouse to aim, and left-click to fire. Word Sprint shuffles its word list each round and highlights correct letters as you type.
