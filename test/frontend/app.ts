@@ -1,18 +1,18 @@
 type GameId = "aim" | "tetris" | "typing" | "arena";
-type Mode = { id: GameId; name: string; category: string; description: string; keys: string; icon: string; accent: string };
+type Mode = { id: GameId; name: string; description: string; keys: string };
 type TetrisPiece = { type: number; shape: number[][]; x: number; y: number };
 type ArenaEnemy = { x: number; y: number; radius: number; speed: number };
 type ArenaBullet = { x: number; y: number; vx: number; vy: number };
 type ArenaPoint = { x: number; y: number };
 const modes: Mode[] = [
-  { id: "aim", name: "Aim Trainer", category: "REFLEX / PRECISION", description: "Track the pulse. Hit as many targets as you can before they disappear.", keys: "MOUSE · A / RT", icon: "◎", accent: "coral" },
-  { id: "tetris", name: "Block Stack", category: "SPATIAL / RHYTHM", description: "Rotate, slide, and clear lines as the stack picks up speed.", keys: "← → ↓ · A / B", icon: "▦", accent: "violet" },
-  { id: "typing", name: "Word Sprint", category: "CADENCE / FLOW", description: "Type the shown words at your own pace. We only keep timing summaries.", keys: "KEYBOARD · GAMEPAD", icon: "⌁", accent: "mint" },
-  { id: "arena", name: "Arena Rush", category: "ARCADE / SURVIVAL", description: "Dodge incoming drones, aim with the mouse, and hold your ground.", keys: "WASD / ARROWS · MOUSE AIM · CLICK FIRE", icon: "✣", accent: "amber" },
+  { id: "aim", name: "Aim Trainer", description: "Hit as many targets as you can.", keys: "Mouse" },
+  { id: "tetris", name: "Block Stack", description: "Stack blocks and clear rows.", keys: "Arrow keys" },
+  { id: "typing", name: "Word Sprint", description: "Type each word as quickly as you can.", keys: "Keyboard" },
+  { id: "arena", name: "Arena Rush", description: "Move, aim, and shoot.", keys: "WASD + mouse" },
 ];
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 const grid = $("#gameGrid");
-grid.innerHTML = modes.map((m, i) => `<article class="game-card ${m.accent}" style="--delay:${i * 70}ms"><div class="card-top"><span class="card-num">0${i + 1}</span><span class="tag">${m.category}</span></div><div class="card-art art-${m.id}"><span>${m.icon}</span><i></i><i></i><i></i></div><div class="card-copy"><h3>${m.name}</h3><p>${m.description}</p><div class="card-bottom"><span>${m.keys}</span><button class="play-button" data-game="${m.id}" aria-label="Play ${m.name}">↗</button></div></div></article>`).join("");
+grid.innerHTML = modes.map(m => `<article class="game-card"><div class="card-copy"><h3>${m.name}</h3><p>${m.description}</p><div class="card-bottom"><span>${m.keys}</span><button class="play-button" data-game="${m.id}" aria-label="Play ${m.name}">Play</button></div></div></article>`).join("");
 
 const overlay = $("#gameOverlay"), stage = $("#gameStage");
 let active: GameId | null = null, sprint = false, running = false, remaining = 60, score = 0, tick = 0, timerId = 0, gravityTimerId = 0, animation = 0;
@@ -49,10 +49,10 @@ wordDeck = shuffleWords();
 function openGame(id: GameId, isSprint = false) {
   active = id; sprint = isSprint; running = false; remaining = 60; score = 0; intervals = []; holds = []; down.clear(); inputCounts = { keyboard: 0, controller: 0 }; wordIndex = 0; linesCleared = 0; board = []; currentPiece = null; arenaKeys.clear();
   const m = modes.find(x => x.id === id)!;
-  $("#modalMode").textContent = isSprint ? "ARCADE SPRINT · ROTATING MODE" : m.category;
+  $("#modalMode").textContent = isSprint ? "Sprint" : "";
   $("#modalTitle").textContent = m.name; $("#gameTimer").textContent = "60"; $("#gameScore").textContent = "0";
-  $("#gameInstruction").textContent = instruction(id); $("#gameHint").textContent = isSprint ? "Game rotates every 60 seconds · ESC to exit" : "Press ESC to exit";
-  $("#startGame").classList.remove("hidden"); $("#startGame").textContent = "START GAME";
+  $("#gameInstruction").textContent = instruction(id); $("#gameHint").textContent = isSprint ? "Next game starts automatically · Esc to close" : "Esc to close";
+  $("#startGame").classList.remove("hidden"); $("#startGame").textContent = "Start";
   stage.className = `game-stage stage-${id}`; renderStage(); overlay.classList.remove("hidden");
 }
 function instruction(id: GameId) { return ({ aim: "Click or tap each target", tetris: "← → move · ↓ soft drop · ↑ rotate · SPACE hard drop", typing: "Type each word; correct letters turn green", arena: "Move with WASD or arrows; aim and fire with the mouse" } as Record<GameId,string>)[id]; }
@@ -75,7 +75,7 @@ function start() {
 function finish() {
   running = false; clearInterval(timerId); clearInterval(gravityTimerId); cancelAnimationFrame(animation); arenaKeys.clear(); saveSample();
   if (sprint && active) { const next = modes[(modes.findIndex(x => x.id === active) + 1) % modes.length].id; openGame(next, true); start(); }
-  else { $("#gameHint").textContent = `Round complete · ${score} points · sample saved`; $("#startGame").textContent = "PLAY AGAIN"; $("#startGame").classList.remove("hidden"); refreshSummary(); }
+  else { $("#gameHint").textContent = `Round complete · ${score} points`; $("#startGame").textContent = "Play again"; $("#startGame").classList.remove("hidden"); refreshSummary(); }
 }
 function close() { running = false; clearInterval(timerId); clearInterval(gravityTimerId); cancelAnimationFrame(animation); arenaKeys.clear(); overlay.classList.add("hidden"); active = null; sprint = false; refreshSummary(); }
 $("#gameGrid").addEventListener("click", e => { const btn = (e.target as HTMLElement).closest("[data-game]") as HTMLElement | null; if (btn) openGame(btn.dataset.game as GameId); });
@@ -229,7 +229,7 @@ function endTetris() {
   if (sprint) { finish(); return; }
   running = false; clearInterval(timerId); clearInterval(gravityTimerId); cancelAnimationFrame(animation); saveSample(); refreshSummary();
   $("#gameHint").textContent = `Stack topped out · ${score} points`;
-  $("#startGame").textContent = "PLAY AGAIN"; $("#startGame").classList.remove("hidden");
+  $("#startGame").textContent = "Play again"; $("#startGame").classList.remove("hidden");
 }
 function renderTetris() {
   if (active !== "tetris") return;
@@ -323,9 +323,9 @@ function updateArena(now: number) {
   }
   arenaEnemies = remainingEnemies;
 
-  context.fillStyle = "#0e141a";
+  context.fillStyle = "#09070D";
   context.fillRect(0, 0, arenaCanvas.width, arenaCanvas.height);
-  context.strokeStyle = "#28333a";
+  context.strokeStyle = "#393243";
   context.lineWidth = 1;
   for (let x = 36; x < arenaCanvas.width; x += 36) {
     context.beginPath(); context.moveTo(x, 0); context.lineTo(x, arenaCanvas.height); context.stroke();
@@ -335,24 +335,24 @@ function updateArena(now: number) {
   }
   arenaEnemies.forEach(enemy => {
     context.beginPath(); context.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
-    context.fillStyle = "#d96677"; context.fill();
+    context.fillStyle = "#FB7185"; context.fill();
     context.beginPath(); context.arc(enemy.x, enemy.y, 4, 0, Math.PI * 2);
-    context.fillStyle = "#ffd1aa"; context.fill();
+    context.fillStyle = "#F7F4FC"; context.fill();
   });
   arenaBullets.forEach(bullet => {
     context.beginPath(); context.arc(bullet.x, bullet.y, 3, 0, Math.PI * 2);
-    context.fillStyle = "#f4d477"; context.fill();
+    context.fillStyle = "#C4B5FD"; context.fill();
   });
   const aimAngle = Math.atan2(arenaAim.y - arenaPlayer.y, arenaAim.x - arenaPlayer.x);
   context.save(); context.translate(arenaPlayer.x, arenaPlayer.y); context.rotate(aimAngle);
   context.beginPath(); context.moveTo(arenaPlayerShape[0].x, arenaPlayerShape[0].y);
   arenaPlayerShape.slice(1).forEach(point => context.lineTo(point.x, point.y));
   context.closePath();
-  context.fillStyle = "#9fceac"; context.fill(); context.restore();
+  context.fillStyle = "#A3E635"; context.fill(); context.restore();
   context.beginPath(); context.arc(arenaAim.x, arenaAim.y, 9, 0, Math.PI * 2);
   context.moveTo(arenaAim.x - 13, arenaAim.y); context.lineTo(arenaAim.x + 13, arenaAim.y);
   context.moveTo(arenaAim.x, arenaAim.y - 13); context.lineTo(arenaAim.x, arenaAim.y + 13);
-  context.strokeStyle = "#f4d477"; context.stroke();
+  context.strokeStyle = "#8B5CF6"; context.stroke();
   animation = requestAnimationFrame(updateArena);
 }
 function endArena() {
@@ -360,10 +360,39 @@ function endArena() {
   if (sprint) { finish(); return; }
   running = false; clearInterval(timerId); cancelAnimationFrame(animation); arenaKeys.clear(); saveSample(); refreshSummary();
   $("#gameHint").textContent = `Hull breached · ${score} points`;
-  $("#startGame").textContent = "PLAY AGAIN"; $("#startGame").classList.remove("hidden");
+  $("#startGame").textContent = "Play again"; $("#startGame").classList.remove("hidden");
 }
 function saveSample() { const avg = (a:number[]) => a.length ? a.reduce((x,y)=>x+y,0)/a.length : 0; const mean = avg(intervals), std = Math.sqrt(avg(intervals.map(x => (x-mean)**2))); const d = { game: active, duration_ms: Math.min(Date.now() - tick, 600000), input_count: inputCounts.keyboard + inputCounts.controller, keyboard_count: inputCounts.keyboard, controller_count: inputCounts.controller, mean_interval_ms: Math.round(mean), interval_std_ms: Math.round(std), mean_hold_ms: Math.round(avg(holds)), score, source: inputCounts.controller ? "mixed" : "keyboard" }; void fetch("/api/samples", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(d) }).then(refreshSummary).catch(()=>{}); }
-async function refreshSummary() { try { const d = await (await fetch("/api/summary")).json(); $("#sampleCount").textContent = d.samples; const list = $("#recentList"); list.innerHTML = d.recent.length ? d.recent.map((x:any)=>`<div class="recent-item"><span class="recent-icon">${modes.find(m=>m.id===x.game)?.icon || "·"}</span><span><b>${modes.find(m=>m.id===x.game)?.name || x.game}</b><small>${x.input_count} inputs · ${new Date(x.created_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</small></span><strong>${x.score}</strong></div>`).join("") : `<div class="empty">Finish a game to collect your first sample.</div>`; } catch {} }
+async function refreshSummary() {
+  try {
+    const data = await (await fetch("/api/summary")).json();
+    $("#sampleCount").textContent = data.samples;
+    const list = $("#recentList");
+    list.innerHTML = data.recent.length
+      ? data.recent.map((item: any) => `<div class="recent-item"><span><b>${modes.find(mode => mode.id === item.game)?.name || item.game}</b><small>${new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small></span><strong>${item.score}</strong></div>`).join("")
+      : `<div class="empty">No games played yet.</div>`;
+  } catch {}
+}
 $("#clearBtn").addEventListener("click", async () => { await fetch("/api/samples",{method:"DELETE"}); refreshSummary(); });
-window.setInterval(() => { const pads = navigator.getGamepads?.() || []; const pad = Array.from(pads).find(Boolean); if (pad) { $("#padState").textContent = "CONNECTED"; $("#inputStatus").textContent = "INPUT READY"; $("#controllerName").textContent = pad.id.slice(0,48); $("#controllerHint").textContent = "Controller connected · press A / Cross to interact"; pad.buttons.forEach((b, i) => { const key = `pad${i}`; if (b.pressed) { if (!down.has(key)) { recordInput("controller"); down.set(key, performance.now()); if (running) { const map: Record<number,string> = {0:" ", 1:"ArrowDown", 2:"ArrowLeft", 3:"ArrowRight", 12:"ArrowUp", 13:"ArrowDown", 14:"ArrowLeft", 15:"ArrowRight"}; handleAction(map[i] || " "); } } } else if (down.has(key)) { holds.push(performance.now()-down.get(key)!); down.delete(key); } }); } else { $("#padState").textContent = "SEARCHING"; $("#controllerName").textContent = "Waiting for controller"; $("#controllerHint").textContent = "Connect an Xbox or Nintendo controller, then press any button."; } },100);
+window.setInterval(() => {
+  const pads = navigator.getGamepads?.() || [];
+  const pad = Array.from(pads).find(Boolean);
+  if (!pad) return;
+  pad.buttons.forEach((button, index) => {
+    const key = `pad${index}`;
+    if (button.pressed) {
+      if (!down.has(key)) {
+        recordInput("controller");
+        down.set(key, performance.now());
+        if (running) {
+          const map: Record<number, string> = { 0: " ", 1: "ArrowDown", 2: "ArrowLeft", 3: "ArrowRight", 12: "ArrowUp", 13: "ArrowDown", 14: "ArrowLeft", 15: "ArrowRight" };
+          handleAction(map[index] || " ");
+        }
+      }
+    } else if (down.has(key)) {
+      holds.push(performance.now() - down.get(key)!);
+      down.delete(key);
+    }
+  });
+}, 100);
 void refreshSummary();
