@@ -5,7 +5,7 @@
 **Project type:** Cybersecurity, behavioral biometrics, anomaly detection, desktop software, full-stack web application  
 **Target event:** Hack The Nest 2026 (24-hour hackathon)  
 **Potential primary track:** Mind and Machine (subject to organizer judging criteria)  
-**Status:** Project specification and architecture proposal; implementation stack intentionally undecided  
+**Status:** Original project proposal; [architecture decisions](docs/architecture.md) supersede its open stack options
 **Target platform:** Windows PC only for the hackathon MVP; no phone, embedded-controller, or browser-only input collector
 
 ---
@@ -587,6 +587,8 @@ A normalized relational schema is fine for the MVP. Streaming infrastructure is 
 
 ## 11. Implementation Stack — To Workshop, Not Yet Finalized
 
+> Historical options: the selected stack and component boundaries are recorded in [docs/architecture.md](docs/architecture.md).
+
 The stack is deliberately left open. The **architectural boundaries** matter more than choosing a favorite library now.
 
 | Layer | Option A | Option B | Decision factors |
@@ -861,6 +863,8 @@ Minimum safeguards:
 ---
 
 ## 19. Questions to Workshop Before Implementation
+
+> The stack and keyboard-only v1 decisions are resolved in [docs/architecture.md](docs/architecture.md). Other implementation and evaluation questions below remain follow-up work.
 
 The core idea is defined; these implementation decisions are intentionally still open:
 
