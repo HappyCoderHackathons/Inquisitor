@@ -4,5 +4,5 @@ __pycache__/
 *.pyc
 
 # Captured logs - never commit keystroke data
-# *.log
+*.log
 keystrokes*.csv
