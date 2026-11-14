@@ -6,6 +6,7 @@ import argparse
 import json
 import tempfile
 from pathlib import Path
+from math import ceil
 from typing import cast
 
 import numpy as np
@@ -33,7 +34,8 @@ def evaluate(
         store = ModelStore(Path(directory))
         metadata = store.train(training + validation, "evaluation", device_id, validation_session_id)
         baseline = MedianMAD.fit(training)
-        threshold = float(np.quantile(baseline.scores(validation), 0.95, method="higher"))
+        scores = baseline.scores(validation)
+        threshold = float(np.sort(scores)[ceil(0.95 * len(scores)) - 1])
         results = {}
         for name in ("IsolationForest", "MedianMAD"):
             groups = {}
