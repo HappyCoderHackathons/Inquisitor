@@ -1,14 +1,20 @@
 (() => {
   // frontend/app.ts
   var modes = [
-    { id: "aim", name: "Aim Trainer", category: "REFLEX / PRECISION", description: "Track the pulse. Hit as many targets as you can before they disappear.", keys: "MOUSE \xB7 A / RT", icon: "\u25CE", accent: "coral" },
-    { id: "tetris", name: "Block Stack", category: "SPATIAL / RHYTHM", description: "Rotate, slide, and clear lines as the stack picks up speed.", keys: "\u2190 \u2192 \u2193 \xB7 A / B", icon: "\u25A6", accent: "violet" },
-    { id: "typing", name: "Word Sprint", category: "CADENCE / FLOW", description: "Type the shown words at your own pace. We only keep timing summaries.", keys: "KEYBOARD \xB7 GAMEPAD", icon: "\u2301", accent: "mint" },
-    { id: "arena", name: "Arena Rush", category: "ARCADE / SURVIVAL", description: "Dodge incoming drones, aim with the mouse, and hold your ground.", keys: "WASD / ARROWS \xB7 MOUSE AIM \xB7 CLICK FIRE", icon: "\u2723", accent: "amber" }
+    { id: "aim", name: "Aim Trainer", description: "Hit as many targets as you can.", keys: "Mouse" },
+    { id: "tetris", name: "Block Stack", description: "Stack blocks and clear rows.", keys: "Arrow keys" },
+    { id: "typing", name: "Word Sprint", description: "Type each word as quickly as you can.", keys: "Keyboard" },
+    { id: "arena", name: "Arena Rush", description: "Move, aim, and shoot.", keys: "WASD + mouse" }
   ];
   var $ = (s) => document.querySelector(s);
   var grid = $("#gameGrid");
-  grid.innerHTML = modes.map((m, i) => `<article class="game-card ${m.accent}" style="--delay:${i * 70}ms"><div class="card-top"><span class="card-num">0${i + 1}</span><span class="tag">${m.category}</span></div><div class="card-art art-${m.id}"><span>${m.icon}</span><i></i><i></i><i></i></div><div class="card-copy"><h3>${m.name}</h3><p>${m.description}</p><div class="card-bottom"><span>${m.keys}</span><button class="play-button" data-game="${m.id}" aria-label="Play ${m.name}">\u2197</button></div></div></article>`).join("");
+  function gamePreview(id) {
+    if (id === "aim") return `<div class="game-preview preview-aim" aria-hidden="true"><i></i><i></i><span>+</span><b></b></div>`;
+    if (id === "tetris") return `<div class="game-preview preview-tetris" aria-hidden="true">${Array.from({ length: 20 }, (_, i) => `<i class="preview-cell${[1, 2, 5, 6, 7, 11, 12, 16, 17, 18].includes(i) ? " filled" : ""}"></i>`).join("")}</div>`;
+    if (id === "typing") return `<div class="game-preview preview-typing" aria-hidden="true"><small>TYPE THIS WORD</small><strong><i>OR</i>BIT</strong><span>3 WORDS CLEARED</span></div>`;
+    return `<div class="game-preview preview-arena" aria-hidden="true"><i class="preview-ship"></i><b></b><b></b><span></span></div>`;
+  }
+  grid.innerHTML = modes.map((m) => `<article class="game-card">${gamePreview(m.id)}<div class="card-copy"><h3>${m.name}</h3><p>${m.description}</p><div class="card-bottom"><span>${m.keys}</span><button class="play-button" data-game="${m.id}" aria-label="Play ${m.name}">Play</button></div></div></article>`).join("");
   var overlay = $("#gameOverlay");
   var stage = $("#gameStage");
   var active = null;
@@ -80,14 +86,14 @@
     currentPiece = null;
     arenaKeys.clear();
     const m = modes.find((x) => x.id === id);
-    $("#modalMode").textContent = isSprint ? "ARCADE SPRINT \xB7 ROTATING MODE" : m.category;
+    $("#modalMode").textContent = isSprint ? "Sprint" : "";
     $("#modalTitle").textContent = m.name;
     $("#gameTimer").textContent = "60";
     $("#gameScore").textContent = "0";
     $("#gameInstruction").textContent = instruction(id);
-    $("#gameHint").textContent = isSprint ? "Game rotates every 60 seconds \xB7 ESC to exit" : "Press ESC to exit";
+    $("#gameHint").textContent = isSprint ? "Next game starts automatically \xB7 Esc to close" : "Esc to close";
     $("#startGame").classList.remove("hidden");
-    $("#startGame").textContent = "START GAME";
+    $("#startGame").textContent = "Start";
     stage.className = `game-stage stage-${id}`;
     renderStage();
     overlay.classList.remove("hidden");
@@ -152,8 +158,8 @@
       openGame(next, true);
       start();
     } else {
-      $("#gameHint").textContent = `Round complete \xB7 ${score} points \xB7 sample saved`;
-      $("#startGame").textContent = "PLAY AGAIN";
+      $("#gameHint").textContent = `Round complete \xB7 ${score} points`;
+      $("#startGame").textContent = "Play again";
       $("#startGame").classList.remove("hidden");
       refreshSummary();
     }
@@ -371,7 +377,7 @@
     saveSample();
     refreshSummary();
     $("#gameHint").textContent = `Stack topped out \xB7 ${score} points`;
-    $("#startGame").textContent = "PLAY AGAIN";
+    $("#startGame").textContent = "Play again";
     $("#startGame").classList.remove("hidden");
   }
   function renderTetris() {
@@ -473,9 +479,9 @@
       remainingEnemies.push(enemy);
     }
     arenaEnemies = remainingEnemies;
-    context.fillStyle = "#0e141a";
+    context.fillStyle = "#09070D";
     context.fillRect(0, 0, arenaCanvas.width, arenaCanvas.height);
-    context.strokeStyle = "#28333a";
+    context.strokeStyle = "#393243";
     context.lineWidth = 1;
     for (let x = 36; x < arenaCanvas.width; x += 36) {
       context.beginPath();
@@ -492,17 +498,17 @@
     arenaEnemies.forEach((enemy) => {
       context.beginPath();
       context.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
-      context.fillStyle = "#d96677";
+      context.fillStyle = "#FB7185";
       context.fill();
       context.beginPath();
       context.arc(enemy.x, enemy.y, 4, 0, Math.PI * 2);
-      context.fillStyle = "#ffd1aa";
+      context.fillStyle = "#F7F4FC";
       context.fill();
     });
     arenaBullets.forEach((bullet) => {
       context.beginPath();
       context.arc(bullet.x, bullet.y, 3, 0, Math.PI * 2);
-      context.fillStyle = "#f4d477";
+      context.fillStyle = "#C4B5FD";
       context.fill();
     });
     const aimAngle = Math.atan2(arenaAim.y - arenaPlayer.y, arenaAim.x - arenaPlayer.x);
@@ -513,7 +519,7 @@
     context.moveTo(arenaPlayerShape[0].x, arenaPlayerShape[0].y);
     arenaPlayerShape.slice(1).forEach((point) => context.lineTo(point.x, point.y));
     context.closePath();
-    context.fillStyle = "#9fceac";
+    context.fillStyle = "#A3E635";
     context.fill();
     context.restore();
     context.beginPath();
@@ -522,7 +528,7 @@
     context.lineTo(arenaAim.x + 13, arenaAim.y);
     context.moveTo(arenaAim.x, arenaAim.y - 13);
     context.lineTo(arenaAim.x, arenaAim.y + 13);
-    context.strokeStyle = "#f4d477";
+    context.strokeStyle = "#C4B5FD";
     context.stroke();
     animation = requestAnimationFrame(updateArena);
   }
@@ -539,7 +545,7 @@
     saveSample();
     refreshSummary();
     $("#gameHint").textContent = `Hull breached \xB7 ${score} points`;
-    $("#startGame").textContent = "PLAY AGAIN";
+    $("#startGame").textContent = "Play again";
     $("#startGame").classList.remove("hidden");
   }
   function saveSample() {
@@ -551,10 +557,10 @@
   }
   async function refreshSummary() {
     try {
-      const d = await (await fetch("/api/summary")).json();
-      $("#sampleCount").textContent = d.samples;
+      const data = await (await fetch("/api/summary")).json();
+      $("#sampleCount").textContent = data.samples;
       const list = $("#recentList");
-      list.innerHTML = d.recent.length ? d.recent.map((x) => `<div class="recent-item"><span class="recent-icon">${modes.find((m) => m.id === x.game)?.icon || "\xB7"}</span><span><b>${modes.find((m) => m.id === x.game)?.name || x.game}</b><small>${x.input_count} inputs \xB7 ${new Date(x.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small></span><strong>${x.score}</strong></div>`).join("") : `<div class="empty">Finish a game to collect your first sample.</div>`;
+      list.innerHTML = data.recent.length ? data.recent.map((item) => `<div class="recent-item"><span><b>${modes.find((mode) => mode.id === item.game)?.name || item.game}</b><small>${new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small></span><strong>${item.score}</strong></div>`).join("") : `<div class="empty">No games played yet.</div>`;
     } catch {
     }
   }
@@ -565,32 +571,23 @@
   window.setInterval(() => {
     const pads = navigator.getGamepads?.() || [];
     const pad = Array.from(pads).find(Boolean);
-    if (pad) {
-      $("#padState").textContent = "CONNECTED";
-      $("#inputStatus").textContent = "INPUT READY";
-      $("#controllerName").textContent = pad.id.slice(0, 48);
-      $("#controllerHint").textContent = "Controller connected \xB7 press A / Cross to interact";
-      pad.buttons.forEach((b, i) => {
-        const key = `pad${i}`;
-        if (b.pressed) {
-          if (!down.has(key)) {
-            recordInput("controller");
-            down.set(key, performance.now());
-            if (running) {
-              const map = { 0: " ", 1: "ArrowDown", 2: "ArrowLeft", 3: "ArrowRight", 12: "ArrowUp", 13: "ArrowDown", 14: "ArrowLeft", 15: "ArrowRight" };
-              handleAction(map[i] || " ");
-            }
+    if (!pad) return;
+    pad.buttons.forEach((button, index) => {
+      const key = `pad${index}`;
+      if (button.pressed) {
+        if (!down.has(key)) {
+          recordInput("controller");
+          down.set(key, performance.now());
+          if (running) {
+            const map = { 0: " ", 1: "ArrowDown", 2: "ArrowLeft", 3: "ArrowRight", 12: "ArrowUp", 13: "ArrowDown", 14: "ArrowLeft", 15: "ArrowRight" };
+            handleAction(map[index] || " ");
           }
-        } else if (down.has(key)) {
-          holds.push(performance.now() - down.get(key));
-          down.delete(key);
         }
-      });
-    } else {
-      $("#padState").textContent = "SEARCHING";
-      $("#controllerName").textContent = "Waiting for controller";
-      $("#controllerHint").textContent = "Connect an Xbox or Nintendo controller, then press any button.";
-    }
+      } else if (down.has(key)) {
+        holds.push(performance.now() - down.get(key));
+        down.delete(key);
+      }
+    });
   }, 100);
   void refreshSummary();
 })();
