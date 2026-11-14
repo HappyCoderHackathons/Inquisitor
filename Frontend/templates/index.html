@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#09070D">
+    <meta name="description" content="Explore InputPrint Arcade, a local prototype for opt-in behavioral input summaries through short games.">
+    <title>Inquisitor | InputPrint Arcade</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <div class="arcade-layout">
+      <header class="arcade-header">
+        <a class="brand" href="/">Inquisitor</a>
+        <nav class="arcade-nav" aria-label="Main navigation">
+          <a href="#about">About</a>
+          <a href="#privacy">Privacy</a>
+          <a class="nav-cta" href="/arcade">Visit arcade</a>
+        </nav>
+      </header>
+
+      <main id="overview" class="intro-main">
+        <section class="intro-hero">
+          <p class="eyebrow"><span class="eyebrow-line"></span> INPUTPRINT ARCADE</p>
+          <h1>A small arcade for exploring <em>input patterns.</em></h1>
+          <p class="intro-lede">Play quick, familiar games and see how this local prototype turns a session into simple behavioral summaries.</p>
+          <div class="intro-actions">
+            <a class="button primary" href="/arcade">Explore the games</a>
+            <a class="intro-secondary" href="#about">How it works</a>
+          </div>
+          <div class="intro-facts" aria-label="Arcade overview">
+            <div><strong>4</strong><span>short games</span></div>
+            <div><strong>1 min</strong><span>per sprint round</span></div>
+            <div><strong>Local</strong><span>aggregate storage</span></div>
+          </div>
+        </section>
+
+        <section id="about" class="intro-section">
+          <div class="intro-section-heading">
+            <p class="eyebrow">THE PROTOTYPE</p>
+            <h2>Play, then see the summary.</h2>
+            <p>Choose an individual game or run a four-game sprint. Keyboard and mouse controls are shown in each game; supported gamepads can also be used.</p>
+          </div>
+          <div class="intro-cards">
+            <article class="intro-card">
+              <span class="intro-card-index">01 / PLAY</span>
+              <h3>Four ways to play</h3>
+              <p>Aim Trainer, Block Stack, Word Sprint, and Arena Rush each exercise different interactions.</p>
+            </article>
+            <article class="intro-card">
+              <span class="intro-card-index">02 / SUMMARIZE</span>
+              <h3>Numbers, not key logs</h3>
+              <p>After a round, the browser sends counts and timing statistics along with the game and score.</p>
+            </article>
+            <article class="intro-card">
+              <span class="intro-card-index">03 / REVIEW</span>
+              <h3>See recent rounds</h3>
+              <p>Recent scores and aggregate summaries are stored in a local SQLite database and can be cleared.</p>
+            </article>
+          </div>
+          <a class="intro-text-link" href="/arcade#games">Meet the games <span aria-hidden="true">→</span></a>
+        </section>
+
+        <section id="privacy" class="intro-privacy">
+          <div>
+            <p class="eyebrow">PRIVACY &amp; SCOPE</p>
+            <h2>Your words and raw input stay out of the summary.</h2>
+          </div>
+          <div class="intro-privacy-copy">
+            <p>Game input is handled in the browser and input events are not sent to Flask. Word Sprint does not send the words you type. Only aggregate counts, timing statistics, the selected game, and score are saved locally after a round.</p>
+            <p>This is an arcade data-collection prototype. It does not include the Windows background agent or the authentication and model pipeline described in the project brief.</p>
+            <a class="intro-text-link" href="/arcade#stats">View recent rounds <span aria-hidden="true">→</span></a>
+          </div>
+        </section>
+
+        <section class="intro-final">
+          <div>
+            <p class="eyebrow">READY WHEN YOU ARE</p>
+            <h2>Pick a game and give it a try.</h2>
+          </div>
+          <a class="button primary" href="/arcade">Go to the arcade</a>
+        </section>
+      </main>
+      <footer class="intro-footer">
+        <span>INQUISITOR · INPUTPRINT ARCADE</span>
+        <nav aria-label="Footer navigation">
+          <a href="/">Home</a>
+          <a href="/arcade">Arcade</a>
+          <a href="/arcade#stats">Recent rounds</a>
+        </nav>
+      </footer>
+    </div>
+  </body>
+</html>
