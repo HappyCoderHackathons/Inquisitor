@@ -1,9 +1,13 @@
 # Remote ML service
 
-Python 3.13+, Flask, and one Isolation Forest model per user/device. The backend
+Python 3.13+, Flask, and one selected model per user/device. The backend
 uses the provisional contract in `shared/feature-window-v1.schema.json`.
 Training and inference belong on the designated remote model host. Hostnames,
 accounts, and credentials must stay in local/server configuration.
+
+The trained numeric weights are checked in at
+[`artifacts/labeled-overlap-v1.json`](artifacts/labeled-overlap-v1.json).
+For inference without retraining, follow the [published API deployment guide](deploy/README.md).
 
 From the repository root, install the locked environment:
 
@@ -34,10 +38,36 @@ the application's user/device authentication.
 | Endpoint | Request | Result |
 | --- | --- | --- |
 | `GET /health` | No body | Authenticated readiness |
-| `POST /models/train` | `windows` array and `validation_session_id` | Ready model metadata, HTTP 201 |
+| `GET /model` | Configured published owner/device headers | Published model version, hash, threshold, and summary |
+| `POST /score` | `window` object and configured owner/device headers | Published model inference without a private model ID |
+| `POST /models/train` | `windows` array and `validation_session_id` or `validation_session_ids`; optional `profile` | Ready model metadata, HTTP 201 |
 | `GET /models/{id}` | No body | Owned model metadata |
 | `POST /models/{id}/score` | `window` object | Score, threshold, model ID, and state |
 | `DELETE /models/{id}` | No body | Removes owned artifacts and cached model, HTTP 204 |
+
+For the `labeled-overlap` profile, training takes `windows` for genuine examples
+and `impostor_windows` for operator-labeled examples from a consenting second user.
+Omit validation-session fields: this profile deliberately fits all supplied labeled
+data. Each class needs at least 20 windows across two disjoint sessions. Both
+classes must use the authorized device and unique session/sequence pairs.
+
+This profile fits one logistic regression (`C=0.1`, balanced class weights) on
+`hold_std_ms / max(hold_mean_ms, 1e-8)` and `press_overlap_fraction`, with `log1p`
+and a training-fitted standard scaler. The complete pipeline is persisted. Scores
+are impostor-class decision margins, not calibrated identity probabilities.
+Both scoring APIs return `score_delta = score - threshold`: positive is above the
+alert threshold. This centers the display at zero; it is not a probability or a
+cross-model magnitude comparison.
+The threshold is the empirical 98th percentile of genuine training margins;
+`threshold_data_role` explicitly records training reuse rather than independent
+calibration. The 2% empirical training false-alarm limit is not a population guarantee.
+
+The initial labeled pilot used 60 genuine and 30 second-user windows across six
+sessions. Session-grouped model-selection cross-validation reached 96.7% accuracy,
+93.3% second-user recall, and 1.67% genuine false alarms. These are selection CV
+results, not an untouched independent final test. One enrolled person and one guest
+do not establish performance across other people or devices. The saved model was
+subsequently fitted on all 90 labeled windows on the designated remote host.
 
 Training is synchronous in this first implementation. One training request runs
 at a time; another receives 503. There is no queued/running job API or automatic
@@ -52,10 +82,24 @@ training function accepts explicit minimum counts if the enrollment policy chang
 
 Features are selected in schema order. Near-constant columns are dropped using
 training data only. Isolation Forest uses 100 trees, a fixed seed, and one compute
-job; no scaler is needed for its axis-aligned splits. A 95th-percentile genuine
-validation threshold is saved with ownership, session IDs, feature names, schema
+job; no scaler is needed for its axis-aligned splits. A 95% genuine calibration
+order-statistic threshold is saved with ownership, session IDs, feature names, schema
 hash, and dependency versions. This small validation set gives a coarse threshold;
 separate real holdout data is still needed to measure false alarms.
+
+The default `all` profile preserves the original feature set. The development-selected
+`cadence-overlap` profile uses only `presses_per_second` and
+`press_overlap_fraction`, applies `log1p`, and fits 200 trees with 16 samples per
+tree. Preprocessing and the selected feature mask are persisted with each artifact;
+older identity-transform artifacts remain readable. This profile was selected
+using development examples and must be checked on new held-out sessions.
+
+Multiple genuine calibration sessions retain their original IDs through
+`validation_session_ids`. Their IDs are recorded in `validation_sessions`;
+the legacy singular metadata field is null when more than one is used. The
+threshold is the sorted score at rank `ceil(0.95 * n)` and alerts use strict `>`.
+This permits at most 5% empirical calibration alerts (one out of 20), not a
+guaranteed population false-alarm rate. A fresh test is required after tuning.
 
 Scores are negative `score_samples` values, with larger values more anomalous.
 They are not identity probabilities. Fewer than 30 presses returns

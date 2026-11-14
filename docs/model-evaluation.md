@@ -1,8 +1,40 @@
 # Model evaluation
 
-No real-data evaluation has been recorded. FRR, FAR, recall, and detection latency
-are unavailable. Checked-in sample windows are synthetic integration fixtures and
-do not establish detection accuracy.
+## Labeled pilot: model-selection cross-validation
+
+The existing real dataset contains 60 genuine windows from four sessions and 30
+second-user windows from two sessions. It represents one enrolled person and one
+consenting second person on one device. Datasets, per-window predictions, deployment
+identities, and credentials remain outside Git.
+
+Two-fold stratified group cross-validation keeps each complete session in one
+fold, fits preprocessing and the classifier on training folds only, and scores
+each of the 90 windows once out of fold. The selected classifier is logistic
+regression (`C=0.1`, balanced weights), using hold-time coefficient of variation
+and press overlap with `log1p` and standard scaling. Each fold's cutoff comes from
+its genuine training scores at the empirical 98th percentile.
+
+| Selection CV metric | Result |
+| --- | --- |
+| Accuracy | 96.67% (87/90 correct) |
+| Balanced accuracy | 95.83% |
+| Second-user precision | 96.55% |
+| Second-user recall | 93.33% (28/30 detected) |
+| F1 | 0.9492 |
+| Pooled threshold-centered margin AUROC | 0.9928 |
+| Mean per-fold AUROC | 0.9933 |
+| Average precision | 0.9861 |
+| Genuine false rejection rate | 1.67% (1/60) |
+| Second-user false acceptance rate | 6.67% (2/30) |
+
+The final saved model was subsequently fitted on all 90 labeled windows remotely.
+Its training diagnostics are separate from the out-of-fold metrics above.
+Feature/model selection used these CV results, so the estimates can be optimistic.
+They are not an untouched independent final test, a population false-alarm bound,
+or evidence of performance on other users or devices. Window counts are correlated
+within sessions. Checked-in synthetic samples only test integration.
+
+## Separate baseline-comparison workflow
 
 The comparison tool is `python -m backend.ml.evaluate`. Run it only on the
 designated training host with `ML_ALLOW_TRAINING=1`, using the locked backend
@@ -38,8 +70,10 @@ the report. Fitted Isolation Forest artifacts are temporary and removed after th
 comparison. Baseline statistics are included for reproducibility.
 
 FRR and FAR are window-level rates over usable windows. Low-activity windows are
-excluded and counted separately. Both thresholds use the validation 95th percentile
-with ties treated as normal. The baseline averages absolute robust z-scores using
+excluded and counted separately. Both thresholds use the genuine calibration score
+at rank `ceil(0.95 * n)`, with ties treated as normal. This limits empirical calibration
+alerts to at most 5%; it does not guarantee the same rate on fresh sessions.
+The baseline averages absolute robust z-scores using
 1.4826 times training MAD; varying features with zero MAD use training standard
 deviation. Near-constant features use the same training-only mask as Isolation
 Forest. No additional scaler is needed for Isolation Forest.
