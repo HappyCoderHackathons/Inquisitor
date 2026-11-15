@@ -87,7 +87,13 @@ def csv_windows(
                 "mouse_turn_std_rad": pstdev(turns) if turns else 0.0,
                 "mouse_path_straightness": min(1.0, math.hypot(total_x, total_y) / path) if path else 0.0,
             })
-        windows.append(validate_window(window))
+        # Idle stretches yield windows with no presses and, when tracked, no mouse activity.
+        # Skip them so a break never becomes zero-valued samples; the sequence still advances,
+        # so started_at stays aligned and sequence numbers stay unique but may have gaps.
+        features = window["features"]
+        active = features["key_count"] or (track_mouse and (features["mouse_sample_count"] or features["mouse_click_count"]))
+        if active:
+            windows.append(validate_window(window))
         presses.clear()
         holds.clear()
         mouse_bins.clear()

@@ -32,19 +32,65 @@ cargo build --release  # release exe at target/release/Inquisitor.exe
 ## Usage
 
 ```text
-inquisitor                        List connected input devices
-inquisitor capture                Capture to %APPDATA%\inquisitor\capture-<ts>.csv
-inquisitor capture --out <path>   Capture to <path>
-inquisitor capture --out -        Capture to stdout
-inquisitor --help                 Print usage
+Inquisitor                        Tray app if installed, otherwise the setup wizard
+Inquisitor tray                   Tray app
+Inquisitor setup                  Install, update, repair, or remove
+Inquisitor uninstall              Setup wizard on the remove page
+Inquisitor list                   List connected input devices
+Inquisitor capture                Capture to %APPDATA%\inquisitor\capture-<ts>.csv
+Inquisitor capture --out <path>   Capture to <path>
+Inquisitor capture --out -        Capture to stdout
+Inquisitor --help                 Print usage
 ```
 
 `capture` prints the resolved output path to stderr and then runs until
 stopped (Ctrl+C or killed). It creates the output directory if needed.
 
+## Install, update, repair, remove
+
+Running `Inquisitor.exe` from anywhere other than the install folder opens the
+setup wizard. A fresh install goes through three pages: terms, install
+location, and options.
+
+Terms: the first page lists what is recorded and what is never collected.
+Accepting stores `terms_accepted=<version>` in `config.ini`. Nothing is
+collected until then: the tray asks for the terms before it starts, drops every
+event while they are not accepted, and `Inquisitor capture` refuses to run.
+Raising `TERMS_VERSION` in `src/config.rs` asks everyone again.
+
+Install location defaults to `%LOCALAPPDATA%\Programs\Inquisitor`. A different
+folder can be typed or picked with Browse. An `Inquisitor` folder is always
+added unless the path already ends in one. The page shows the space required
+and available. Update and repair keep the folder recorded in Apps & features.
+
+The install is for the current user only, so administrator rights are not
+needed:
+
+- The exe is copied to `<install folder>\Inquisitor.exe`.
+- An entry is added to Apps & features. Its Uninstall runs
+  `Inquisitor.exe uninstall` and its Modify runs `Inquisitor.exe setup`.
+- Options: Start menu shortcut (on by default), Start with Windows (keeps the
+  current setting), and launch when done.
+
+The wizard's main action follows the install state: Install when nothing is
+installed, Update when another version is installed, and Repair when the same
+version is installed or the wizard runs from the installed exe. Any running
+tray is closed first so the exe can be replaced. Run once starts the tray from
+the current exe without installing.
+
+Remove deletes the installed exe and then its folder only if it is empty (never
+a recursive delete), the shortcut, the startup entry, and the Apps
+& features entry. Captured data and `config.ini` are kept unless "Also delete
+captured data and settings" is ticked. That option deletes only
+`capture-*.csv` files and `config.ini`, so a data folder the user picked keeps
+its other files.
+
+The app icon comes from `../../docs/icons/png/inquisitor-icon-*.png`.
+`build.rs` embeds those PNGs into the exe as icon resource 1.
+
 ## Device listing
 
-`inquisitor` with no arguments enumerates every device Windows reports
+`Inquisitor list` enumerates every device Windows reports
 through Raw Input: keyboards, mice, and HID devices (controllers, pens,
 digitizers, media keys). Each row shows the kind, vendor and product IDs
 where available, a usage label such as `gamepad` or `touch pad`, and the

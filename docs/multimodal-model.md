@@ -36,7 +36,9 @@ each real recording, not a source inferred from the person's label.
 
 Schema v4 contains only aggregate numeric features and window metadata. Windows
 are nonoverlapping 30-second intervals anchored to the first event; partial tails
-are excluded. Motion deltas are summed into 20 ms bins, then reduced to speed
+are excluded. Windows with no primary-source presses and, when mouse is tracked,
+no mouse motion or clicks are skipped, so idle time adds no zero-valued windows.
+Their sequence numbers are not reused, so a converted session can have gaps. Motion deltas are summed into 20 ms bins, then reduced to speed
 statistics, turning statistics, and path straightness. A turn is counted only
 across bins at most 250 ms apart. Speeds retain raw-count units, not pixel units.
 Only their coefficient of variation enters the classifier. Uniform scaling of

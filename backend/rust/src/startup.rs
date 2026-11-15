@@ -16,7 +16,7 @@ const RUN_KEY: windows::core::PCWSTR = w!("Software\\Microsoft\\Windows\\Current
 const APP_NAME: windows::core::PCWSTR = w!("Inquisitor");
 
 /// Convert a Win32 error code into a `windows::core::Result<()>`.
-fn check(err: WIN32_ERROR) -> Result<()> {
+pub(crate) fn check(err: WIN32_ERROR) -> Result<()> {
     if err == ERROR_SUCCESS {
         Ok(())
     } else {
@@ -38,10 +38,11 @@ pub fn is_enabled() -> bool {
     }
 }
 
-/// Add Inquisitor to HKCU\...\Run with the given exe path.
+/// Add Inquisitor to HKCU\...\Run with the given exe path. The explicit `tray`
+/// argument starts the tray even when the exe is not the installed copy, which
+/// would otherwise open the install wizard.
 pub fn enable(exe_path: &Path) -> Result<()> {
-    let wide: Vec<u16> = exe_path
-        .to_string_lossy()
+    let wide: Vec<u16> = run_command(exe_path)
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
@@ -61,6 +62,11 @@ pub fn enable(exe_path: &Path) -> Result<()> {
         check(r)?;
     }
     Ok(())
+}
+
+/// `"C:\path with spaces\Inquisitor.exe" tray`.
+fn run_command(exe_path: &Path) -> String {
+    format!("\"{}\" tray", exe_path.display())
 }
 
 /// Remove Inquisitor from HKCU\...\Run. Missing entry is treated as success.

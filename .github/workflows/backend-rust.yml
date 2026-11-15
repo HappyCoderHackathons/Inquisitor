@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - 'backend/rust/**'
+      - 'docs/icons/png/**'
       - '.github/workflows/backend-rust.yml'
   pull_request:
     paths:
       - 'backend/rust/**'
+      - 'docs/icons/png/**'
       - '.github/workflows/backend-rust.yml'
   workflow_dispatch:
 
