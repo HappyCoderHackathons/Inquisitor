@@ -60,7 +60,7 @@ class HostedAPI:
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
             raise RuntimeError(f"{method} {path} returned invalid JSON") from error
         if not isinstance(payload, dict):
-            raise RuntimeError(f"{method} {path} returned an invalid response")
+            raise TypeError(f"{method} {path} returned an invalid response")
         return cast(JsonObject, payload)
 
     def get(self, path: str) -> JsonObject:
@@ -209,7 +209,7 @@ def seed(
     except PyMongoError as error:
         try:
             api.post("/api/onboarding/rounds/current/cancel", {})
-        except RuntimeError as cancel_error:
+        except (RuntimeError, TypeError) as cancel_error:
             raise RuntimeError(
                 f"Could not store demo windows ({error}); session cancellation also failed "
                 f"({cancel_error})"
@@ -252,7 +252,7 @@ def main() -> None:
                 device_name=args.device_name,
                 windows=windows,
             )
-    except (OSError, PyMongoError, RuntimeError, ValueError) as error:
+    except (OSError, PyMongoError, RuntimeError, TypeError, ValueError) as error:
         sys.exit(f"Demo seeding failed: {error}")
 
     print(f"Created demo account: {args.email} ({user_id})")
