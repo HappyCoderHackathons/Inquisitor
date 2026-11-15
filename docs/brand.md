@@ -82,6 +82,15 @@ and light surfaces. Prefer original, abstract shapes related to patterns,
 signals, or interaction; avoid imagery that suggests surveillance or guaranteed
 identity detection.
 
+A draft compact mark lives in `docs/icons/`: a biretta over keystroke timing bars.
+
+| File | Use |
+| --- | --- |
+| `inquisitor-icon.svg` | App icon on a dark tile; PNGs at 16 to 1024 px in `png/` |
+| `inquisitor-mark.svg` | Transparent mark for dark surfaces |
+| `inquisitor-mark-light.svg` | Transparent mark for light surfaces |
+| `inquisitor-mark-mono.svg` | Single color, inherits `currentColor` |
+
 ## Decisions needed to finalize this guide
 
 - Confirm the primary audience and the product surfaces this brand covers
