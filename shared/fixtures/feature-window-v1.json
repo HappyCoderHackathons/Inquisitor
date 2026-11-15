@@ -1,0 +1,315 @@
+{
+  "description": "Synthetic contract fixtures for feature-window v1. Not real typing data.",
+  "valid": {
+    "enrollment": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      }
+    },
+    "monitoring_zero_activity": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 1,
+      "mode": "monitoring",
+      "started_at": "2000-01-01T00:00:30.500+00:00",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 0,
+        "presses_per_second": 0,
+        "hold_mean_ms": 0,
+        "hold_std_ms": 0,
+        "press_interval_mean_ms": 0,
+        "press_interval_std_ms": 0,
+        "press_interval_p90_ms": 0,
+        "pause_count": 0,
+        "pause_fraction": 1,
+        "burst_count": 0,
+        "press_overlap_fraction": 0
+      }
+    }
+  },
+  "invalid": {
+    "key_identity_field": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      },
+      "key": "a"
+    },
+    "typed_text_feature": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12,
+        "text": "hello"
+      }
+    },
+    "missing_feature": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      }
+    },
+    "missing_device_id": {
+      "schema_version": 1,
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      }
+    },
+    "wrong_schema_version": {
+      "schema_version": 2,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      }
+    },
+    "unknown_mode": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "replay",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      }
+    },
+    "bad_timestamp": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "yesterday",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      }
+    },
+    "zero_duration": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 0,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      }
+    },
+    "negative_sequence": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": -1,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      }
+    },
+    "fraction_above_one": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 1.5,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      }
+    },
+    "negative_hold": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": -1,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      }
+    },
+    "string_count": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": "44",
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      }
+    }
+  }
+}

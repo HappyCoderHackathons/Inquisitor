@@ -36,9 +36,20 @@ class ModelServiceTests(unittest.TestCase):
         self.assertEqual(self.client.get("/health").status_code, 401)
         self.assertEqual(self.client.get("/health", headers={"Authorization": "Bearer wrong"}).status_code, 401)
         self.assertEqual(self.client.get("/health", headers=self.headers).json, {"state": "ok"})
-        with patch.dict(os.environ, {"ML_TOKEN_FILE": str(Path(self.temporary.name) / "missing")}):
-            with self.assertRaises(FileNotFoundError):
-                create_app()
+        with (
+            patch.dict(os.environ, {"ML_TOKEN_FILE": str(Path(self.temporary.name) / "missing")}),
+            self.assertRaises(FileNotFoundError),
+        ):
+            create_app()
+
+    def test_shared_schema_fixtures(self) -> None:
+        fixtures = json.loads((Path(__file__).resolve().parents[1] / "shared/fixtures/feature-window-v1.json").read_text(encoding="utf-8"))
+        for name, window in fixtures["valid"].items():
+            with self.subTest(name):
+                validate_window(window)
+        for name, window in fixtures["invalid"].items():
+            with self.subTest(name), self.assertRaises(ValueError):
+                validate_window(window)
 
     def test_nonfinite_and_impossible_timing(self) -> None:
         for field, value in (
