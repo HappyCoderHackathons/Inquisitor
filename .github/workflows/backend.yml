@@ -12,7 +12,7 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --project backend --locked
       - run: uvx ruff@0.17.5 check backend scripts tests python-keylogger
@@ -22,6 +22,6 @@ jobs:
     # pynput needs a desktop session to import, so collector tests run on Windows.
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v6
       - run: uv run --project python-keylogger --locked python -m unittest discover -s python-keylogger/tests -v
