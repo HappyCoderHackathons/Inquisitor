@@ -42,6 +42,7 @@ test("password accounts authenticate, reject bad credentials and cross-site requ
   const signupCookie = cookies(signup);
   assert.match(signupCookie, /better-auth.session_token=/);
   assert.match(signup.headers.get("set-cookie")!, /HttpOnly/i);
+  assert.match(signup.headers.get("set-cookie")!, /SameSite=Lax/i);
   const session = (cookie: string) =>
     auth.handler(
       new Request(`${origin}/api/auth/get-session`, {

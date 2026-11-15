@@ -23,6 +23,7 @@ export function createAuth(database: BetterAuthOptions["database"], baseURL: str
     rateLimit: { enabled: true, storage: "database" },
     advanced: {
       useSecureCookies: origin.startsWith("https://"),
+      defaultCookieAttributes: { sameSite: "lax" },
       ipAddress: { ipAddressHeaders: ["x-real-ip"] },
     },
   });
