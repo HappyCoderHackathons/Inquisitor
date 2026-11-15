@@ -21,8 +21,12 @@ alert row for dashboard review.
 | Trigger | Removed data |
 | --- | --- |
 | `DELETE /me/data` | All windows, inference results, alerts, and models for the account |
-| Device-scoped delete helper | Windows, monitoring rows, inference results, alerts, and models for that device |
+| `AccountStore.delete_device` | Windows, inference results, alerts, and models for that device |
 | `POST /retention/purge` | Monitoring windows, inference results, and alerts older than the retention period |
+
+On Atlas, `delete_device_records` in `Frontend/atlas_persistence.py` applies the same device cascade to
+`model_versions`, `inference_results`, `alerts`, `windows`, and `monitoring_windows`. No hosted route
+calls it yet.
 
 Enrollment windows stay until reset or account deletion. Model artifact files on the ML
 host follow the same account and device boundaries.

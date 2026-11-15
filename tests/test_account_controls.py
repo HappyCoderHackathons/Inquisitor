@@ -82,6 +82,7 @@ class AccountControlTests(unittest.TestCase):
         ).status_code, 201)
         self.account.save_result("synthetic-user", "synthetic-device", {"model_id": model_id, "state": "UNUSUAL"})
         self.account.save_result("other-user", "other-device", {"model_id": other_id, "state": "NORMAL"})
+        self.account.save_result("synthetic-user", "retired-device", {"model_id": model_id, "state": "UNUSUAL"})
 
         response = self.client.delete("/me/data", headers=self.headers)
         self.assertEqual(response.status_code, 200, response.json)

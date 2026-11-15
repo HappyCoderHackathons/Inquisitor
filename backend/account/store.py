@@ -273,16 +273,17 @@ class AccountStore:
 
     def delete_user(self, user_id: str) -> None:
         with self._lock, closing(self._connect()) as conn:
-            device_ids = {
-                cast(str, row["device_id"])
-                for row in conn.execute(
-                    "SELECT device_id FROM models WHERE user_id = ? "
-                    "UNION SELECT device_id FROM windows WHERE user_id = ?",
-                    (user_id, user_id),
-                )
-            }
-        for device_id in sorted(device_ids):
-            self.delete_device(user_id, device_id)
+            model_ids = [
+                cast(str, row["model_id"])
+                for row in conn.execute("SELECT model_id FROM models WHERE user_id = ?", (user_id,))
+            ]
+            for model_id in model_ids:
+                self._remove_artifact(model_id)
+            conn.execute("DELETE FROM windows WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM inference_results WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM alerts WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM models WHERE user_id = ?", (user_id,))
+            conn.commit()
 
     def retention_seconds(self) -> int:
         with self._lock, closing(self._connect()) as conn:
