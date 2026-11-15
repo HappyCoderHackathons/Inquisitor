@@ -10,7 +10,7 @@ so the page does not present placeholder data as live.
 - `server.py`: `/dashboard` route. Add authenticated page data/API handling here
   only if this Flask prototype remains the selected host.
 - `templates/dashboard.html`: local collection controls, connection status,
-  detection summary, SSOJet profile fields, and data/account controls.
+  detection summary, Better Auth profile fields, and data/account controls.
 - `frontend/dashboard.ts`: browser-only timing aggregation, opt-in collection,
   and API calls. It keeps key identifiers transient and sends only feature
   windows that match the v1 contract.
@@ -34,7 +34,7 @@ The follow-up implementer should:
 
 1. Define and version messages for agent/model health, timestamps, disconnects,
    and detection summaries before wiring status updates into the dashboard.
-2. Authenticate the dashboard with SSOJet and authorize every status/event
+2. Authenticate the dashboard with Better Auth and authorize every status/event
    against the same account and paired device. Keep device credentials on the
    agent/service, not in browser JavaScript.
 3. Keep raw key identity, typed content, and ordered input events out of
@@ -49,6 +49,6 @@ The follow-up implementer should:
    disconnect/revocation, stale status, and deletion before presenting the
    integration as complete.
 
-Account deletion remains disabled in the UI until SSOJet and account-scoped
+Account deletion remains disabled in the UI until Better Auth and account-scoped
 storage are implemented. The profile fields intentionally contain no fabricated
 user information.

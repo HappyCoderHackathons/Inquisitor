@@ -1,4 +1,4 @@
-"""Hosted onboarding: SSOJet sign-in, agent pairing, game-round collection in Atlas, and model training."""
+"""Hosted onboarding: account sign-in, agent pairing, collection in Atlas, and model training."""
 from __future__ import annotations
 
 import hashlib
@@ -13,7 +13,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 from uuid import uuid4
 
-from flask import Blueprint, Flask, abort, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, Flask, abort, g, jsonify, redirect, render_template, request, url_for
+import requests
 from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
@@ -23,7 +24,6 @@ GAME_SECONDS = 150
 ROUND_MS = 60_000
 MIN_TRAINING_WINDOWS = 20
 MIN_VALIDATION_WINDOWS = 10
-SESSION_LIFETIME = timedelta(hours=12)
 # (requests, window) per key; generous for real use, tight enough to stop guessing and floods.
 LOGIN_LIMIT = (30, timedelta(minutes=1))
 PAIR_LIMIT = (10, timedelta(minutes=10))
@@ -31,8 +31,7 @@ UPLOAD_LIMIT = (60, timedelta(minutes=1))
 PAIRING_TTL = timedelta(minutes=10)
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ENV = (
-    "SSOJET_AUTHORITY", "SSOJET_CLIENT_ID", "SSOJET_CLIENT_SECRET", "SSOJET_REDIRECT_URI",
-    "SESSION_SECRET", "MONGODB_URI", "MONGODB_DB", "ML_SERVICE_URL", "ML_TOKEN_FILE",
+    "BETTER_AUTH_URL", "MONGODB_URI", "MONGODB_DB", "ML_SERVICE_URL", "ML_TOKEN_FILE",
 )
 
 Document = dict[str, Any]
@@ -110,19 +109,7 @@ def progress(database: Database, onboarding: Document) -> Document:
 def register(
     app: Flask, database: Database, trainer: Trainer, scorer: Scorer, window_error: Callable[[Document], str | None],
 ) -> None:
-    from authlib.integrations.flask_client import OAuth
-
-    app.secret_key = os.environ["SESSION_SECRET"]
-    secure = os.environ["SSOJET_REDIRECT_URI"].startswith("https://")
-    app.config.update(SESSION_COOKIE_SECURE=secure, SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
-                      PERMANENT_SESSION_LIFETIME=SESSION_LIFETIME)
-    oauth = OAuth(app)
-    oauth.register(
-        name="ssojet", client_id=os.environ["SSOJET_CLIENT_ID"], client_secret=os.environ["SSOJET_CLIENT_SECRET"],
-        server_metadata_url=os.environ["SSOJET_AUTHORITY"].rstrip("/") + "/.well-known/openid-configuration",
-        client_kwargs={"scope": "openid profile email", "code_challenge_method": "S256"},
-    )
-    database.sessions.create_index("expires_at", expireAfterSeconds=0)
+    public_origin = os.environ["BETTER_AUTH_URL"].rstrip("/")
     database.rate_limits.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("code_hash", unique=True)
@@ -172,11 +159,26 @@ def register(
         return request.remote_addr or "unknown"
 
     def signed_in_user() -> str | None:
-        # The cookie holds only a random session ID; the record in Atlas is what logout and expiry revoke.
-        sid = session.get("sid")
-        record = database.sessions.find_one({"_id": digest(sid), "expires_at": {"$gt": now()}}) \
-            if isinstance(sid, str) else None
-        return record["user_id"] if record else None
+        if "auth_user" not in g:
+            g.auth_user = None
+            if request.headers.get("Cookie"):
+                response = auth_request("GET", "get-session")
+                if response.status_code != 200:
+                    abort(503, description="Sign-in service is unavailable")
+                try:
+                    result = response.json()
+                    user = result.get("user") if isinstance(result, dict) else None
+                    if user is not None:
+                        if not isinstance(user, dict) or not isinstance(user.get("id"), str) or not user["id"] \
+                                or not isinstance(user.get("email"), str):
+                            raise ValueError("invalid auth user")
+                        g.auth_user = "better-auth:" + user["id"]
+                        database.users.update_one({"_id": g.auth_user}, {
+                            "$set": {"email": user["email"]}, "$setOnInsert": {"created_at": now()},
+                        }, upsert=True)
+                except ValueError:
+                    abort(503, description="Invalid sign-in service response")
+        return g.auth_user
 
     def current_user() -> str:
         user_id = signed_in_user()
@@ -186,6 +188,9 @@ def register(
 
     def json_body() -> Document:
         # JSON-only bodies plus SameSite=Lax cookies block cross-site form posts.
+        if request.headers.get("Origin") not in (None, public_origin) \
+                or request.headers.get("Sec-Fetch-Site") == "cross-site":
+            abort(403)
         value = request.get_json(silent=True) if request.is_json else None
         if not isinstance(value, dict):
             abort(415)
@@ -207,35 +212,34 @@ def register(
 
     @blueprint.get("/login")
     def login():
-        throttle(f"login:{client_ip()}", LOGIN_LIMIT)
-        return oauth.ssojet.authorize_redirect(os.environ["SSOJET_REDIRECT_URI"])
-
-    @blueprint.get("/auth/callback")
-    def callback():
-        throttle(f"login:{client_ip()}", LOGIN_LIMIT)
-        token = oauth.ssojet.authorize_access_token()
-        claims = token.get("userinfo") or oauth.ssojet.userinfo(token=token)
-        subject = claims.get("sub")
-        if not isinstance(subject, str) or not subject:
-            abort(401)
-        database.users.update_one({"_id": subject}, {
-            "$set": {"email": claims.get("email"), "last_login_at": now()},
-            "$setOnInsert": {"created_at": now()},
-        }, upsert=True)
-        sid = secrets.token_urlsafe(32)
-        database.sessions.insert_one({"_id": digest(sid), "user_id": subject, "expires_at": now() + SESSION_LIFETIME})
-        session.clear()
-        session.permanent = True
-        session["sid"] = sid
         return redirect(url_for("hosted.onboarding_page"))
 
-    @blueprint.post("/logout")
-    def logout():
-        sid = session.get("sid")
-        if isinstance(sid, str):
-            database.sessions.delete_one({"_id": digest(sid)})
-        session.clear()
-        return redirect(url_for("hosted.onboarding_page"))
+    def auth_request(method: str, path: str) -> requests.Response:
+        headers = {name: request.headers[name] for name in ("Cookie", "Content-Type", "Origin", "Sec-Fetch-Site")
+                   if name in request.headers}
+        headers["X-Real-IP"] = client_ip()
+        try:
+            return requests.request(method, f"http://127.0.0.1:3001/api/auth/{path}", headers=headers,
+                                    data=request.get_data() if method == "POST" else None,
+                                    timeout=10, allow_redirects=False)
+        except requests.RequestException:
+            abort(503, description="Sign-in service is unavailable")
+
+    @blueprint.route("/api/auth/<path:path>", methods=["GET", "POST"])
+    def auth_proxy(path: str):
+        allowed = {"sign-in/email", "sign-up/email", "sign-out"} if request.method == "POST" else {"get-session"}
+        if path not in allowed:
+            abort(404)
+        if request.method == "POST":
+            json_body()
+            throttle(f"login:{client_ip()}", LOGIN_LIMIT)
+        upstream = auth_request(request.method, path)
+        response = app.response_class(upstream.content, status=upstream.status_code,
+                                      content_type=upstream.headers.get("Content-Type", "application/json"))
+        for cookie in upstream.raw.headers.getlist("Set-Cookie"):
+            response.headers.add("Set-Cookie", cookie)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @blueprint.get("/onboarding")
     def onboarding_page():

@@ -31,7 +31,9 @@
   based on general stack preferences.
 - Storage: MongoDB Atlas. Use server-side credentials; do not introduce PostgreSQL
   or Drizzle based on general stack preferences.
-- Authentication: SSOJet. Enforce account/device authorization in the application;
+- Authentication: Better Auth in the local Node service, with MongoDB-backed password accounts and sessions.
+  Flask forwards same-origin authentication requests and validates sessions through that service.
+  Enforce account/device authorization in the application;
   use short-lived, single-use pairing codes and revocable device credentials.
 - Hosting: HTTPS for the hosted service and authenticated outbound WSS from the
   Windows client. Do not require inbound Internet access to the user's PC.

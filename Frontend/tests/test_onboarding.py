@@ -2,7 +2,7 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import mongomock
 from flask import Flask
@@ -11,7 +11,7 @@ import hosted
 import server
 
 ENV = {name: "test-value" for name in hosted.ENV} | {
-    "SSOJET_AUTHORITY": "https://sso.example.test", "SSOJET_REDIRECT_URI": "https://app.example.test/auth/callback",
+    "BETTER_AUTH_URL": "https://app.example.test",
 }
 
 
@@ -48,6 +48,10 @@ class OnboardingTests(unittest.TestCase):
         self.trained = []
         self.scored = []
         self.training_error = None
+        self.auth_sessions = {}
+        patcher = patch("hosted.requests.request", side_effect=self.auth_request)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
         def trainer(user_id, device_id, windows, validation_sessions):
             self.trained.append((user_id, device_id, windows, validation_sessions))
@@ -65,12 +69,22 @@ class OnboardingTests(unittest.TestCase):
         return {"model_id": "model-1", "state": "NORMAL", "score": -0.4, "threshold": 0.1, "score_delta": -0.5}
 
     def sign_in(self, user_id="user-a"):
-        self.database.users.insert_one({"_id": user_id, "email": f"{user_id}@example.test"})
         sid = f"session-{user_id}"
-        self.database.sessions.insert_one({"_id": hosted.digest(sid), "user_id": user_id,
-                                           "expires_at": self.clock + hosted.SESSION_LIFETIME})
-        with self.client.session_transaction() as session:
-            session["sid"] = sid
+        self.auth_sessions[sid] = (user_id, self.clock + timedelta(hours=12))
+        self.client.set_cookie("better-auth.session_token", sid)
+
+    def auth_request(self, method, url, *, headers, data, timeout, allow_redirects):
+        sid = headers.get("Cookie", "").removeprefix("better-auth.session_token=")
+        record = self.auth_sessions.get(sid)
+        result = None
+        if url.endswith("/sign-out"):
+            self.auth_sessions.pop(sid, None)
+        elif record and record[1] > self.clock:
+            result = {"user": {"id": record[0], "email": f"{record[0]}@example.test"}}
+        response = Mock(status_code=200, content=b"{}", headers={"Content-Type": "application/json"})
+        response.json.return_value = result
+        response.raw.headers.getlist.return_value = []
+        return response
 
     def pair(self):
         self.sign_in()
@@ -94,7 +108,7 @@ class OnboardingTests(unittest.TestCase):
         device_id, agent = self.pair()
         token = agent["Authorization"].removeprefix("Bearer ")
         device = self.database.devices.find_one({"_id": device_id})
-        self.assertEqual(device["user_id"], "user-a")
+        self.assertEqual(device["user_id"], "better-auth:user-a")
         self.assertEqual(device["token_hash"], hosted.digest(token))
         self.assertNotIn(token, str(list(self.database.devices.find())))
 
@@ -159,7 +173,7 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(status["state"], "ready")
         self.assertEqual(status["model_id"], "model-1")
         user_id, trained_device, windows, validation = self.trained[0]
-        self.assertEqual((user_id, trained_device), ("user-a", device_id))
+        self.assertEqual((user_id, trained_device), ("better-auth:user-a", device_id))
         self.assertEqual(sorted(validation), sorted(latest.values()))
         self.assertEqual(len(windows), 36)
         self.assertNotIn(cancelled, {item["session_id"] for item in windows})
@@ -170,7 +184,7 @@ class OnboardingTests(unittest.TestCase):
         monitoring = window(device_id, "monitor-1", 0) | {"mode": "monitoring"}
         scored = self.client.post("/api/agent/windows", headers=agent, json=monitoring)
         self.assertEqual((scored.status_code, scored.get_json()["state"]), (201, "NORMAL"))
-        self.assertEqual(self.scored, [("user-a", device_id, 0)])
+        self.assertEqual(self.scored, [("better-auth:user-a", device_id, 0)])
         self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=monitoring).status_code, 409)
         stored = self.database.monitoring_windows.find_one({"session_id": "monitor-1"})
         self.assertEqual(stored["result"]["state"], "NORMAL")
@@ -205,7 +219,7 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(uploads[60].status_code, 429)
 
     def test_partial_configuration_fails_loudly(self):
-        with patch.dict(os.environ, {"SSOJET_AUTHORITY": "https://sso.example.test"}, clear=True):
+        with patch.dict(os.environ, {"BETTER_AUTH_URL": "https://app.example.test"}, clear=True):
             with self.assertRaises(RuntimeError):
                 hosted.configured()
         with patch.dict(os.environ, {}, clear=True):
@@ -215,14 +229,39 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/me").status_code, 401)
         self.sign_in()
         self.assertEqual(self.client.get("/api/me").get_json()["email"], "user-a@example.test")
-        cookie = self.client.get_cookie("session").value
-        self.assertEqual(self.client.post("/logout").status_code, 302)
+        cookie = self.client.get_cookie("better-auth.session_token").value
+        self.assertEqual(self.client.post("/api/auth/sign-out", json={}).status_code, 200)
         self.assertEqual(self.client.get("/api/me").status_code, 401)
-        self.client.set_cookie("session", cookie)
+        self.client.set_cookie("better-auth.session_token", cookie)
         self.assertEqual(self.client.get("/api/me").status_code, 401, "logout must revoke the server-side session")
         self.sign_in("user-b")
-        self.clock += hosted.SESSION_LIFETIME
+        self.clock += timedelta(hours=12)
         self.assertEqual(self.client.get("/api/me").status_code, 401)
+
+    def test_auth_proxy_rejects_cross_site_posts_and_unknown_endpoints(self):
+        self.assertEqual(self.client.post("/api/auth/sign-in/email", json={},
+                         headers={"Origin": "https://attacker.example"}).status_code, 403)
+        self.assertEqual(self.client.post("/api/auth/sign-in/email", data="{}").status_code, 415)
+        self.assertEqual(self.client.post("/api/auth/delete-user", json={}).status_code, 404)
+        self.assertEqual(self.client.get("/auth/callback").status_code, 404)
+
+    def test_auth_service_failure_does_not_authorize_requests(self):
+        self.sign_in()
+        with patch("hosted.requests.request", side_effect=hosted.requests.ConnectionError):
+            self.assertEqual(self.client.get("/api/me").status_code, 503)
+            self.assertEqual(self.client.post("/api/auth/sign-in/email", json={}).status_code, 503)
+        upstream = Mock(status_code=200)
+        upstream.json.return_value = {"user": {"id": "", "email": "forged@example.test"}}
+        with patch("hosted.requests.request", return_value=upstream):
+            self.assertEqual(self.client.get("/api/me").status_code, 503)
+
+    def test_auth_proxy_preserves_all_session_cookies(self):
+        upstream = Mock(status_code=200, content=b"{}", headers={"Content-Type": "application/json"})
+        upstream.raw.headers.getlist.return_value = ["first=one; HttpOnly; Path=/", "second=two; Path=/"]
+        with patch("hosted.requests.request", return_value=upstream):
+            response = self.client.post("/api/auth/sign-in/email", json={"email": "user@example.test"})
+        self.assertEqual(response.headers.getlist("Set-Cookie"), upstream.raw.headers.getlist.return_value)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
 
 
 if __name__ == "__main__":
