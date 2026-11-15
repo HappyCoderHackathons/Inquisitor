@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Inquisitor">
+  <rect width="512" height="512" rx="112" fill="#09070D"/>
+  <rect x="8" y="8" width="496" height="496" rx="104" fill="none" stroke="#393243" stroke-width="16"/>
+  <path d="M164 156 V122 A30 30 0 0 1 194 92 H214 V156 Z M348 156 V122 A30 30 0 0 0 318 92 H298 V156 Z" fill="#C4B5FD"/>
+  <path d="M156 150 H356 L370 216 H142 Z" fill="#7C3AED"/>
+  <rect x="126" y="206" width="260" height="28" rx="12" fill="#7C3AED"/>
+  <circle cx="256" cy="122" r="28" fill="#A3E635"/>
+  <rect x="108" y="330" width="40" height="90" rx="20" fill="#C4B5FD"/>
+  <rect x="172" y="270" width="40" height="150" rx="20" fill="#C4B5FD"/>
+  <rect x="236" y="256" width="40" height="164" rx="20" fill="#A3E635"/>
+  <rect x="300" y="290" width="40" height="130" rx="20" fill="#C4B5FD"/>
+  <rect x="364" y="260" width="40" height="160" rx="20" fill="#C4B5FD"/>
+</svg>
