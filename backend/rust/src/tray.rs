@@ -14,24 +14,31 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW, GetWindowLongPtrW, HMENU,
-    HWND_MESSAGE, IsWindow, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG,
-    PostMessageW, PostQuitMessage, RegisterClassExW, SetForegroundWindow, SetWindowLongPtrW,
-    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTALIGN, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenu,
-    TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU,
-    WM_DESTROY, WM_INPUT, WM_LBUTTONUP, WM_NULL, WNDCLASSEXW,
+    HWND_MESSAGE, IsDialogMessageW, IsWindow, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
+    MF_STRING, MF_UNCHECKED, MSG, PostMessageW, PostQuitMessage, RegisterClassExW,
+    SetForegroundWindow, SetTimer, SetWindowLongPtrW, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+    TPM_RIGHTALIGN, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenu, TranslateMessage,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_INPUT,
+    WM_LBUTTONUP, WM_NULL, WM_TIMER, WNDCLASSEXW,
 };
 use windows::core::{PCWSTR, w};
 
 use crate::capture::{self, Capture};
 use crate::config::Config;
+use crate::credential;
 use crate::devices_window;
+use crate::features::Windower;
 use crate::folder_picker;
+use crate::http::Endpoint;
 use crate::icon;
+use crate::link::{self, Link, Mode, State};
+use crate::pair_window;
 use crate::startup;
 
 /// Class of the tray's message-only window. The installer finds running trays
@@ -50,8 +57,15 @@ const ID_PAUSE_1H: u16 = 13;
 const ID_OPEN_DATA: u16 = 20;
 const ID_SET_DATA: u16 = 21;
 const ID_OPEN_DEVICES: u16 = 22;
+const ID_CONNECT: u16 = 30;
+const ID_DISCONNECT: u16 = 31;
 const ID_TOGGLE_STARTUP: u16 = 40;
 const ID_QUIT: u16 = 50;
+
+// Closes feature windows that ended with no input after them, sends them to the
+// link, and notices when a timed pause has run out.
+const TICK_TIMER_ID: usize = 1;
+const TICK_MS: u32 = 5_000;
 
 struct AppState {
     config: Config,
@@ -65,6 +79,10 @@ struct AppState {
     /// HWND of the "Allow connections" window if it has been opened. May be stale
     /// after the user closes it; always check with IsWindow before use.
     devices_hwnd: Option<HWND>,
+    /// Connection to the website. None until the tray window exists.
+    link: Option<Link>,
+    /// Pause state last told to the link, so changes are sent once.
+    paused_sent: bool,
 }
 
 impl AppState {
@@ -78,6 +96,18 @@ impl AppState {
             pause_until: None,
             startup_enabled,
             devices_hwnd: None,
+            link: None,
+            paused_sent: false,
+        }
+    }
+
+    /// End a timed pause whose deadline has passed.
+    fn expire_pause(&mut self) {
+        if let Some(until) = self.pause_until
+            && Instant::now() >= until
+        {
+            self.paused = false;
+            self.pause_until = None;
         }
     }
 
@@ -86,12 +116,7 @@ impl AppState {
     /// `allowed_devices`; new devices are silently dropped until the user ticks
     /// them (or "Allow all") in the Allow connections window.
     fn drop_event(&mut self, path: &str) -> bool {
-        if let Some(until) = self.pause_until
-            && Instant::now() >= until
-        {
-            self.paused = false;
-            self.pause_until = None;
-        }
+        self.expire_pause();
         // Startup asks for the terms before the tray runs; this keeps the rule
         // even if the tray is ever started another way.
         if self.paused || !self.config.terms_accepted() {
@@ -108,7 +133,8 @@ pub fn run() -> windows::core::Result<()> {
     // captured. Nothing records until at least one device is allowed.
     let config = Config::load_or_default();
     let (writer, current_path) = capture::open_timestamped_file(&config.data_dir);
-    let capture = Capture::new(writer);
+    let mut capture = Capture::new(writer);
+    capture.set_windower(Some(Windower::new()));
     let state = Box::new(AppState::new(config, capture, current_path));
 
     let hinstance = unsafe { GetModuleHandleW(PCWSTR::null())? };
@@ -147,9 +173,27 @@ pub fn run() -> windows::core::Result<()> {
     capture::register_for_raw_input(hwnd)?;
     add_tray_icon(hwnd)?;
 
+    // Connect to the website when this PC was paired before.
+    let state = unsafe { &mut *state_ptr };
+    let server = state
+        .config
+        .server_url
+        .as_deref()
+        .and_then(|url| Endpoint::parse(url).ok());
+    state.link = Some(Link::start(hwnd, server, credential::load(), false));
+    unsafe {
+        SetTimer(Some(hwnd), TICK_TIMER_ID, TICK_MS, None);
+    }
+
     let mut msg = MSG::default();
     unsafe {
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            // Tab, Enter, and Escape in the pairing dialog.
+            if let Some(dialog) = pair_window::current()
+                && IsDialogMessageW(dialog, &msg).as_bool()
+            {
+                continue;
+            }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -214,6 +258,34 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                     }
                     !s.drop_event(path)
                 });
+                forward_windows(state);
+                sync_pause(state);
+                LRESULT(0)
+            }
+            WM_TIMER if wparam.0 == TICK_TIMER_ID => {
+                state.expire_pause();
+                let now = state.capture.monotonic_s();
+                if let Some(windower) = state.capture.windower_mut() {
+                    windower.tick(now);
+                }
+                forward_windows(state);
+                sync_pause(state);
+                LRESULT(0)
+            }
+            m if m == link::WM_LINK => {
+                if let Some(link) = &state.link {
+                    set_tooltip(hwnd, &tooltip(&link.status()));
+                }
+                LRESULT(0)
+            }
+            m if m == pair_window::WM_PAIRED => {
+                if let Some((endpoint, credential)) = pair_window::take_paired() {
+                    state.config.server_url = Some(endpoint.display());
+                    let _ = state.config.save();
+                    if let Some(link) = &state.link {
+                        link.connect(endpoint, credential);
+                    }
+                }
                 LRESULT(0)
             }
             m if m == WM_TRAY => {
@@ -238,6 +310,9 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                     && IsWindow(Some(dh)).as_bool()
                 {
                     let _ = DestroyWindow(dh);
+                }
+                if let Some(dialog) = pair_window::current() {
+                    let _ = DestroyWindow(dialog);
                 }
                 remove_tray_icon(hwnd);
                 PostQuitMessage(0);
@@ -339,6 +414,19 @@ fn append_submenu(menu: HMENU, submenu: HMENU, label: &str) {
 }
 
 fn build_menu(menu: HMENU, state: &AppState) {
+    // Account connection first, like a VPN client: where this PC reports to.
+    if let Some(link) = &state.link {
+        let status = link.status();
+        append(menu, MF_STRING.0 | MF_GRAYED.0, 0, &status_label(&status));
+        match status.state {
+            State::NotPaired | State::Disconnected(_) => {
+                append(menu, MF_STRING.0, ID_CONNECT, "Connect to account...")
+            }
+            _ => append(menu, MF_STRING.0, ID_DISCONNECT, "Disconnect from account"),
+        }
+        append_sep(menu);
+    }
+
     let pause_label = if state.paused { "Resume" } else { "Pause" };
     append(menu, MF_STRING.0, ID_PAUSE_RESUME, pause_label);
 
@@ -409,16 +497,104 @@ fn handle_command(hwnd: HWND, state: &mut AppState, id: u16) {
             }
             state.startup_enabled = startup::is_enabled();
         }
+        ID_CONNECT => pair_window::open(hwnd, state.config.server_url.as_deref()),
+        ID_DISCONNECT => {
+            // Deletes the local credential. The device stays listed on the website
+            // as offline until it is removed there.
+            if let Some(link) = &state.link {
+                link.disconnect();
+            }
+        }
         ID_QUIT => unsafe {
             let _ = DestroyWindow(hwnd);
         },
         _ => {}
     }
+    sync_pause(state);
 }
 
 fn pause_for(state: &mut AppState, seconds: u64) {
     state.paused = true;
     state.pause_until = Some(Instant::now() + std::time::Duration::from_secs(seconds));
+}
+
+/// Hand finished feature windows to the link, which decides whether to upload.
+fn forward_windows(state: &mut AppState) {
+    let ready = state
+        .capture
+        .windower_mut()
+        .map(|w| w.take_ready())
+        .unwrap_or_default();
+    if let Some(link) = &state.link {
+        for window in ready {
+            link.send_window(window);
+        }
+    }
+}
+
+/// Tell the link when the pause state changes, so the website shows Paused.
+fn sync_pause(state: &mut AppState) {
+    if state.paused != state.paused_sent {
+        state.paused_sent = state.paused;
+        if let Some(link) = &state.link {
+            link.set_paused(state.paused);
+        }
+    }
+}
+
+/// The first, greyed-out line of the tray menu.
+fn status_label(status: &link::Status) -> String {
+    let server = status
+        .server
+        .as_deref()
+        .map(|s| {
+            s.trim_start_matches("https://")
+                .trim_start_matches("http://")
+        })
+        .unwrap_or("the website");
+    match &status.state {
+        State::NotPaired => "Not connected to an account".into(),
+        State::Connecting => format!("Connecting to {server}..."),
+        State::Connected => match status.mode {
+            Mode::Enrollment(_) => format!("Connected to {server}: enrolling"),
+            Mode::Monitoring => format!("Connected to {server}: monitoring"),
+            Mode::Idle => format!("Connected to {server}"),
+        },
+        State::Offline if status.queued > 0 => {
+            format!("Offline, retrying ({} waiting to send)", status.queued)
+        }
+        State::Offline => "Offline, retrying".into(),
+        State::Disconnected(reason) => format!("Disconnected. {reason}"),
+    }
+}
+
+fn tooltip(status: &link::Status) -> String {
+    let short = match status.state {
+        State::NotPaired => "not connected",
+        State::Connecting => "connecting",
+        State::Connected => "connected",
+        State::Offline => "offline",
+        State::Disconnected(_) => "disconnected",
+    };
+    format!("Inquisitor: {short}")
+}
+
+fn set_tooltip(hwnd: HWND, text: &str) {
+    let mut tip = [0u16; 128];
+    for (i, c) in text.encode_utf16().enumerate().take(127) {
+        tip[i] = c;
+    }
+    let nid = NOTIFYICONDATAW {
+        cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: 1,
+        uFlags: NIF_TIP,
+        szTip: tip,
+        ..Default::default()
+    };
+    unsafe {
+        let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
 }
 
 #[cfg(test)]
@@ -436,6 +612,7 @@ mod tests {
             data_dir: std::env::temp_dir(),
             allowed_devices: [ALLOWED.to_string()].into_iter().collect(),
             terms_accepted: crate::config::TERMS_VERSION,
+            server_url: None,
         };
         AppState::new(
             config,

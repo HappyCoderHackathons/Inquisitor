@@ -129,9 +129,11 @@ Aggregate-only privacy boundaries are in [privacy.md](privacy.md).
 ## Implementation verification still required
 
 - Prove Rust background input capture and timing quality on the target Windows PC.
-- Integrate schema-v4 native aggregates into live collection and transport. The
-  deployed model now uses keyboard and mouse features from converted tray CSVs;
-  automatic tray upload and browser calibration compatibility remain unverified.
+- Verify live tray transport on a deployed host. The tray now pairs, holds the
+  agent WebSocket, and uploads schema-v4 windows computed live with the same
+  calculation as the CSV converter. That path passes a local end-to-end test
+  against the hosted-mode routes (`scripts/agent_link_test_server.py`), not a
+  deployed HTTPS/WSS host. Browser calibration compatibility remains unverified.
 - Verify that browser pointer events and Windows mouse input give comparable
   aggregates. Their event sources and sampling differ, so arcade calibration windows
   may not match agent monitoring windows without per-source checks.

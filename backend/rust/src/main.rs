@@ -5,12 +5,16 @@
 
 mod capture;
 mod config;
+mod credential;
 mod devices;
 mod devices_window;
 mod features;
 mod folder_picker;
+mod http;
 mod icon;
 mod install;
+mod link;
+mod pair_window;
 mod startup;
 mod tray;
 mod ui;
