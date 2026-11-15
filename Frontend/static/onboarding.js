@@ -16,16 +16,26 @@
   var element = (id) => document.getElementById(id);
   var authForm = element("authForm");
   var signingUp = false;
-  element("authToggle")?.addEventListener("click", () => {
-    signingUp = !signingUp;
+  function showSignUp(next) {
+    signingUp = next;
     const name = element("authName");
-    element("authNameLabel").hidden = !signingUp;
+    const label = element("authNameLabel");
+    const password = element("authPassword");
+    const submit = element("authSubmit");
+    const toggle = element("authToggle");
+    const status = element("authStatus");
+    if (!name || !label || !password || !submit || !toggle || !status) return;
+    label.hidden = !signingUp;
     name.required = signingUp;
-    element("authPassword").autocomplete = signingUp ? "new-password" : "current-password";
-    element("authSubmit").textContent = signingUp ? "Create account" : "Sign in";
-    element("authToggle").textContent = signingUp ? "I already have an account" : "Create an account";
-    element("authStatus").textContent = "";
+    password.autocomplete = signingUp ? "new-password" : "current-password";
+    submit.textContent = signingUp ? "Create account" : "Sign in";
+    toggle.textContent = signingUp ? "I already have an account" : "Create an account";
+    status.textContent = "";
+  }
+  element("authToggle")?.addEventListener("click", () => {
+    showSignUp(!signingUp);
   });
+  if (new URLSearchParams(window.location.search).get("mode") === "signup") showSignUp(true);
   async function authenticate(path, body, button) {
     const status = element("authStatus");
     button.disabled = true;

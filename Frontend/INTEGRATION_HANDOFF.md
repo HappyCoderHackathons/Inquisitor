@@ -9,6 +9,8 @@ so the page does not present placeholder data as live.
 
 - `server.py`: `/dashboard` route. Add authenticated page data/API handling here
   only if this Flask prototype remains the selected host.
+- `templates/index.html`: landing pitch, Create Account, Log In, the timing-summary diagram, the Windows agent requirement, and the limitations section.
+- `templates/privacy.html`: accepted feature-window fields and units, the checked-in version 2 sample payload, and the prohibited collection list. `GET /privacy` renders it.
 - `templates/dashboard.html`: local collection controls, connection status,
   detection summary, Better Auth profile fields, and data/account controls.
 - `frontend/dashboard.ts`: browser-only timing aggregation, opt-in collection,
