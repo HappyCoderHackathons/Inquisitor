@@ -224,6 +224,39 @@ class ModelServiceTests(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/models/{model_id}", headers=self.headers).status_code, 204)
         self.assertEqual(self.client.get("/models/active", headers=self.headers).status_code, 404)
 
+    def test_compare_scores_candidate_and_active_on_unseen_sessions(self) -> None:
+        old, new = "0" * 31 + "1", "0" * 31 + "2"
+        for model_id, sessions in ((old, ["enroll-1"]), (new, ["enroll-1", "enroll-2"])):
+            model_dir = Path(self.temporary.name) / "models" / model_id
+            model_dir.mkdir(parents=True)
+            (model_dir / "metadata.json").write_text(json.dumps({
+                "model_id": model_id, "user_id": "synthetic-user", "device_id": "synthetic-device",
+                "state": "ready", "training_sessions": sessions, "validation_sessions": [],
+            }), encoding="utf-8")
+        genuine = generate_windows(49, 2)
+        guest = [window | {"session_id": "guest"} for window in generate_windows(50, 2)]
+        states = {old: ["NORMAL", "UNUSUAL", "NORMAL", "NORMAL"], new: ["NORMAL", "NORMAL", "UNUSUAL", "UNUSUAL"]}
+
+        def score(_: ModelStore, model_id: str, *__: object) -> dict[str, str]:
+            return {"state": states[model_id].pop(0)}
+
+        payload = {"windows": genuine, "impostor_windows": guest}
+        with patch("backend.ml.app.ModelStore.score", score):
+            alone = self.client.post(f"/models/{new}/compare", headers=self.headers, json=payload)
+            self.assertEqual(alone.status_code, 200, alone.json)
+            self.assertIsNone(alone.json["active"])
+            states[new] = ["NORMAL", "NORMAL", "UNUSUAL", "UNUSUAL"]
+            self.client.put(f"/models/{old}/active", headers=self.headers)
+            both = self.client.post(f"/models/{new}/compare", headers=self.headers, json=payload).json
+        self.assertEqual((both["candidate"]["genuine"]["frr"], both["candidate"]["impostor"]["recall"]), (0, 1))
+        self.assertEqual((both["active"]["genuine"]["frr"], both["active"]["impostor"]["recall"]), (0.5, 0))
+        self.assertEqual(self.client.get("/models/active", headers=self.headers).json["model_id"], old)
+        reused = {"windows": [genuine[0] | {"session_id": "enroll-2"}]}
+        self.assertEqual(self.client.post(f"/models/{new}/compare", headers=self.headers, json=reused).status_code, 422)
+        other = {**self.headers, "X-Device-ID": "second-device"}
+        moved = {"windows": [window | {"device_id": "second-device"} for window in genuine]}
+        self.assertEqual(self.client.post(f"/models/{new}/compare", headers=other, json=moved).status_code, 403)
+
     def test_published_artifact_validation_and_portable_hash(self) -> None:
         artifact = Path(__file__).resolve().parents[1] / "archive_models/labeled-overlap-v1.json"
         original = PublishedModel(artifact)
