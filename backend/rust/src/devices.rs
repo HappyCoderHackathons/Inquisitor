@@ -52,7 +52,7 @@ impl fmt::Display for DeviceKind {
     }
 }
 
-fn usage_name(usage_page: u16, usage: u16) -> &'static str {
+pub fn usage_name(usage_page: u16, usage: u16) -> &'static str {
     match (usage_page, usage) {
         (0x01, 0x01) => "pointer",
         (0x01, 0x02) => "mouse",

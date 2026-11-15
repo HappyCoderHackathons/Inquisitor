@@ -89,9 +89,11 @@ class OnboardingTests(unittest.TestCase):
     def pair(self):
         self.sign_in()
         code = self.client.post("/api/pairing-codes", json={}).get_json()["code"]
-        paired = self.client.post("/api/agent/pair", json={"code": code.lower()})
+        paired = self.client.post("/api/agent/pair", json={"code": code.lower(), "name": "keyboard"})
         self.assertEqual(paired.status_code, 201)
-        self.assertEqual(self.client.post("/api/agent/pair", json={"code": code}).status_code, 404)
+        self.assertEqual(
+            self.client.post("/api/agent/pair", json={"code": code, "name": "keyboard"}).status_code, 404
+        )
         body = paired.get_json()
         return body["device_id"], {"Authorization": "Bearer " + body["token"]}
 
@@ -101,16 +103,38 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/pairing-codes", data="{}").status_code, 415)
         code = self.client.post("/api/pairing-codes", json={}).get_json()["code"]
         self.clock += timedelta(minutes=11)
-        self.assertEqual(self.client.post("/api/agent/pair", json={"code": code}).status_code, 404)
-        self.assertEqual(self.client.post("/api/agent/pair", json={"code": "WRONG123"}).status_code, 404)
+        self.assertEqual(
+            self.client.post("/api/agent/pair", json={"code": code, "name": "keyboard"}).status_code, 404
+        )
+        self.assertEqual(
+            self.client.post("/api/agent/pair", json={"code": "WRONG123", "name": "keyboard"}).status_code, 404
+        )
+
+    def test_pairing_rejects_empty_or_unbounded_device_names(self):
+        self.sign_in()
+        code = self.client.post("/api/pairing-codes", json={}).get_json()["code"]
+        empty_name = self.client.post("/api/agent/pair", json={"code": code, "name": ""})
+        self.assertEqual(empty_name.status_code, 422)
+        long_name = self.client.post("/api/agent/pair", json={"code": code, "name": "x" * 65})
+        self.assertEqual(long_name.status_code, 422)
+        paired = self.client.post("/api/agent/pair", json={"code": code, "name": "mouse"})
+        self.assertEqual(paired.status_code, 201)
 
     def test_paired_device_belongs_to_code_owner_and_stores_only_token_hash(self):
         device_id, agent = self.pair()
         token = agent["Authorization"].removeprefix("Bearer ")
         device = self.database.devices.find_one({"_id": device_id})
         self.assertEqual(device["user_id"], "better-auth:user-a")
+        self.assertEqual(device["name"], "keyboard")
+        self.assertEqual(device["pairing_state"], "paired")
+        self.assertIsNone(device["last_heartbeat_at"])
         self.assertEqual(device["token_hash"], hosted.digest(token))
         self.assertNotIn(token, str(list(self.database.devices.find())))
+        self.client.get("/api/agent/onboarding", headers=agent)
+        self.assertEqual(
+            self.database.devices.find_one({"_id": device_id})["last_heartbeat_at"],
+            self.clock,
+        )
 
     def play(self, game, windows, device_id, agent):
         session_id = self.client.post("/api/onboarding/rounds", json={"game": game}).get_json()["session_id"]
@@ -208,7 +232,10 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(len(self.trained), 1)
 
     def test_pairing_and_uploads_are_rate_limited(self):
-        statuses = [self.client.post("/api/agent/pair", json={"code": "WRONG123"}).status_code for _ in range(11)]
+        statuses = [
+            self.client.post("/api/agent/pair", json={"code": "WRONG123", "name": "keyboard"}).status_code
+            for _ in range(11)
+        ]
         self.assertEqual(statuses, [404] * 10 + [429])
         self.clock += hosted.PAIR_LIMIT[1]
         device_id, agent = self.pair()

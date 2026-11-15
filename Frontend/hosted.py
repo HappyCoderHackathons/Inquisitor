@@ -19,7 +19,7 @@ from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 
-from models import DEFAULT_PRIVACY_PREFERENCES
+from models import DEFAULT_PRIVACY_PREFERENCES, DevicePairingState
 
 GAMES = ("aim", "tetris", "typing", "arena")
 GAME_SECONDS = 150
@@ -116,6 +116,23 @@ def register(
     database.pairing_codes.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("code_hash", unique=True)
     database.devices.create_index("token_hash", unique=True)
+    database.devices.create_index([("user_id", ASCENDING), ("created_at", ASCENDING)])
+    database.devices.update_many(
+        {"name": {"$exists": False}},
+        {"$set": {"name": "unknown"}},
+    )
+    database.devices.update_many(
+        {"pairing_state": {"$exists": False}, "revoked_at": None},
+        {"$set": {"pairing_state": "paired"}},
+    )
+    database.devices.update_many(
+        {"pairing_state": {"$exists": False}, "revoked_at": {"$exists": True, "$ne": None}},
+        {"$set": {"pairing_state": "revoked"}},
+    )
+    database.devices.update_many(
+        {"last_heartbeat_at": {"$exists": False}},
+        {"$set": {"last_heartbeat_at": None}},
+    )
     database.consent_records.create_index(
         [("user_id", ASCENDING), ("scope", ASCENDING), ("granted_at", ASCENDING)]
     )
@@ -218,9 +235,16 @@ def register(
 
     def device_auth() -> Document:
         header = request.headers.get("Authorization", "")
-        device = database.devices.find_one({"token_hash": digest(header.removeprefix("Bearer "))}) \
-            if header.startswith("Bearer ") else None
-        if device is None or device.get("revoked_at") is not None:
+        device = database.devices.find_one_and_update(
+            {
+                "token_hash": digest(header.removeprefix("Bearer ")) if header.startswith("Bearer ") else "",
+                "pairing_state": "paired",
+                "revoked_at": None,
+            },
+            {"$set": {"last_heartbeat_at": now()}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if device is None:
             abort(401)
         return device
 
@@ -321,8 +345,18 @@ def register(
     @blueprint.post("/api/agent/pair")
     def pair():
         throttle(f"pair:{client_ip()}", PAIR_LIMIT)
-        code = json_body().get("code")
-        if not isinstance(code, str):
+        body = json_body()
+        code = body.get("code")
+        name = body.get("name")
+        if (
+            not isinstance(code, str)
+            or not isinstance(name, str)
+            or not name
+            or len(name) > 64
+            or not name.isascii()
+            or not name.isprintable()
+            or name.strip() != name
+        ):
             abort(422)
         pairing = database.pairing_codes.find_one_and_update(
             {"code_hash": digest(code.strip().upper()), "used_at": None, "expires_at": {"$gt": now()}},
@@ -331,8 +365,17 @@ def register(
         if pairing is None:
             return jsonify(error="pairing code is invalid, expired, or already used"), 404
         device_id, token = uuid4().hex, secrets.token_urlsafe(32)
-        database.devices.insert_one({"_id": device_id, "user_id": pairing["user_id"], "token_hash": digest(token),
-                                     "created_at": now(), "revoked_at": None})
+        pairing_state: DevicePairingState = "paired"
+        database.devices.insert_one({
+            "_id": device_id,
+            "name": name,
+            "user_id": pairing["user_id"],
+            "pairing_state": pairing_state,
+            "token_hash": digest(token),
+            "created_at": now(),
+            "last_heartbeat_at": None,
+            "revoked_at": None,
+        })
         database.onboarding.insert_one({"_id": uuid4().hex, "user_id": pairing["user_id"], "device_id": device_id,
                                         "state": "collecting", "created_at": now()})
         return jsonify(device_id=device_id, token=token), 201

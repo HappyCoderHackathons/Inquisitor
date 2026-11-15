@@ -68,7 +68,7 @@ No old data is deleted: Better Auth uses `auth_user`, `auth_account`, `auth_sess
 prefix, so old provider IDs cannot accidentally grant access to existing devices or models.
 Before migrating real accounts, explicitly map verified identities and their account-scoped data.
 
-The user signs in at `/onboarding` and gets a single-use pairing code that expires after 10 minutes. The agent redeems it at `POST /api/agent/pair` and receives a device token; only the token's SHA-256 hash is stored.
+The user signs in at `/onboarding` and gets a single-use pairing code that expires after 10 minutes. The agent redeems it at `POST /api/agent/pair`, sending the HID usage category returned by Rust's `devices::usage_name` as `name`. The device record stores that category, the owning `user_id`, pairing state, the token's SHA-256 hash, and `last_heartbeat_at`. Heartbeat time starts as null and is updated on authenticated agent requests. The current Rust client does not yet call this pairing endpoint.
 
 Pairing opens an onboarding enrollment for that device. Each arcade round the user starts becomes a session. The agent reads the active session from `GET /api/agent/onboarding` and uploads enrollment windows to `POST /api/agent/windows`. A finished round is credited by server time, capped at 60 seconds; cancelled rounds earn no time. `GET /api/onboarding` reports seconds per game and counts the usable windows (30 or more key presses). Aim Trainer rounds count toward time but rarely produce usable windows.
 

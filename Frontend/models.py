@@ -28,6 +28,20 @@ class ConsentRecord(TypedDict):
     revoked_at: datetime | None
 
 
+DevicePairingState = Literal["paired", "revoked"]
+
+
+class Device(TypedDict):
+    _id: str
+    name: str
+    user_id: str
+    pairing_state: DevicePairingState
+    token_hash: str
+    created_at: datetime
+    last_heartbeat_at: datetime | None
+    revoked_at: datetime | None
+
+
 DEFAULT_PRIVACY_PREFERENCES: PrivacyPreferences = {
     "keyboard_collection": False,
     "mouse_collection": False,
