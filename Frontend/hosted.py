@@ -14,7 +14,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 from flask import Blueprint, Flask, abort, jsonify, redirect, render_template, request, session, url_for
-from pymongo import ASCENDING
+from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 
@@ -24,6 +24,10 @@ ROUND_MS = 60_000
 MIN_TRAINING_WINDOWS = 20
 MIN_VALIDATION_WINDOWS = 10
 SESSION_LIFETIME = timedelta(hours=12)
+# (requests, window) per key; generous for real use, tight enough to stop guessing and floods.
+LOGIN_LIMIT = (30, timedelta(minutes=1))
+PAIR_LIMIT = (10, timedelta(minutes=10))
+UPLOAD_LIMIT = (60, timedelta(minutes=1))
 PAIRING_TTL = timedelta(minutes=10)
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ENV = (
@@ -112,6 +116,7 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
         client_kwargs={"scope": "openid profile email", "code_challenge_method": "S256"},
     )
     database.sessions.create_index("expires_at", expireAfterSeconds=0)
+    database.rate_limits.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("code_hash", unique=True)
     database.devices.create_index("token_hash", unique=True)
@@ -143,6 +148,20 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
 
         # shortcut: in-process thread loses the job on restart; move to a job queue if training gets slow.
         threading.Thread(target=run, daemon=True).start()
+
+    def throttle(key: str, limit: tuple[int, timedelta]) -> None:
+        count, window = limit
+        bucket = int(now().timestamp() // window.total_seconds())
+        record = database.rate_limits.find_one_and_update(
+            {"_id": f"{key}:{bucket}"}, {"$inc": {"count": 1}, "$setOnInsert": {"expires_at": now() + 2 * window}},
+            upsert=True, return_document=ReturnDocument.AFTER,
+        )
+        if record["count"] > count:
+            abort(429)
+
+    def client_ip() -> str:
+        # shortcut: uses the socket peer address; add ProxyFix when deployed behind a trusted proxy.
+        return request.remote_addr or "unknown"
 
     def signed_in_user() -> str | None:
         # The cookie holds only a random session ID; the record in Atlas is what logout and expiry revoke.
@@ -180,10 +199,12 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
 
     @blueprint.get("/login")
     def login():
+        throttle(f"login:{client_ip()}", LOGIN_LIMIT)
         return oauth.ssojet.authorize_redirect(os.environ["SSOJET_REDIRECT_URI"])
 
     @blueprint.get("/auth/callback")
     def callback():
+        throttle(f"login:{client_ip()}", LOGIN_LIMIT)
         token = oauth.ssojet.authorize_access_token()
         claims = token.get("userinfo") or oauth.ssojet.userinfo(token=token)
         subject = claims.get("sub")
@@ -267,6 +288,7 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
 
     @blueprint.post("/api/agent/pair")
     def pair():
+        throttle(f"pair:{client_ip()}", PAIR_LIMIT)
         code = json_body().get("code")
         if not isinstance(code, str):
             abort(422)
@@ -295,6 +317,7 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
     @blueprint.post("/api/agent/windows")
     def upload_window():
         device = device_auth()
+        throttle(f"upload:{device['_id']}", UPLOAD_LIMIT)
         window = json_body()
         error = window_error(window)
         if error:

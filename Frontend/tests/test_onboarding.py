@@ -168,6 +168,17 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn("all training features are constant", status["error"])
         self.assertEqual(len(self.trained), 1)
 
+    def test_pairing_and_uploads_are_rate_limited(self):
+        statuses = [self.client.post("/api/agent/pair", json={"code": "WRONG123"}).status_code for _ in range(11)]
+        self.assertEqual(statuses, [404] * 10 + [429])
+        self.clock += hosted.PAIR_LIMIT[1]
+        device_id, agent = self.pair()
+        session_id = self.client.post("/api/onboarding/rounds", json={"game": "typing"}).get_json()["session_id"]
+        uploads = [self.client.post("/api/agent/windows", headers=agent, json=window(device_id, session_id, n))
+                   for n in range(61)]
+        self.assertEqual(uploads[59].status_code, 201)
+        self.assertEqual(uploads[60].status_code, 429)
+
     def test_partial_configuration_fails_loudly(self):
         with patch.dict(os.environ, {"SSOJET_AUTHORITY": "https://sso.example.test"}, clear=True):
             with self.assertRaises(RuntimeError):
