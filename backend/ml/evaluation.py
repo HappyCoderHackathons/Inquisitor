@@ -82,3 +82,26 @@ def window_metrics(states: list[str], *, impostor: bool = False) -> dict[str, in
     else:
         result["frr"] = unusual / usable if usable else None
     return result
+
+
+def switch_latency(
+    genuine: list[tuple[str, int]], impostor: list[tuple[str, int]],
+) -> dict[str, int | float | bool | None]:
+    # Spec 7.6 rule: NEEDS_VERIFICATION when 3 of the last 4 usable windows are unusual.
+    recent: list[str] = []
+    alert_before_switch = False
+    for index, (state, _) in enumerate(genuine + impostor):
+        if state == "INSUFFICIENT_DATA":
+            continue
+        recent = (recent + [state])[-4:]
+        if recent.count("UNUSUAL") < 3:
+            continue
+        if index < len(genuine):
+            alert_before_switch = True
+            continue
+        elapsed = impostor[: index - len(genuine) + 1]
+        return {
+            "alert_before_switch": alert_before_switch, "windows": len(elapsed),
+            "seconds": sum(duration for _, duration in elapsed) / 1000,
+        }
+    return {"alert_before_switch": alert_before_switch, "windows": None, "seconds": None}

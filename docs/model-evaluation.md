@@ -87,5 +87,13 @@ Forest. No additional scaler is needed for Isolation Forest.
 
 Small or overlapping window sets are correlated, and their window counts are not
 independent sample counts. Evaluate separate real sessions before making detection
-claims. User-switch latency and session-level verification remain separate work
-in issue #141.
+claims.
+
+When `--impostor` is given, the report also replays a simulated user switch per
+model: holdout genuine windows, then impostor windows, each in session/sequence
+order. It applies the spec's persistence rule (`NEEDS_VERIFICATION` when 3 of the
+last 4 usable windows are unusual) and reports impostor windows and summed window
+seconds until the alert, plus whether an alert already fired before the switch.
+Gaps between windows are not counted. One replayed switch is a single observation,
+not a latency distribution, and the rule is evaluation-only; the service and
+dashboard do not yet raise this state.
