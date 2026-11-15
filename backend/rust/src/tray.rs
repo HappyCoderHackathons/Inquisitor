@@ -6,36 +6,31 @@
 
 use std::mem::size_of;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::time::Instant;
 
 use windows::core::{PCWSTR, w};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, NOTIFYICONIDENTIFIER,
-    Shell_NotifyIconGetRect, Shell_NotifyIconW,
+    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX, BS_PUSHBUTTON, CW_USEDEFAULT,
-    CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, DispatchMessageW,
-    GWLP_USERDATA, GetCursorPos, GetMessageW, GetWindowLongPtrW, HMENU, HWND_MESSAGE,
-    IDI_APPLICATION, IsWindow, LoadIconW, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING,
-    MF_UNCHECKED, MSG, PostMessageW, PostQuitMessage, RegisterClassExW, SW_RESTORE, SW_SHOW,
-    SendMessageW, SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TPM_BOTTOMALIGN,
-    TPM_LEFTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_INPUT,
-    WM_LBUTTONUP, WM_NULL, WNDCLASSEXW, WS_CAPTION, WS_CHILD, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
-    WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
+    DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW, GetWindowLongPtrW, HMENU,
+    HWND_MESSAGE, IDI_APPLICATION, IsWindow, LoadIconW, MF_CHECKED, MF_POPUP, MF_SEPARATOR,
+    MF_STRING, MF_UNCHECKED, MSG, PostMessageW, PostQuitMessage, RegisterClassExW,
+    SetForegroundWindow, SetWindowLongPtrW, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTALIGN,
+    TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_INPUT, WM_LBUTTONUP,
+    WM_NULL, WNDCLASSEXW,
 };
-
-// Button check-state values (not re-exported via a named const in this version
-// of the windows crate). Documented in <winuser.h>.
-const BST_UNCHECKED: usize = 0;
-const BST_CHECKED: usize = 1;
 
 use crate::capture::{self, Capture};
 use crate::config::Config;
+use crate::devices_window;
 use crate::folder_picker;
 use crate::startup;
 
@@ -54,19 +49,6 @@ const ID_OPEN_DEVICES: u16 = 22;
 const ID_TOGGLE_STARTUP: u16 = 40;
 const ID_QUIT: u16 = 50;
 
-// Devices-window class name and control ids. Child-control ids live in the
-// parent window's own namespace, separate from the tray menu ids above.
-const DEVWIN_CLASS: PCWSTR = w!("InquisitorDevicesWnd");
-const DEVWIN_ID_ALLOW_ALL: u16 = 1;
-const DEVWIN_ID_REMOVE_ALL: u16 = 2;
-const DEVWIN_ID_CHECKBOX_BASE: u16 = 100;
-
-/// What the menu opens over: a label the user recognises plus the underlying path.
-struct DeviceEntry {
-    path: String,
-    label: String,
-}
-
 struct AppState {
     config: Config,
     capture: Capture,
@@ -75,15 +57,10 @@ struct AppState {
     /// If None and `paused`, capture is paused indefinitely.
     paused: bool,
     pause_until: Option<Instant>,
-    /// Snapshot built when the devices window opens and when the tray menu
-    /// refreshes. Index matches `DEVWIN_ID_CHECKBOX_BASE + i` inside the
-    /// devices window.
-    connected_devices: Vec<DeviceEntry>,
     startup_enabled: bool,
-    /// HWND of the devices-management window if it is open.
+    /// HWND of the "Allow connections" window if it has been opened. May be stale
+    /// after the user closes it; always check with IsWindow before use.
     devices_hwnd: Option<HWND>,
-    /// Checkbox HWNDs and their device paths, parallel to `connected_devices`.
-    device_checkboxes: Vec<(HWND, String)>,
 }
 
 impl AppState {
@@ -95,17 +72,15 @@ impl AppState {
             current_path,
             paused: false,
             pause_until: None,
-            connected_devices: Vec::new(),
             startup_enabled,
             devices_hwnd: None,
-            device_checkboxes: Vec::new(),
         }
     }
 
     /// Returns true if the event should be dropped. Auto-clears a timed pause once
     /// the deadline has passed. A device captures if and only if its path is in
     /// `allowed_devices`; new devices are silently dropped until the user ticks
-    /// them (or "Allow all") from the tray menu.
+    /// them (or "Allow all") in the Allow connections window.
     fn drop_event(&mut self, path: &str) -> bool {
         if let Some(until) = self.pause_until
             && Instant::now() >= until
@@ -117,39 +92,6 @@ impl AppState {
             return true;
         }
         !self.config.allowed_devices.contains(path)
-    }
-
-    fn refresh_devices(&mut self) {
-        let list = crate::devices::list_input_devices().unwrap_or_default();
-        self.connected_devices = list
-            .into_iter()
-            .map(|d| DeviceEntry {
-                label: format!("{}  {}", short_kind(&d.kind), trimmed_path(&d.name)),
-                path: d.name,
-            })
-            .collect();
-        self.connected_devices.sort_by(|a, b| a.label.cmp(&b.label));
-    }
-}
-
-fn short_kind(kind: &crate::devices::DeviceKind) -> &'static str {
-    match kind {
-        crate::devices::DeviceKind::Keyboard { .. } => "[keyboard]",
-        crate::devices::DeviceKind::Mouse { .. } => "[mouse]   ",
-        crate::devices::DeviceKind::Hid { .. } => "[hid]     ",
-        crate::devices::DeviceKind::Unknown(_) => "[other]   ",
-    }
-}
-
-/// Shortened path for menu readability. Full path is still used internally for
-/// whitelist lookups; this is only what the user sees.
-fn trimmed_path(p: &str) -> String {
-    const MAX: usize = 50;
-    if p.len() <= MAX {
-        p.to_string()
-    } else {
-        let tail = &p[p.len() - (MAX - 3)..];
-        format!("...{tail}")
     }
 }
 
@@ -279,10 +221,11 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 LRESULT(0)
             }
             WM_DESTROY => {
-                // Tear down the devices window first so its wnd_proc stops
-                // trying to touch AppState before we free it.
-                if let Some(dh) = state.devices_hwnd.take() {
-                    SetWindowLongPtrW(dh, GWLP_USERDATA, 0);
+                // Close the devices window first: it holds a pointer to
+                // `state.config`, which is freed below.
+                if let Some(dh) = state.devices_hwnd.take()
+                    && IsWindow(Some(dh)).as_bool()
+                {
                     let _ = DestroyWindow(dh);
                 }
                 remove_tray_icon(hwnd);
@@ -297,11 +240,10 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
 }
 
 fn show_menu(hwnd: HWND, state: &mut AppState) {
-    state.refresh_devices();
     // Re-sync startup state in case another tool changed the registry.
     state.startup_enabled = startup::is_enabled();
 
-    let pt = tray_anchor(hwnd);
+    let (pt, align) = menu_anchor();
 
     unsafe {
         let menu = CreatePopupMenu().unwrap();
@@ -311,7 +253,7 @@ fn show_menu(hwnd: HWND, state: &mut AppState) {
         let _ = SetForegroundWindow(hwnd);
         let _ = TrackPopupMenu(
             menu,
-            TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_BOTTOMALIGN,
+            TPM_RIGHTBUTTON | align,
             pt.x,
             pt.y,
             Some(0),
@@ -322,6 +264,35 @@ fn show_menu(hwnd: HWND, state: &mut AppState) {
         let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
         let _ = DestroyMenu(menu);
     }
+}
+
+/// Anchor the menu at the click point and open it toward the middle of the
+/// monitor, the same way Explorer's own tray menus behave. With the taskbar at
+/// the bottom-right this puts the menu's bottom-right corner at the cursor, so it
+/// rises up and to the left of the icon instead of covering it.
+fn menu_anchor() -> (POINT, windows::Win32::UI::WindowsAndMessaging::TRACK_POPUP_MENU_FLAGS) {
+    let mut pt = POINT::default();
+    let mut info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe {
+        let _ = GetCursorPos(&mut pt);
+        let monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+        let _ = GetMonitorInfoW(monitor, &mut info);
+    }
+    let work = info.rcWork;
+    let horizontal = if pt.x > (work.left + work.right) / 2 {
+        TPM_RIGHTALIGN
+    } else {
+        TPM_LEFTALIGN
+    };
+    let vertical = if pt.y > (work.top + work.bottom) / 2 {
+        TPM_BOTTOMALIGN
+    } else {
+        TPM_TOPALIGN
+    };
+    (pt, horizontal | vertical)
 }
 
 fn to_wide(s: &str) -> Vec<u16> {
@@ -394,33 +365,6 @@ fn build_menu(menu: HMENU, state: &AppState) {
     append(menu, MF_STRING.0, ID_QUIT, "Quit");
 }
 
-/// Screen-space anchor for every tray popup: the top-left of the tray icon
-/// itself. Shell_NotifyIconGetRect returns the exact pixel rect Windows
-/// placed our icon in, so the menu always pops from the same stable point,
-/// no matter where the cursor was when the menu was dismissed. Falls back
-/// to the current cursor position if the shell cannot return the rect
-/// (icon in the hidden-overflow area, for example).
-fn tray_anchor(hwnd: HWND) -> POINT {
-    let id = NOTIFYICONIDENTIFIER {
-        cbSize: size_of::<NOTIFYICONIDENTIFIER>() as u32,
-        hWnd: hwnd,
-        uID: 1,
-        guidItem: Default::default(),
-    };
-    if let Ok(rect) = unsafe { Shell_NotifyIconGetRect(&id) } {
-        POINT {
-            x: rect.left,
-            y: rect.top,
-        }
-    } else {
-        let mut p = POINT::default();
-        unsafe {
-            let _ = GetCursorPos(&mut p);
-        }
-        p
-    }
-}
-
 fn handle_command(hwnd: HWND, state: &mut AppState, id: u16) {
     match id {
         ID_PAUSE_RESUME => {
@@ -445,9 +389,8 @@ fn handle_command(hwnd: HWND, state: &mut AppState, id: u16) {
             }
         }
         ID_OPEN_DEVICES => {
-            let state_ptr =
-                unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState };
-            show_devices_window(state, state_ptr);
+            state.devices_hwnd =
+                devices_window::open(state.devices_hwnd, &mut state.config as *mut Config);
         }
         ID_TOGGLE_STARTUP => {
             if state.startup_enabled {
@@ -461,236 +404,6 @@ fn handle_command(hwnd: HWND, state: &mut AppState, id: u16) {
             let _ = DestroyWindow(hwnd);
         },
         _ => {}
-    }
-}
-
-// --- Devices window ---------------------------------------------------------
-
-/// Open (or bring to front) the devices-management window. It lives as a child
-/// of the tray's AppState via `GWLP_USERDATA` so toggling a checkbox mutates
-/// the same whitelist the capture filter reads.
-fn show_devices_window(state: &mut AppState, state_ptr: *mut AppState) {
-    // Already open? Just bring it forward.
-    if let Some(hwnd) = state.devices_hwnd
-        && unsafe { IsWindow(Some(hwnd)) }.as_bool()
-    {
-        unsafe {
-            let _ = ShowWindow(hwnd, SW_RESTORE);
-            let _ = SetForegroundWindow(hwnd);
-        }
-        return;
-    }
-
-    state.refresh_devices();
-    register_devwin_class();
-
-    let hinstance = unsafe { GetModuleHandleW(PCWSTR::null()) }.unwrap();
-    let hwnd = unsafe {
-        CreateWindowExW(
-            WS_EX_TOOLWINDOW,
-            DEVWIN_CLASS,
-            w!("Inquisitor - Allow connections"),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            560,
-            620,
-            None,
-            None,
-            Some(hinstance.into()),
-            None,
-        )
-    }
-    .expect("create devices window");
-
-    unsafe {
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr as isize);
-    }
-
-    create_button(hwnd, "Allow all", 10, 10, 110, 30, DEVWIN_ID_ALLOW_ALL);
-    create_button(hwnd, "Remove all", 130, 10, 110, 30, DEVWIN_ID_REMOVE_ALL);
-
-    state.device_checkboxes.clear();
-    for (i, dev) in state.connected_devices.iter().enumerate() {
-        let y = 50 + (i as i32) * 26;
-        let checked = state.config.allowed_devices.contains(&dev.path);
-        let cb = create_checkbox(
-            hwnd,
-            &dev.label,
-            10,
-            y,
-            530,
-            24,
-            DEVWIN_ID_CHECKBOX_BASE + i as u16,
-            checked,
-        );
-        state.device_checkboxes.push((cb, dev.path.clone()));
-    }
-
-    state.devices_hwnd = Some(hwnd);
-    unsafe {
-        let _ = ShowWindow(hwnd, SW_SHOW);
-        let _ = SetForegroundWindow(hwnd);
-    }
-}
-
-fn register_devwin_class() {
-    static ONCE: OnceLock<()> = OnceLock::new();
-    ONCE.get_or_init(|| {
-        let hinstance = unsafe { GetModuleHandleW(PCWSTR::null()) }.unwrap();
-        let wc = WNDCLASSEXW {
-            cbSize: size_of::<WNDCLASSEXW>() as u32,
-            lpfnWndProc: Some(devwin_wnd_proc),
-            hInstance: hinstance.into(),
-            lpszClassName: DEVWIN_CLASS,
-            ..Default::default()
-        };
-        unsafe {
-            RegisterClassExW(&wc);
-        }
-    });
-}
-
-extern "system" fn devwin_wnd_proc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    unsafe {
-        let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut AppState;
-        match msg {
-            WM_COMMAND if !state_ptr.is_null() => {
-                let state = &mut *state_ptr;
-                let id = (wparam.0 as u32) & 0xFFFF;
-                devwin_handle_command(state, id as u16);
-                LRESULT(0)
-            }
-            WM_CLOSE => {
-                let _ = DestroyWindow(hwnd);
-                LRESULT(0)
-            }
-            WM_DESTROY => {
-                if !state_ptr.is_null() {
-                    let state = &mut *state_ptr;
-                    state.devices_hwnd = None;
-                    state.device_checkboxes.clear();
-                }
-                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-                LRESULT(0)
-            }
-            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
-        }
-    }
-}
-
-fn devwin_handle_command(state: &mut AppState, id: u16) {
-    match id {
-        DEVWIN_ID_ALLOW_ALL => {
-            for (cb, path) in &state.device_checkboxes {
-                state.config.allowed_devices.insert(path.clone());
-                unsafe {
-                    SendMessageW(
-                        *cb,
-                        BM_SETCHECK,
-                        Some(WPARAM(BST_CHECKED)),
-                        Some(LPARAM(0)),
-                    );
-                }
-            }
-            let _ = state.config.save();
-        }
-        DEVWIN_ID_REMOVE_ALL => {
-            state.config.allowed_devices.clear();
-            for (cb, _) in &state.device_checkboxes {
-                unsafe {
-                    SendMessageW(
-                        *cb,
-                        BM_SETCHECK,
-                        Some(WPARAM(BST_UNCHECKED)),
-                        Some(LPARAM(0)),
-                    );
-                }
-            }
-            let _ = state.config.save();
-        }
-        id if id >= DEVWIN_ID_CHECKBOX_BASE => {
-            let idx = (id - DEVWIN_ID_CHECKBOX_BASE) as usize;
-            if let Some((cb, path)) = state.device_checkboxes.get(idx) {
-                let check = unsafe {
-                    SendMessageW(*cb, BM_GETCHECK, Some(WPARAM(0)), Some(LPARAM(0)))
-                };
-                if check.0 as usize == BST_CHECKED {
-                    state.config.allowed_devices.insert(path.clone());
-                } else {
-                    state.config.allowed_devices.remove(path);
-                }
-                let _ = state.config.save();
-            }
-        }
-        _ => {}
-    }
-}
-
-fn create_button(parent: HWND, text: &str, x: i32, y: i32, w: i32, h: i32, id: u16) -> HWND {
-    let wide = to_wide(text);
-    unsafe {
-        let hinstance = GetModuleHandleW(PCWSTR::null()).unwrap();
-        CreateWindowExW(
-            WINDOW_EX_STYLE(0),
-            w!("BUTTON"),
-            PCWSTR(wide.as_ptr()),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_PUSHBUTTON as u32),
-            x,
-            y,
-            w,
-            h,
-            Some(parent),
-            Some(HMENU(id as usize as *mut _)),
-            Some(hinstance.into()),
-            None,
-        )
-        .unwrap()
-    }
-}
-
-fn create_checkbox(
-    parent: HWND,
-    text: &str,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    id: u16,
-    checked: bool,
-) -> HWND {
-    let wide = to_wide(text);
-    unsafe {
-        let hinstance = GetModuleHandleW(PCWSTR::null()).unwrap();
-        let hwnd = CreateWindowExW(
-            WINDOW_EX_STYLE(0),
-            w!("BUTTON"),
-            PCWSTR(wide.as_ptr()),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
-            x,
-            y,
-            w,
-            h,
-            Some(parent),
-            Some(HMENU(id as usize as *mut _)),
-            Some(hinstance.into()),
-            None,
-        )
-        .unwrap();
-        if checked {
-            SendMessageW(
-                hwnd,
-                BM_SETCHECK,
-                Some(WPARAM(BST_CHECKED)),
-                Some(LPARAM(0)),
-            );
-        }
-        hwnd
     }
 }
 

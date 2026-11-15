@@ -6,6 +6,7 @@
 mod capture;
 mod config;
 mod devices;
+mod devices_window;
 mod folder_picker;
 mod startup;
 mod tray;
