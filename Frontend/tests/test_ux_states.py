@@ -50,6 +50,7 @@ class UxStateTests(unittest.TestCase):
         self.assertIn('data-approve="true"', page)
         self.assertIn('data-path="/api/models/reset"', page)
         self.assertIn('data-path="/api/models/deactivate"', page)
+        self.assertIn('id="detectionEnrollLink" href="/onboarding"', page)
         self.assertNotIn("Non-user activity", page)
         self.assertNotIn("activity detections", page)
         self.assertNotIn("identify or confirm another person", page)

@@ -545,6 +545,14 @@ function showModelSummary(summary: ModelSummary) {
       ? "This is the active model for the signed-in account."
       : "No trained model is recorded for this account.";
   }
+  const detectionDetail = $("#detectionEmptyDetail");
+  if (detectionDetail) {
+    detectionDetail.textContent = summary.available
+      ? "A trained model is active. No live signal is connected yet."
+      : "No trained model is active for this account yet. Enroll to train one.";
+  }
+  const enrollLink = $("#detectionEnrollLink");
+  if (enrollLink) enrollLink.hidden = summary.available;
   const device = $("#modelDevice");
   if (device) {
     device.textContent = summary.available
