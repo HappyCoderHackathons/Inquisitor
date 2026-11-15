@@ -965,6 +965,8 @@ class OnboardingTests(unittest.TestCase):
     def test_monitoring_status_history_and_alerts_follow_the_persistence_rule(self):
         self.assertEqual(self.client.get("/api/monitoring/status").status_code, 401)
         self.assertEqual(self.client.get("/api/monitoring/history").status_code, 401)
+        self.assertEqual(self.client.get("/monitoring/status").status_code, 401)
+        self.assertEqual(self.client.get("/monitoring/history").status_code, 401)
         self.assertEqual(self.client.get("/api/alerts").status_code, 401)
         self.assertEqual(
             self.client.post("/api/alerts/missing/acknowledge", json={"label": "expected"}).status_code, 401,
@@ -975,6 +977,8 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(empty["agent"], "offline")
         self.assertTrue(empty["stale"])
         self.assertEqual(self.client.get("/api/monitoring/history").get_json(), {"axis": "Anomaly score", "points": []})
+        self.assertEqual(self.client.get("/monitoring/status").get_json(), empty)
+        self.assertEqual(self.client.get("/monitoring/history").get_json(), {"axis": "Anomaly score", "points": []})
         for query in ("limit=0", "limit=201", "since=yesterday"):
             self.assertEqual(self.client.get(f"/api/monitoring/history?{query}").status_code, 422)
         self.assertEqual(self.client.get("/api/alerts?status=nope").status_code, 422)
@@ -986,6 +990,8 @@ class OnboardingTests(unittest.TestCase):
         one = self.client.get("/api/monitoring/status").get_json()
         self.assertEqual((one["state"], one["window_state"], one["score"], one["agent"], one["stale"]),
                          ("unusual", "UNUSUAL", 0.8, "active", False))
+        self.assertEqual(one["scored_at"], self.clock.isoformat())
+        self.assertEqual(self.client.get("/monitoring/status").get_json(), one)
         self.assertEqual(one["device_id"], device_id)
         self.assertEqual(one["device_name"], "keyboard")
         self.assertEqual(self.client.get("/api/alerts").get_json()["alerts"], [])
@@ -1016,8 +1022,13 @@ class OnboardingTests(unittest.TestCase):
                          ["UNUSUAL", "UNUSUAL", "UNUSUAL", "NORMAL", "NORMAL", "NORMAL"])
         self.assertEqual([point["score"] for point in history["points"]], [0.8, 0.8, 0.8, -0.4, -0.4, -0.4])
         self.assertTrue(all(point["threshold"] == 0.1 for point in history["points"]))
+        self.assertTrue(all(isinstance(point["t"], str) and point["t"] for point in history["points"]))
+        self.assertEqual(history["points"][-1]["t"], self.client.get("/monitoring/status").get_json()["scored_at"])
+        self.assertEqual(self.client.get("/monitoring/history").get_json(), history)
         future = self.client.get("/api/monitoring/history?since=2099-01-01T00:00:00Z").get_json()
         self.assertEqual(future["points"], [])
+        excluded = self.client.get("/monitoring/history?until=2000-01-01T00:00:00Z").get_json()
+        self.assertEqual(excluded["points"], [])
         scoped = self.client.get(f"/api/monitoring/history?device_id={device_id}&limit=2").get_json()
         self.assertEqual([point["state"] for point in scoped["points"]], ["NORMAL", "NORMAL"])
 
@@ -1038,6 +1049,8 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/alerts").get_json()["alerts"], [])
         self.assertEqual(self.client.get(f"/api/alerts?device_id={device_id}").status_code, 404)
         self.assertEqual(self.client.get(f"/api/monitoring/status?device_id={device_id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/monitoring/status?device_id={device_id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/monitoring/history?device_id={device_id}").status_code, 404)
         self.assertEqual(
             self.client.post(f"/api/alerts/{open_alert['id']}/acknowledge", json={"label": "unexpected"}).status_code,
             404,

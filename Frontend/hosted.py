@@ -1330,6 +1330,7 @@ def register(
             "acknowledged_at": timestamp_text(alert.get("acknowledged_at")),
         }
 
+    @blueprint.get("/monitoring/status")
     @blueprint.get("/api/monitoring/status")
     def monitoring_status():
         user_id = current_user()
@@ -1355,6 +1356,7 @@ def register(
             device_name=device.get("name") if device else None,
         )
 
+    @blueprint.get("/monitoring/history")
     @blueprint.get("/api/monitoring/history")
     def monitoring_history():
         user_id = current_user()
