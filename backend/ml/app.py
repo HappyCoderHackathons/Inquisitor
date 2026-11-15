@@ -13,6 +13,7 @@ from flask import Flask, g, jsonify, request
 from backend.account.store import AccountStore, retention_seconds_from_env
 from backend.http_security import API_CSP, apply_security_headers
 
+from .evaluation import window_metrics
 from .model import LABELED_PROFILES, ModelStore, validate_window
 from .published import PublishedModel
 
@@ -215,6 +216,38 @@ def create_app() -> Flask:
         metadata = store.activate(model_id, g.user_id, g.device_id)
         account.register_model_version(g.user_id, g.device_id, metadata, active=True)
         return jsonify(metadata)
+
+    @app.post("/models/<model_id>/compare")
+    def compare(model_id: str):
+        value = body({"windows"}, {"impostor_windows"})
+        genuine, impostor = value["windows"], value.get("impostor_windows", [])
+        if not isinstance(genuine, list) or not genuine or not isinstance(impostor, list):
+            raise ValueError("windows must be a nonempty list and impostor_windows a list")
+        groups = {"genuine": [validate_window(item) for item in genuine],
+                  "impostor": [validate_window(item) for item in impostor]}
+        sessions = {label: {window["session_id"] for window in group} for label, group in groups.items()}
+        if sessions["genuine"] & sessions["impostor"]:
+            raise ValueError("genuine and impostor comparison sessions must differ")
+        try:
+            active_id: str | None = store.active_model_id(g.user_id, g.device_id)
+        except FileNotFoundError:
+            active_id = None
+        results: dict[str, object] = {"candidate": None, "active": None}
+        for role, compared_id in (("candidate", model_id), ("active", active_id)):
+            if compared_id is None:
+                continue
+            fitted = store.ready_metadata(compared_id, g.user_id, g.device_id)
+            used = set(fitted.get("training_sessions") or []) | set(fitted.get("validation_sessions") or [])
+            if used & (sessions["genuine"] | sessions["impostor"]):
+                raise ValueError(f"comparison windows reuse sessions that fitted the {role} model")
+            # Comparison results are not saved; only activation changes what monitoring uses.
+            results[role] = {"model_id": compared_id, **{
+                label: window_metrics(
+                    [str(store.score(compared_id, window, g.user_id, g.device_id)["state"]) for window in group],
+                    impostor=label == "impostor",
+                ) for label, group in groups.items()
+            }}
+        return jsonify(results)
 
     @app.get("/models/<model_id>")
     def metadata(model_id: str):

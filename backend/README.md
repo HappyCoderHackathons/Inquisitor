@@ -59,6 +59,7 @@ See [the threat model](../docs/threat-model.md).
 | `POST /models/active/score` | `window` object | Score using the active model |
 | `GET /models/{id}` | No body | Owned model metadata |
 | `POST /models/{id}/score` | `window` object | Score, threshold, model ID, and state |
+| `POST /models/{id}/compare` | `windows` array; optional `impostor_windows` array | Window metrics for this model (`candidate`) and the active model (`active`, or null), scored on the same windows. Saves nothing |
 | `POST /windows` | `window` object | Stores one authorized feature window, HTTP 201 |
 | `POST /models/active/deactivate` | No body | Leaves the model files in place and clears the active model |
 | `POST /enrollment/reset` | No body | Deletes this device's enrollment windows and active model artifact |
@@ -97,6 +98,15 @@ at a time; another receives 503. There is no queued/running job API. Training ne
 activates a model: the application backend activates one explicitly per user/device
 with `PUT /models/{id}/active`, and deleting the active model leaves none active.
 No monitoring request triggers retraining.
+
+Retraining creates a new model ID and leaves earlier versions on disk. Before activating
+a new version, call `POST /models/{id}/compare` with held-out windows from sessions that
+neither model was fitted on; the service rejects windows from a session listed in either
+model's `training_sessions` or `validation_sessions`. Genuine metrics report FRR and
+impostor metrics report FAR and recall, with insufficient-data windows counted
+separately. Small comparison sets are correlated windows, not independent samples. To
+roll back, call `PUT /models/{id}/active` with the previous model ID; the application
+backend keeps that ID in its model version records.
 
 UNUSUAL results from labeled-overlap models include an `explanation`. Each feature's
 `contribution` is its scaled value times the model weight, so the features are
