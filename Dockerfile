@@ -28,6 +28,7 @@ WORKDIR /app
 
 # Upgrade pip and install Python dependencies including Gunicorn
 COPY Frontend/requirements.txt /app/Frontend/requirements.txt
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r /app/Frontend/requirements.txt gunicorn
 
