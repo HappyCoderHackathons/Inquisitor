@@ -21,6 +21,8 @@ if str(ROOT.parent) not in sys.path:
     sys.path.insert(0, str(ROOT.parent))
 from backend.account.store import AccountStore, retention_seconds_from_env
 
+import security
+
 LOCAL_USER_ID = "local-user"
 LOCAL_DEVICE_ID = "local-device"
 DB_PATH = Path(os.environ.get("INPUTPRINT_DB", ROOT / "inputprint.sqlite3"))
@@ -35,6 +37,7 @@ SAMPLE_FEATURE_WINDOW = json.loads(
     (ROOT.parent / "shared" / "fixtures" / "feature-window-v2.json").read_text(encoding="utf-8")
 )["valid"]["enrollment"]
 app = Flask(__name__, static_folder="static", template_folder="templates")
+security.install(app)
 account: AccountStore | None = None
 
 

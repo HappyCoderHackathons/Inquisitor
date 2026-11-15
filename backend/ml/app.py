@@ -11,6 +11,7 @@ from pathlib import Path
 from flask import Flask, g, jsonify, request
 
 from backend.account.store import AccountStore, retention_seconds_from_env
+from backend.http_security import API_CSP, apply_security_headers
 
 from .model import ModelStore, validate_window
 from .published import PublishedModel
@@ -32,6 +33,11 @@ def create_app() -> Flask:
     training_lock = threading.Lock()
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
+
+    @app.after_request
+    def add_security_headers(response):
+        apply_security_headers(response.headers, policy=API_CSP, secure=request.is_secure)
+        return response
 
     @app.before_request
     def authenticate():

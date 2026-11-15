@@ -61,6 +61,26 @@ class ModelServiceTests(unittest.TestCase):
             "state": "degraded", "database": "available", "model_store": "unavailable",
         })
 
+    def test_security_headers_and_body_user_id_rejected(self) -> None:
+        denied = self.client.get("/health")
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(denied.headers["X-Content-Type-Options"], "nosniff")
+        self.assertIn("frame-ancestors 'none'", denied.headers["Content-Security-Policy"])
+        self.assertNotIn("Strict-Transport-Security", denied.headers)
+        plain = self.client.get("/health", headers=self.headers)
+        policy = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+        self.assertEqual(plain.headers["Content-Security-Policy"], policy)
+        secured = self.client.get("/health", headers=self.headers, base_url="https://ml.example")
+        self.assertIn("max-age=31536000", secured.headers["Strict-Transport-Security"])
+        rejected = self.client.post("/windows", headers=self.headers, json={"window": {}, "user_id": "other-user"})
+        self.assertEqual(rejected.status_code, 422)
+        retention = self.client.put(
+            "/retention",
+            headers=self.headers,
+            json={"monitoring_retention_seconds": 60, "user_id": "other-user"},
+        )
+        self.assertEqual(retention.status_code, 422)
+
     def test_shared_schema_fixtures(self) -> None:
         for version in (1, 2):
             path = Path(__file__).resolve().parents[1] / f"shared/fixtures/feature-window-v{version}.json"

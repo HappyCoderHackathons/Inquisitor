@@ -97,7 +97,8 @@ application-level verification; it must not lock Windows. Enrollment and evaluat
 must preserve session boundaries, and synthetic fixtures must not be presented as
 evidence of model accuracy.
 
-Security scenarios and residual risk are summarized in [threat-model.md](threat-model.md).
+Security scenarios, response headers, and the endpoint owner checklist are in
+[threat-model.md](threat-model.md).
 Aggregate-only privacy boundaries are in [privacy.md](privacy.md).
 
 ## Implementation verification still required

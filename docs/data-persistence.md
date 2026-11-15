@@ -1,8 +1,10 @@
 # Data persistence
 
 The hosted stack uses MongoDB Atlas collections. The ML service and local arcade prototype
-use SQLite through `backend/account/store.py`. Both implementations scope every row to
-`user_id` and `device_id`.
+use SQLite through `backend/account/store.py`. Account, device, window, score, alert,
+and model rows are scoped to `user_id` and `device_id`. The monitoring retention period
+is one process-wide row. A purge deletes monitoring rows older than that period for every
+account on that store.
 
 ## Model versions
 

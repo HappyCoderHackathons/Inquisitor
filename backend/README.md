@@ -33,7 +33,12 @@ backend, which checks the logged-in user or paired device before forwarding work
 Every request requires `Authorization: Bearer <service-token>`. Model endpoints
 also require `X-User-ID` and `X-Device-ID`, derived by the trusted application
 backend from its authorized principal. These headers are not a replacement for
-the application's user/device authentication.
+the application's user/device authentication. A `user_id` field in the JSON body
+does not match the endpoint contract and is rejected. Retention is one
+process-wide policy. Responses set `Content-Security-Policy` (`default-src 'none'`,
+`frame-ancestors 'none'`, `base-uri 'none'`), `X-Content-Type-Options: nosniff`,
+and `Strict-Transport-Security` only on HTTPS. The service has no browser session.
+See [the threat model](../docs/threat-model.md).
 
 | Endpoint | Request | Result |
 | --- | --- | --- |
