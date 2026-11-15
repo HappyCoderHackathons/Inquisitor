@@ -37,8 +37,9 @@
   use short-lived, single-use pairing codes and revocable device credentials.
 - Hosting: HTTPS for the hosted service and authenticated outbound WSS from the
   Windows client. Do not require inbound Internet access to the user's PC.
-- The arcade games in `Frontend/` remain a prototype collection surface. Their local
-  SQLite storage is not the hosted Atlas store.
+- The arcade games in `Frontend/` remain a prototype collection surface. Their
+  `arcade_samples` and `arcade_feature_windows` collections use the same MongoDB
+  database as the hosted app when `MONGODB_URI` and `MONGODB_DB` are set.
 
 ## Input and ML boundaries
 

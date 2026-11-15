@@ -1,8 +1,6 @@
-import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 import mongomock
 
@@ -25,24 +23,18 @@ SAMPLE = {
 class SecurityHeaderTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.previous = server.DB_PATH
+        self.previous_database = server._arcade_database
+        self.previous = server.ARTIFACT_ROOT
         self.previous_account = server.account
-        server.DB_PATH = Path(self.temporary.name) / "test.sqlite3"
+        server.set_arcade_database(mongomock.MongoClient(tz_aware=True).db)
+        server.ARTIFACT_ROOT = Path(self.temporary.name) / "account-artifacts"
         server.account = None
-        environment = patch.dict(os.environ, {
-            "MONGODB_URI": "mongodb://synthetic",
-            "MONGODB_DB": "inquisitor-test",
-            "INQUISITOR_ARTIFACT_DIR": str(Path(self.temporary.name) / "account-artifacts"),
-        })
-        mongo = patch("pymongo.MongoClient", return_value=mongomock.MongoClient(tz_aware=True))
-        for patcher in (environment, mongo):
-            patcher.start()
-            self.addCleanup(patcher.stop)
         server.initialize()
         self.client = server.app.test_client()
 
     def tearDown(self):
-        server.DB_PATH = self.previous
+        server.set_arcade_database(self.previous_database)
+        server.ARTIFACT_ROOT = self.previous
         server.account = self.previous_account
         self.temporary.cleanup()
 
@@ -87,3 +79,4 @@ class SecurityHeaderTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 403)
         self.assertEqual(blocked.headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(self.client.get("/api/summary").get_json()["samples"], 2)
+

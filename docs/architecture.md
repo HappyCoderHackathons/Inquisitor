@@ -96,10 +96,10 @@ rather than displaying stale scores as live results.
 - A Python-only agent would reduce language boundaries, while C#/.NET would offer
   another native Windows implementation. Neither matches the Rust client decision.
   No comparative capture benchmark is available in this repository.
-- SQLite is suitable for the existing local arcade prototype but does not match
-  the selected hosted database. PostgreSQL would follow the usual project
-  preference, but the explicit Atlas decision takes precedence. Atlas credentials
-  belong only on the hosted service, never in the browser or desktop client.
+- SQLite was used by the local arcade prototype and the ML service; all storage
+  now uses MongoDB. PostgreSQL would follow the usual project preference, but the
+  explicit Atlas decision takes precedence. Atlas credentials belong only on the
+  hosted service and the ML host, never in the browser or desktop client.
 - Better Auth owns password hashing and account/session persistence in separate
   MongoDB collections. Flask forwards `/api/auth/` requests to a Node service on
   `127.0.0.1:3001` and validates cookies through its `get-session` endpoint.
@@ -113,8 +113,8 @@ rather than displaying stale scores as live results.
 
 The arcade games in `Frontend/` are the calibration surface. Their keyboard and
 mouse gameplay produces aggregate calibration windows; controller gameplay does
-not expand the authentication scope. Their local SQLite storage is not the hosted
-Atlas store.
+not expand the authentication scope. Their samples and calibration windows are
+stored in MongoDB collections prefixed `arcade_`.
 
 For v1, collect keyboard and mouse aggregates only, require explicit opt-in,
 retain pause/exit controls, and never bypass the Windows secure desktop. An anomaly may request

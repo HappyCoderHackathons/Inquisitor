@@ -1,12 +1,13 @@
 # Data persistence
 
-The hosted stack uses MongoDB Atlas collections. The ML service and the local arcade prototype
-keep account rows in MongoDB through `backend/account/store.py`, in collections prefixed
-`ml_` (ML service) or `local_account_` (local prototype) so they stay apart from the hosted
-website's collections. The ML service's connection to Atlas has not been verified on the ML host.
-Window, score, alert, and model documents are scoped to `user_id` and `device_id`. The
-monitoring retention period is one document per store. A purge deletes monitoring rows older than that period for every
-account on that store.
+The hosted stack uses MongoDB Atlas collections. Arcade game rounds and browser-collected
+feature windows live in `arcade_samples` and `arcade_feature_windows`. The ML service and the
+local arcade prototype keep account rows in MongoDB through `backend/account/store.py`, in
+collections prefixed `ml_` (ML service) or `local_account_` (local prototype) so they stay apart
+from the hosted website's collections. The ML service's connection to Atlas has not been verified
+on the ML host. Window, score, alert, and model documents are scoped to `user_id` and `device_id`.
+The monitoring retention period is one document per store. A purge deletes monitoring rows older
+than that period for every account on that store.
 
 ## Model versions
 
@@ -44,7 +45,7 @@ On Atlas, `delete_device_records` in `Frontend/atlas_persistence.py` applies the
 `model_versions`, `inference_results`, `alerts`, `windows`, and `monitoring_windows`. The hosted
 `DELETE /api/me/data` route deletes the account on the ML service first, then runs that cascade for
 each paired device, removes onboarding rounds, and revokes every device credential. If the ML service
-is unavailable it returns 502 and deletes nothing. `POST /api/devices/<id>/revoke` revokes one device
+is unavailable it returns 502 and deletes nothing. `POST /api/devices/<id>/revoke` (or `DELETE /api/devices/<id>`) revokes one device
 without deleting data. Both are on the setup page.
 
 Enrollment windows stay until reset or account deletion. Model artifact files on the ML
