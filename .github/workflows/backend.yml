@@ -16,9 +16,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --project backend --locked
       - run: uvx ruff@0.17.5 check backend scripts tests
-      - run: >-
-          uv run --project backend python scripts/scan_privacy_payloads.py
-          shared/fixtures/tray-capture.v4.json
-          sample-data/windows.jsonl
-          scripts/fixtures/agent-link-captured.json
+      - name: Capture and scan agent payloads
+        run: |
+          capture=$(mktemp --suffix=.json)
+          trap 'rm -f "$capture"' EXIT
+          uv run --no-project --python 3.13 --with-requirements Frontend/requirements.txt --with "mongomock>=4.3,<5" python scripts/capture_agent_link_artifacts.py "$capture"
+          uv run --project backend python scripts/scan_privacy_payloads.py shared/fixtures/tray-capture.v4.json sample-data/windows.jsonl "$capture"
       - run: uv run --project backend python -m unittest discover -s tests -v

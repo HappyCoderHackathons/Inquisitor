@@ -6,41 +6,32 @@ import argparse
 import json
 import re
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_DIR = ROOT / "shared"
+sys.path.insert(0, str(ROOT))
+
+from backend.ml.model import validate_window
 
 URL_PATTERN = re.compile(r"https?://", re.IGNORECASE)
-
-FORBIDDEN_KEY = re.compile(
-    r"(?i)(^|_)(vk_code|virtual_key|key_code|scan_code|key_name|key_char|unicode_char|"
-    r"typed_text|keystroke|clipboard|"
-    r"screen_x|screen_y|pointer_x|pointer_y|client_x|client_y|cursor_x|cursor_y|"
-    r"absolute_x|absolute_y|click_x|click_y|pos_x|pos_y|"
-    r"window_title|hwnd|click_target|"
-    r"raw_events|key_events|mouse_events)(_|$)"
-    r"|^(text|typed|character|url|href|events)$"
-)
-
-SAFE_AUDIT_KEYS = frozenset(
-    {
-        "device_count",
-        "device_id",
-        "event",
-        "mode",
-        "outcome",
-        "reason",
-        "schema_version",
-        "sequence",
-        "user_id",
-    }
-)
-
-EVENT_ROW_HINTS = frozenset({"io_type", "vk", "scan_code", "monotonic_s", "delta_x", "delta_y"})
+SAFE_AUDIT_KEYS = frozenset({
+    "device_count", "device_id", "event", "mode", "outcome", "reason",
+    "schema_version", "sequence", "user_id",
+})
+# Frontend.hosted inserts into windows and monitoring_windows; _id is excluded by the capture.
+SAFE_DOCUMENT_KEYS = frozenset({
+    "created_at", "device_id", "game", "onboarding_id", "result", "sequence",
+    "session_id", "usable", "user_id", "window",
+})
+SAFE_RESULT_KEYS = frozenset({"model_id", "state", "score", "threshold", "score_delta"})
+CAPTURE_KEYS = frozenset({
+    "enrollment_uploads", "monitoring_uploads", "persisted_documents", "audit_log_lines", "upload_request",
+})
+LIST_FIELDS = frozenset({
+    "enrollment_uploads", "monitoring_uploads", "windows", "monitoring_windows", "audit_log_lines",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,125 +43,71 @@ class Finding:
         return f"{source}: {self.path}: {self.reason}"
 
 
-def _schema_property_paths(schema_version: int) -> frozenset[str]:
-    path = SCHEMA_DIR / f"feature-window-v{schema_version}.schema.json"
-    schema = json.loads(path.read_text(encoding="utf-8"))
-    paths: set[str] = set()
-
-    def walk(properties: Mapping[str, Any], prefix: str) -> None:
-        for name, spec in properties.items():
-            current = f"{prefix}.{name}" if prefix else name
-            paths.add(current)
-            if spec.get("type") == "object" and isinstance(spec.get("properties"), Mapping):
-                walk(spec["properties"], current)
-
-    root = schema.get("properties")
-    if isinstance(root, Mapping):
-        walk(root, "")
-    return frozenset(paths)
-
-
-FEATURE_WINDOW_ALLOWLIST: dict[int, frozenset[str]] = {
-    version: _schema_property_paths(version) for version in (1, 2, 3, 4)
-}
-
-
-def _is_feature_window(value: object) -> bool:
-    if not isinstance(value, Mapping):
-        return False
-    features = value.get("features")
-    return (
-        isinstance(value.get("schema_version"), int)
-        and isinstance(value.get("device_id"), str)
-        and isinstance(value.get("session_id"), str)
-        and isinstance(features, Mapping)
-    )
-
-
-def _relative_path(path: str, key: str) -> str:
-    return f"{path}.{key}" if path else key
-
-
-def _audit_record(value: Mapping[str, Any]) -> bool:
-    return isinstance(value.get("event"), str) and isinstance(value.get("outcome"), str)
-
-
 def _check_string(path: str, value: str, findings: list[Finding]) -> None:
     if URL_PATTERN.search(value):
         findings.append(Finding(path, "string contains a URL"))
 
 
-def _check_event_stream(path: str, value: Sequence[object], findings: list[Finding]) -> None:
-    if len(value) < 2:
-        return
-    hits = 0
-    for item in value[:8]:
-        if not isinstance(item, Mapping):
-            continue
-        if len(EVENT_ROW_HINTS.intersection(item)) >= 2:
-            hits += 1
-    if hits >= 2:
-        findings.append(Finding(path, "ordered raw input event list"))
-
-
-def _check_feature_window(path: str, window: Mapping[str, Any], findings: list[Finding]) -> None:
-    version = window["schema_version"]
-    allowed = FEATURE_WINDOW_ALLOWLIST.get(version)
-    if allowed is None:
-        findings.append(Finding(path, f"unsupported feature window schema_version {version}"))
-        return
-
-    def walk(obj: Mapping[str, Any], schema_prefix: str, report_prefix: str) -> None:
-        for key, child in obj.items():
-            schema_path = _relative_path(schema_prefix, str(key))
-            report_path = _relative_path(report_prefix, str(key))
-            if schema_path not in allowed:
-                findings.append(Finding(report_path, "field is outside the schema allowlist"))
-            if isinstance(child, Mapping):
-                walk(child, schema_path, report_path)
-            elif isinstance(child, str):
-                _check_string(report_path, child, findings)
-
-    walk(window, "", path)
-
-
-def _walk(value: Any, path: str, findings: list[Finding]) -> None:
-    if isinstance(value, Mapping):
-        if _is_feature_window(value):
-            _check_feature_window(path, value, findings)
+def _walk(value: object, path: str, findings: list[Finding], field: str = "") -> None:
+    if isinstance(value, str) and (field == "audit_log_lines" or (not field and value.lstrip().startswith(("{", "[")))):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            findings.append(Finding(path, "audit log line is not JSON"))
             return
-        if _audit_record(value):
-            for key in value:
-                if key not in SAFE_AUDIT_KEYS:
-                    findings.append(
-                        Finding(_relative_path(path, str(key)), "unexpected audit log field")
-                    )
+    if field in LIST_FIELDS and not isinstance(value, Mapping):
+        findings.append(Finding(path, "capture collection entry must be an object"))
+        return
+    if field in {"window", "upload_request", "enrollment_uploads", "monitoring_uploads"} or (
+        not field and isinstance(value, Mapping) and ("features" in value or "schema_version" in value)
+        and "event" not in value
+    ):
+        try:
+            validate_window(value)
+        except ValueError as exc:
+            findings.append(Finding(path, f"invalid feature window: {exc}"))
+        if isinstance(value, Mapping):
             for key, child in value.items():
-                child_path = _relative_path(path, str(key))
                 if isinstance(child, str):
-                    _check_string(child_path, child, findings)
-            return
-
-        for key, child in value.items():
-            key_path = _relative_path(path, str(key))
-            if FORBIDDEN_KEY.search(str(key)):
-                findings.append(Finding(key_path, "forbidden field name"))
-            if key == "window" and _is_feature_window(child):
-                _check_feature_window(key_path, child, findings)
-                continue
-            _walk(child, key_path, findings)
+                    _check_string(f"{path}.{key}", child, findings)
         return
-
-    if isinstance(value, str):
-        _check_string(path, value, findings)
+    if isinstance(value, Mapping):
+        if field == "audit_log_lines" or ("event" in value and "outcome" in value):
+            allowed = SAFE_AUDIT_KEYS
+        elif field in {"windows", "monitoring_windows"}:
+            allowed = SAFE_DOCUMENT_KEYS
+        elif field == "persisted_documents":
+            allowed = frozenset({"windows", "monitoring_windows"})
+        elif field == "result":
+            allowed = SAFE_RESULT_KEYS
+        elif not field:
+            allowed = CAPTURE_KEYS if CAPTURE_KEYS.intersection(value) else SAFE_DOCUMENT_KEYS
+        else:
+            allowed = frozenset()
+        for key, child in value.items():
+            child_path = f"{path}.{key}" if path else str(key)
+            if key not in allowed:
+                findings.append(Finding(child_path, "field is outside the allowlist"))
+            if key in LIST_FIELDS and key in allowed and isinstance(child, list):
+                for index, item in enumerate(child):
+                    _walk(item, f"{child_path}[{index}]", findings, str(key))
+            else:
+                _walk(child, child_path, findings, str(key) if key in allowed else "unknown")
         return
     if isinstance(value, list):
-        _check_event_stream(path, value, findings)
+        if not field and all(isinstance(item, Mapping) for item in value):
+            for index, item in enumerate(value):
+                _walk(item, f"{path}[{index}]", findings)
+            return
+        if any(isinstance(item, (dict, list, int, float)) for item in value):
+            findings.append(Finding(path, "non-window structured or numeric array"))
         for index, item in enumerate(value):
-            _walk(item, f"{path}[{index}]", findings)
+            _walk(item, f"{path}[{index}]", findings, "unknown")
+    elif isinstance(value, str):
+        _check_string(path, value, findings)
 
 
-def scan_value(value: Any, *, source: str = "<memory>") -> list[Finding]:
+def scan_value(value: object, *, source: str = "<memory>") -> list[Finding]:
     findings: list[Finding] = []
     _walk(value, "", findings)
     prefixed: list[Finding] = []
@@ -180,12 +117,12 @@ def scan_value(value: Any, *, source: str = "<memory>") -> list[Finding]:
     return prefixed
 
 
-def _load_file(path: Path) -> list[Any]:
+def _load_file(path: Path) -> list[object]:
     text = path.read_text(encoding="utf-8")
     if path.suffix == ".jsonl":
         return [json.loads(line) for line in text.splitlines() if line.strip()]
     if path.suffix == ".log":
-        items: list[Any] = []
+        items: list[object] = []
         for line_number, line in enumerate(text.splitlines(), start=1):
             line = line.strip()
             if not line:
@@ -201,8 +138,6 @@ def _load_file(path: Path) -> list[Any]:
                     raise ValueError(f"{path}:{line_number}: not JSON") from None
         return items
     loaded = json.loads(text)
-    if isinstance(loaded, list):
-        return loaded
     return [loaded]
 
 
