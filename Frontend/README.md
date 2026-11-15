@@ -27,6 +27,14 @@ A local Flask + TypeScript arcade prototype for collecting opt-in behavioral inp
 
 See [INTEGRATION_HANDOFF.md](INTEGRATION_HANDOFF.md) for dashboard code locations and the remaining authenticated WebSocket, SSOJet, model-status, and account-deletion work.
 
+## Collecting local feature windows
+
+On `/dashboard`, choose `Enrollment` or `Monitoring`, check the consent box, and start collection. Focus the capture area and type naturally. After at least 30 seconds and 30 key presses, the page saves one aggregate feature window; keep typing to collect more. Pause or stop at any time. Incomplete windows are discarded.
+
+The browser sends only windows validated against [`shared/feature-window-v1.schema.json`](../shared/feature-window-v1.schema.json) to the local Flask app. Key identities and typed content are used only transiently in the browser and are not saved or sent. Windows are stored in the local `inputprint.sqlite3`; use **Download JSONL** to export them. These are browser-collected examples, not Windows-agent captures or model detections. No model training or remote service call is made.
+
+Collection sessions use a random local browser ID and a new session ID each time collection starts. For session-separated evaluation, stop and start a new collection session between sessions. Label who produced each collection outside the exported feature contract before using it as genuine or second-user data.
+
 Xbox and Nintendo controllers work through the browser Gamepad API. Connect the controller and press a button once so the browser can recognize it. Keyboard controls are shown in each game. The arcade sprint rotates through four one-minute rounds; each game can also be played on its own.
 
 ## Privacy and current scope

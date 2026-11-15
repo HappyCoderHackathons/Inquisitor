@@ -45,6 +45,43 @@
           </article>
         </section>
 
+        <section class="dashboard-panel collection-panel" aria-labelledby="collectionTitle">
+          <div class="dashboard-panel-heading">
+            <div>
+              <p class="eyebrow">LOCAL DATA COLLECTION</p>
+              <h2 id="collectionTitle">Create feature windows</h2>
+            </div>
+            <span class="status-label local-label">BROWSER ONLY</span>
+          </div>
+          <p class="dashboard-panel-copy">With your consent, this page measures keyboard timing while the capture area is focused. Typed content and key identities stay in temporary browser memory; only aggregate windows matching the shared v1 contract are saved to this machine's SQLite database. Nothing is sent to a model service.</p>
+          <div class="collection-controls">
+            <label class="mode-label" for="collectionMode">Collection mode
+              <select id="collectionMode">
+                <option value="enrollment">Enrollment</option>
+                <option value="monitoring">Monitoring</option>
+              </select>
+            </label>
+            <label class="consent-label"><input id="collectionConsent" type="checkbox"> I consent to collect keyboard timing for this local session.</label>
+          </div>
+          <div class="collector-surface-wrap">
+            <div id="collectorSurface" class="collector-surface" tabindex="0" role="group" aria-describedby="collectorInstructions">Focus here, then type naturally while collection is active.</div>
+            <p id="collectorInstructions" class="dashboard-footnote">Each window needs at least 30 key presses and 30 seconds of collection. The text itself is never recorded.</p>
+          </div>
+          <div class="collector-progress-row">
+            <progress id="windowProgress" max="30" value="0" aria-label="Current feature window progress"></progress>
+            <span id="windowProgressLabel">Waiting to start</span>
+          </div>
+          <div class="collection-actions">
+            <button id="startCollection" class="button primary" type="button">Start collection</button>
+            <button id="pauseCollection" class="button secondary-button" type="button" disabled>Pause</button>
+            <button id="stopCollection" class="button secondary-button" type="button" disabled>Stop</button>
+            <button id="retryWindow" class="button secondary-button" type="button" hidden>Retry save</button>
+            <a id="exportFeatureWindows" class="button secondary-button" href="/api/feature-windows/export" aria-disabled="true">Download JSONL</a>
+          </div>
+          <p id="collectionStatus" class="collection-status" role="status" aria-live="polite">Collection is off. Choose a mode and opt in to begin.</p>
+          <p class="collection-summary"><strong id="featureWindowCount">0</strong> saved feature windows <span aria-hidden="true">·</span> <strong id="featureSessionCount">0</strong> sessions</p>
+        </section>
+
         <section class="dashboard-panel detection-panel" aria-labelledby="detectionTitle">
           <div class="dashboard-panel-heading">
             <div>
@@ -80,7 +117,7 @@
               <div><p class="eyebrow">DATA &amp; ACCOUNT CONTROLS</p><h2 id="dataTitle">Your choices</h2></div>
             </div>
             <div class="data-action">
-              <div><strong>Delete local arcade rounds</strong><p>Removes all scores and aggregate timing samples stored by this local prototype.</p></div>
+              <div><strong>Delete local data</strong><p>Removes arcade rounds and feature windows stored by this local prototype.</p></div>
               <button id="deleteLocalData" class="button danger-button" type="button">Delete data</button>
             </div>
             <div class="data-action">
