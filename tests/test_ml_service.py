@@ -54,6 +54,7 @@ class ModelServiceTests(unittest.TestCase):
     def test_nonfinite_and_impossible_timing(self) -> None:
         for field, value in (
             ("presses_per_second", float("nan")), ("hold_mean_ms", 90_000), ("key_count", 10 ** 400),
+            ("presses_per_second", 51), ("key_count", "40"),
         ):
             window = generate_windows(49, 1)[0]
             window["features"][field] = value
@@ -149,7 +150,9 @@ class ModelServiceTests(unittest.TestCase):
                     if prefix == "impostor":
                         row["features"]["press_overlap_fraction"] = 0.8
                 target.extend(rows)
-        payload = {"profile": "labeled-overlap", "windows": genuine, "impostor_windows": impostor}
+        rejected = copy.deepcopy(genuine[0])
+        rejected["features"]["pause_fraction"] = 2
+        payload = {"profile": "labeled-overlap", "windows": [*genuine, rejected], "impostor_windows": impostor}
         response = self.client.post("/models/train", headers=self.headers, json=payload)
         self.assertEqual(response.status_code, 201, response.json)
         metadata = response.json
@@ -157,6 +160,7 @@ class ModelServiceTests(unittest.TestCase):
         self.assertEqual(metadata["training_window_count"], 40)
         self.assertEqual(metadata["impostor_training_window_count"], 20)
         self.assertEqual(metadata["validation_window_count"], 0)
+        self.assertEqual(metadata["rejected_window_count"], 1)
         self.assertLessEqual(metadata["training_false_rejection_rate"], .02)
         url = "/models/" + metadata["model_id"] + "/score"
         normal = self.client.post(url, headers=self.headers, json={"window": genuine[0]}).json

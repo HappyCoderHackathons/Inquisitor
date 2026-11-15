@@ -5,7 +5,7 @@ import json
 import math
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -52,10 +52,22 @@ def feature_window_error(value: object) -> str | None:
         if not all(math.isfinite(number) for number in features.values()):
             return "Feature values must be finite numbers"
         duration = cast(int, window["duration_ms"])
+        if duration > 600_000:
+            return "Window duration cannot exceed 10 minutes"
         if any(number > duration for name, number in features.items() if name.endswith("_ms")):
             return "Timing features cannot exceed window duration"
+        if features["presses_per_second"] > 50:
+            return "Press rate is implausible"
     except OverflowError:
         return "Feature values must be finite numbers"
+    return None
+
+
+def started_at_error(window: dict[str, object], now: datetime) -> str | None:
+    # The schema's RFC 3339 format check guarantees a UTC offset here.
+    ended = datetime.fromisoformat(cast(str, window["started_at"])) +timedelta(milliseconds=cast(int, window["duration_ms"]))
+    if ended > now + timedelta(minutes=5) or ended < now - timedelta(days=1):
+        return "started_at is outside the accepted ingestion window"
     return None
 
 
@@ -108,7 +120,7 @@ def save_feature_window():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify(error="Expected one feature-window JSON object"), 400
-    error = feature_window_error(data)
+    error = feature_window_error(data) or started_at_error(data, datetime.now(timezone.utc))
     if error:
         return jsonify(error=error), 422
     with db() as conn:
