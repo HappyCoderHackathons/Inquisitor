@@ -1,5 +1,13 @@
 # Published weights
 
+`tray-two-device-v1.json` is a shared keyboard/mouse candidate fitted on 64 windows
+from four original sessions: the same genuine and impostor users on two PCs.
+The previous published model remains deployed. Its canonical SHA-256 is
+`de37af16d102b847bb4651a081c8d79d6906ca2f6249e58d8bab0d600d246567`.
+See the [model card](../../docs/multimodal-model.md) for features, model-selection
+results, limitations, and required schema-v4 input. The artifact contains numeric
+weights and summary counts, with no raw events, credentials, or device/account IDs.
+
 `labeled-overlap-v1.json` is the selected per-user logistic regression fitted on
 60 genuine and 30 consenting second-user aggregate windows. It includes all numeric
 parameters required for inference: derived feature order, scaler mean/scale,

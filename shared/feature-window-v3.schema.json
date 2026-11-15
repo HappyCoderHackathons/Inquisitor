@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InputPrint tray timing window v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "device_id",
+    "session_id",
+    "sequence",
+    "mode",
+    "started_at",
+    "duration_ms",
+    "features"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 3,
+      "type": "integer"
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "mode": {
+      "enum": [
+        "enrollment",
+        "monitoring"
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key_count",
+        "hold_mean_ms",
+        "hold_std_ms",
+        "press_interval_mean_ms",
+        "press_interval_std_ms",
+        "hold_sample_count"
+      ],
+      "properties": {
+        "key_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hold_mean_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "hold_std_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "press_interval_mean_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "press_interval_std_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "hold_sample_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

@@ -9,6 +9,13 @@ The trained numeric weights are checked in at
 [`artifacts/labeled-overlap-v2.json`](artifacts/labeled-overlap-v2.json).
 For inference without retraining, follow the [published API deployment guide](deploy/README.md).
 
+The shared two-computer candidate is
+[`artifacts/tray-two-device-v1.json`](artifacts/tray-two-device-v1.json). Its
+`tray-multimodal` profile consumes schema-v4 native keyboard/mouse aggregates and
+supports one owned model with an explicit device allowlist. It remains a candidate;
+the current published and active model has not been replaced. See the
+[model card and CSV conversion instructions](../docs/multimodal-model.md).
+
 From the repository root, install the locked environment:
 
 ```sh

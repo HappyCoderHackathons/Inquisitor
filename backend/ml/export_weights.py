@@ -9,7 +9,13 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from .model import SCHEMA
+from .model import (
+    LABELED_PROFILES,
+    MULTIMODAL_SCHEMA,
+    SCHEMA,
+    TRAY_PROFILES,
+    TRAY_SCHEMA,
+)
 from .published import PublishedModel, canonical_hash
 
 
@@ -20,8 +26,8 @@ def main() -> None:
     parser.add_argument("--version", default="labeled-overlap-v1")
     args = parser.parse_args()
     metadata = json.loads((args.model_dir / "metadata.json").read_text(encoding="utf-8"))
-    if metadata["feature_profile"] != "labeled-overlap":
-        parser.error("only labeled-overlap models can be exported by this command")
+    if metadata["feature_profile"] not in LABELED_PROFILES:
+        parser.error("only labeled logistic regression models can be exported by this command")
     # Only the operator's own service-created artifacts are trusted pickle inputs.
     pipeline = joblib.load(args.model_dir / "model.joblib")["model"]
     transform = pipeline.named_steps["functiontransformer"]
@@ -29,23 +35,36 @@ def main() -> None:
     model = pipeline.named_steps["logisticregression"]
     if not isinstance(model, LogisticRegression) or not isinstance(scaler, StandardScaler) or transform.func is not np.log1p:
         parser.error("model pipeline is incompatible with the published format")
-    if model.classes_.tolist() != [0, 1] or model.coef_.shape != (1, 2):
-        parser.error("model must use genuine=0 and impostor=1 with two features")
+    if model.classes_.tolist() != [0, 1] or model.coef_.shape != (1, len(metadata["feature_names"])):
+        parser.error("model must use genuine=0 and impostor=1 with the declared feature count")
     artifact = {
         "format_version": 1, "model_version": args.version, "algorithm": "LogisticRegression",
-        "schema_version": 1, "schema_sha256": canonical_hash(SCHEMA),
-        "feature_names": ["hold_cv", "press_overlap_fraction"],
-        "feature_transform": "hold_cv=hold_std_ms/max(hold_mean_ms,1e-8); log1p; standard scaling",
+        "schema_version": metadata["schema_version"],
+        "schema_sha256": canonical_hash(MULTIMODAL_SCHEMA if metadata["feature_profile"] == "tray-multimodal" else
+                                        TRAY_SCHEMA if metadata["feature_profile"] in TRAY_PROFILES else SCHEMA),
+        "feature_profile": metadata["feature_profile"], "feature_names": metadata["feature_names"],
+        "feature_transform": "selected timing statistics and ratios (denominator floor 1e-8); log1p; standard scaling",
         "scaler_mean": scaler.mean_.tolist(), "scaler_scale": scaler.scale_.tolist(),
         "coefficient": model.coef_[0].tolist(), "intercept": float(model.intercept_[0]),
         "threshold": metadata["threshold"], "threshold_percentile": metadata["threshold_percentile"],
+        "threshold_margin_std": metadata.get("threshold_margin_std", 0.0),
+        "threshold_rule": metadata["threshold_rule"],
         "parameters": metadata["parameters"],
         "training_summary": {"genuine_windows": metadata["genuine_training_window_count"],
                              "impostor_windows": metadata["impostor_training_window_count"],
                              "genuine_sessions": len(metadata["genuine_training_sessions"]),
                              "impostor_sessions": len(metadata["impostor_training_sessions"])},
         **({"genuine_baseline": metadata["genuine_baseline"]} if "genuine_baseline" in metadata else {}),
-        "limitations": "Per-user labeled pilot. Model-selection CV is not an independent final test. No performance guarantee for other users or devices.",
+        "limitations": (
+            "Two-computer, two-person keyboard and mouse pilot. Training and model-selection diagnostics are not "
+            "an independent final test. No performance guarantee for new sessions, people, or computers."
+            if metadata["feature_profile"] == "tray-multimodal" else
+            "Tray keyboard-timing pilot. One recording per class is permitted. Threshold uses genuine training data. "
+            "No independent evaluation or mouse inference; no performance guarantee for other people, activities, or devices."
+            if metadata["feature_profile"] in TRAY_PROFILES else
+            "Per-user labeled pilot. Model-selection CV is not an independent final test. "
+            "No performance guarantee for other users or devices."
+        ),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("x", encoding="utf-8", newline="\n") as output:

@@ -12,7 +12,7 @@ from flask import Flask, g, jsonify, request
 
 from backend.account.store import AccountStore, retention_seconds_from_env
 
-from .model import ModelStore, validate_window
+from .model import LABELED_PROFILES, ModelStore, validate_window
 from .published import PublishedModel
 
 
@@ -27,8 +27,14 @@ def create_app() -> Flask:
     published = PublishedModel(Path(published_path)) if published_path else None
     published_user = os.environ.get("ML_PUBLISHED_USER_ID")
     published_device = os.environ.get("ML_PUBLISHED_DEVICE_ID")
+    published_model_id = os.environ.get("ML_PUBLISHED_MODEL_ID")
     if published and (not published_user or not published_device):
         raise RuntimeError("published inference requires configured owner and device IDs")
+    if published and published_model_id:
+        metadata = store.metadata(published_model_id, published_user, published_device)
+        if (metadata["feature_names"] != list(published.names) or metadata["threshold"] != published.threshold
+                or metadata["feature_profile"] != published.profile):
+            raise RuntimeError("published artifact differs from the configured owned model")
     training_lock = threading.Lock()
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
@@ -74,7 +80,11 @@ def create_app() -> Flask:
     def published_model() -> PublishedModel:
         if published is None:
             raise RuntimeError("published model is unavailable")
-        if g.user_id != published_user or g.device_id != published_device:
+        if g.user_id != published_user:
+            raise PermissionError("published model belongs to another account or device")
+        if published_model_id:
+            store.metadata(published_model_id, g.user_id, g.device_id)
+        elif g.device_id != published_device:
             raise PermissionError("published model belongs to another account or device")
         return published
 
@@ -88,10 +98,15 @@ def create_app() -> Flask:
         return jsonify(remember(model.score(body({"window"})["window"], g.device_id)))
 
     def validate_training_request(value: dict[str, object]) -> tuple[bool, object]:
-        labeled = value.get("profile") == "labeled-overlap"
+        profile = value.get("profile", "all")
+        if not isinstance(profile, str) or profile not in {"all", "cadence-overlap", *LABELED_PROFILES}:
+            raise ValueError("unknown feature profile")
+        if "device_ids" in value and not isinstance(value["device_ids"], list):
+            raise ValueError("device_ids must be an explicit list")
+        labeled = profile in LABELED_PROFILES
         if labeled:
             if any(field in value for field in ("validation_session_id", "validation_session_ids")):
-                raise ValueError("labeled-overlap uses all supplied data; omit validation session fields")
+                raise ValueError("labeled profiles use all supplied data; omit validation session fields")
             if not isinstance(value.get("impostor_windows"), list):
                 raise ValueError("labeled-overlap requires an impostor_windows list")
             sessions = None
@@ -114,6 +129,7 @@ def create_app() -> Flask:
                 profile=value.get("profile", "all"),
                 impostor_values=value.get("impostor_windows"),
                 model_id=model_id,
+                device_ids=value.get("device_ids"),
             )
         except Exception:
             if model_id is not None:
@@ -124,7 +140,7 @@ def create_app() -> Flask:
 
     @app.post("/models/train")
     def train():
-        value = body({"windows"}, {"validation_session_id", "validation_session_ids", "profile", "impostor_windows"})
+        value = body({"windows"}, {"validation_session_id", "validation_session_ids", "profile", "impostor_windows", "device_ids"})
         _, sessions = validate_training_request(value)
         if not training_lock.acquire(blocking=False):
             return jsonify(error="training is busy; retry later"), 503
