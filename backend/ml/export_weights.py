@@ -23,7 +23,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, required=True, help="trusted service-created artifact directory")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--version", default="labeled-overlap-v1")
+    parser.add_argument("--version", default="tray-two-device-v1")
     args = parser.parse_args()
     metadata = json.loads((args.model_dir / "metadata.json").read_text(encoding="utf-8"))
     if metadata["feature_profile"] not in LABELED_PROFILES:

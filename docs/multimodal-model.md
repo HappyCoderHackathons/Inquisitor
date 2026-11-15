@@ -1,9 +1,10 @@
-# Shared two-computer candidate
+# Deployed shared two-computer model
 
 `tray-two-device-v1` is one logistic regression model for Ian (genuine) versus
 Colin (impostor), fitted on both computers. It uses no user, device, file, session,
-or window-position identifiers as classifier inputs. It remains a candidate;
-the earlier published model and active pointers have not been replaced.
+or window-position identifiers as classifier inputs. It is the deployed published
+and active model for the configured pilot identities. Earlier numeric models are
+retired under `archive_models/` in the repository and are not selected by the service.
 
 ## Data and input handling
 
@@ -104,15 +105,17 @@ window/header device mismatches are rejected. Test data's second-PC identity is
 a private evaluation alias, not evidence of completed pairing or provisioned
 device credentials. Application pairing and actual agent transport remain separate.
 
-Existing v1/v2/v3 contracts and old artifacts remain supported by their original
+Existing v1/v2/v3 contracts and archived artifacts remain supported by their original
 profiles. A multimodal model receiving an older keyboard-only window reports
 `INSUFFICIENT_DATA`; it does not invent missing mouse features. Existing score,
-threshold, delta, state, and explanation fields remain intact. The current
-published-model configuration and active models are unchanged. Training remains
+threshold, delta, state, and explanation fields remain intact. The published
+artifact is bound to its private owned model ID so both allowlisted devices can
+use `/model` and `/score`. Training remains
 disabled in the serving process. Automatic tray upload, browser calibration
 conversion, and end-to-end native monitoring have not been implemented here.
 
-All 27 backend tests passed on the designated host, including training, export,
-reload, two-device ownership, and legacy compatibility. Live candidate scoring
-matched the saved numeric artifact exactly on all 64 development windows. The
-previous published metadata, score, and active pointers were verified unchanged.
+All 37 backend tests passed on the designated host, including training, export,
+reload, two-device ownership, reset/deletion, and archived-format compatibility.
+Published and active-model scoring matched the saved numeric artifact exactly
+on all 64 development windows. Both configured device identities were checked
+after restart, and older runtime models were retired to the private host archive.

@@ -85,6 +85,7 @@ class TrayMultimodalTests(unittest.TestCase):
                                     "--output", str(artifact), "--version", "synthetic-multimodal"]):
                 export_weights()
             published = PublishedModel(artifact)
+            self.assertEqual(metadata["schema_sha256"], published.artifact["schema_sha256"])
             (folder / "token").write_text("test-only-" + "a" * 32)
             with patch.dict(os.environ, {"ML_TOKEN_FILE": str(folder / "token"), "ML_DATA_DIR": str(folder / "models"),
                                          "ML_PUBLISHED_MODEL_FILE": str(artifact), "ML_PUBLISHED_USER_ID": "synthetic-user",
@@ -113,6 +114,14 @@ class TrayMultimodalTests(unittest.TestCase):
                 pc_two = next(row for row in groups[0] if row["device_id"] == "pc-2")
                 self.assertEqual(client.post(f"/models/{metadata['model_id']}/score", headers=mismatched,
                                              json={"window": pc_two}).status_code, 403)
+                self.assertEqual(client.post("/enrollment/reset", headers=headers).status_code, 200)
+                for device in ("pc-1", "pc-2"):
+                    owner = {**headers, "X-Device-ID": device}
+                    self.assertEqual(client.get("/models/active", headers=owner).status_code, 404)
+                    self.assertEqual(client.get("/model", headers=owner).status_code, 404)
+                restarted = create_app().test_client()
+                self.assertEqual(restarted.get("/health", headers=headers).status_code, 200)
+                self.assertEqual(restarted.get("/model", headers=headers).status_code, 503)
             legacy = generate_windows(49, 1)[0]
             self.assertEqual(published.score(legacy, "synthetic-device")["state"], "INSUFFICIENT_DATA")
             self.assertNotIn("device_ids", json.loads(artifact.read_text()))

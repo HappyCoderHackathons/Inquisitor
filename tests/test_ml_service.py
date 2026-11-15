@@ -140,7 +140,7 @@ class ModelServiceTests(unittest.TestCase):
         self.assertEqual(self.client.put(f"/models/{ready['model_id']}/active", headers=self.headers).status_code, 200)
 
     def test_published_api_auth_ownership_and_score_contract(self) -> None:
-        artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v2.json"
+        artifact = Path(__file__).resolve().parents[1] / "archive_models/labeled-overlap-v2.json"
         with patch.dict(os.environ, {"ML_PUBLISHED_MODEL_FILE": str(artifact),
                                     "ML_PUBLISHED_USER_ID": "synthetic-user", "ML_PUBLISHED_DEVICE_ID": "synthetic-device"}):
             client = create_app().test_client()
@@ -167,7 +167,7 @@ class ModelServiceTests(unittest.TestCase):
         self.assertEqual(client.post("/score", headers=self.headers, json={"window": window}).json["state"], "INSUFFICIENT_DATA")
 
     def test_published_unusual_window_is_explained(self) -> None:
-        artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v1.json"
+        artifact = Path(__file__).resolve().parents[1] / "archive_models/labeled-overlap-v1.json"
         window = generate_windows(49, 1)[0]
         window["features"]["press_overlap_fraction"] = 0.9
         result = PublishedModel(artifact).score(window, "synthetic-device")
@@ -205,7 +205,7 @@ class ModelServiceTests(unittest.TestCase):
         self.assertEqual(self.client.get("/models/active", headers=self.headers).status_code, 404)
 
     def test_published_artifact_validation_and_portable_hash(self) -> None:
-        artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v1.json"
+        artifact = Path(__file__).resolve().parents[1] / "archive_models/labeled-overlap-v1.json"
         original = PublishedModel(artifact)
         copy_path = Path(self.temporary.name) / "weights.json"
         value = json.loads(artifact.read_text(encoding="utf-8"))

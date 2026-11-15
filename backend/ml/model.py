@@ -35,7 +35,9 @@ TRAY_SCHEMA_HASH = hashlib.sha256((SCHEMA_PATH.parent / "feature-window-v3.schem
 VALIDATORS[3] = Draft202012Validator(TRAY_SCHEMA, format_checker=FormatChecker())
 MULTIMODAL_SCHEMA_BYTES = (SCHEMA_PATH.parent / "feature-window-v4.schema.json").read_bytes()
 MULTIMODAL_SCHEMA = json.loads(MULTIMODAL_SCHEMA_BYTES)
-MULTIMODAL_SCHEMA_HASH = hashlib.sha256(MULTIMODAL_SCHEMA_BYTES).hexdigest()
+MULTIMODAL_SCHEMA_HASH = hashlib.sha256(
+    json.dumps(MULTIMODAL_SCHEMA, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+).hexdigest()
 VALIDATORS[4] = Draft202012Validator(MULTIMODAL_SCHEMA, format_checker=FormatChecker())
 MAX_DURATION_MS = 600_000
 MAX_PRESSES_PER_SECOND = 50

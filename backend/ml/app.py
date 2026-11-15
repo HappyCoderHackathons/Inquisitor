@@ -31,10 +31,14 @@ def create_app() -> Flask:
     if published and (not published_user or not published_device):
         raise RuntimeError("published inference requires configured owner and device IDs")
     if published and published_model_id:
-        metadata = store.metadata(published_model_id, published_user, published_device)
-        if (metadata["feature_names"] != list(published.names) or metadata["threshold"] != published.threshold
-                or metadata["feature_profile"] != published.profile):
-            raise RuntimeError("published artifact differs from the configured owned model")
+        try:
+            metadata = store.ready_metadata(published_model_id, published_user, published_device)
+        except FileNotFoundError:
+            published = None
+        else:
+            if (metadata["feature_names"] != list(published.names) or metadata["threshold"] != published.threshold
+                    or metadata["feature_profile"] != published.profile):
+                raise RuntimeError("published artifact differs from the configured owned model")
     training_lock = threading.Lock()
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
