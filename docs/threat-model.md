@@ -127,6 +127,19 @@ auth user id. An empty id is rejected.
 | `POST /api/agent/pair` | The account that owns the unused, unexpired pairing code. The token is stored only as a hash |
 | `GET /api/agent/onboarding` | The device for that bearer token. A revoked device is rejected |
 | `POST /api/agent/windows` | That device. The stored `user_id` comes from the device record. `window.device_id` must equal the device id |
+| `GET /api/agent/ws` (WebSocket) | That device. The bearer token is checked before the upgrade, and an `Origin` other than `BETTER_AUTH_URL` is refused with 403, so a browser page cannot open the socket with someone else's token. Each message re-reads the device, so a revoked device gets `revoked` and the socket closes |
+
+The agent socket carries presence only, as JSON text frames with `"v": 1`:
+
+| Direction | Message | Effect |
+| --- | --- | --- |
+| Agent to server | `hello {paused, agent_version?}`, then `heartbeat {paused}` every 30 seconds | Sets `last_heartbeat_at`, `ws_connected`, and `agent_paused` on the device |
+| Server to agent | `status {state, collection, session_id}` | Sent after `hello` and whenever it changes. The same fields as `GET /api/agent/onboarding` |
+| Server to agent | `revoked` | The device was revoked. The agent deletes its credential and stops |
+
+Any other message, an extra field, or a message over 4 KiB closes the socket with 1008. A socket silent for
+90 seconds is dropped. When it closes, `ws_connected` becomes false and the device shows offline at once.
+Feature windows still go over `POST /api/agent/windows`, never over the socket.
 
 ### Model service bearer
 

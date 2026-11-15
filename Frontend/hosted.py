@@ -34,6 +34,7 @@ from flask import (
     request,
     url_for,
 )
+from flask_sock import Sock
 from models import (
     DEFAULT_PRIVACY_PREFERENCES,
     DevicePairingState,
@@ -372,20 +373,103 @@ def collection_state(onboarding: Document) -> str:
     return value if value in ("active", "paused", "finished") else "active"
 
 
+def device_online(device: Document | None) -> bool:
+    """A closed agent socket is offline at once; otherwise the last authenticated call must be recent.
+
+    Devices that never opened a socket have no `ws_connected` field and keep the heartbeat rule alone.
+    """
+    if device is None or device.get("ws_connected") is False:
+        return False
+    seen = device.get("last_heartbeat_at")
+    if not isinstance(seen, datetime):
+        return False
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=UTC)
+    return now() - seen <= HEARTBEAT_ONLINE
+
+
 def agent_presence(database: Database, onboarding: Document) -> str:
     device = database.devices.find_one(
         {"_id": onboarding["device_id"], "revoked_at": None, "pairing_state": "paired"}
     )
-    seen = device.get("last_heartbeat_at") if device else None
-    if not isinstance(seen, datetime):
+    if not device_online(device):
         return "offline"
-    if seen.tzinfo is None:
-        seen = seen.replace(tzinfo=UTC)
-    if now() - seen > HEARTBEAT_ONLINE:
-        return "offline"
-    if collection_state(onboarding) == "paused":
+    if collection_state(onboarding) == "paused" or cast(Document, device).get("agent_paused") is True:
         return "paused"
     return "active"
+
+
+def agent_onboarding_status(database: Database, device_id: str) -> Document | None:
+    """What the agent should collect: the same fields `GET /api/agent/onboarding` returns."""
+    onboarding = database.onboarding.find_one({"device_id": device_id})
+    if onboarding is None:
+        return None
+    active = None
+    if onboarding["state"] == "collecting" and collection_state(onboarding) == "active":
+        active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "status": "active"})
+    return {
+        "state": onboarding["state"],
+        "session_id": active["_id"] if active else None,
+        "collection": collection_state(onboarding),
+    }
+
+
+AGENT_PROTOCOL = 1
+# The agent sends a heartbeat every 30 seconds; a socket silent for longer than the online window is dropped.
+AGENT_SOCKET_IDLE = HEARTBEAT_ONLINE
+AGENT_MESSAGE_MAX_BYTES = 4 * 1024
+POLICY_VIOLATION = 1008
+
+
+class AgentLink:
+    """One agent WebSocket's protocol, kept apart from the socket library so it can be tested directly.
+
+    Agent to server: `{"v": 1, "type": "hello" | "heartbeat", "paused": bool}`; hello may add
+    `agent_version`. Server to agent: `status` with the onboarding fields after hello and whenever
+    they change, or `revoked` once the device is revoked. Anything else closes the socket (1008).
+    """
+
+    def __init__(self, database: Database, device_id: str) -> None:
+        self.database = database
+        self.device_id = device_id
+        self.last_status: Document | None = None
+        self.done = False
+        self.close_code: int | None = None
+
+    def receive(self, raw: str | bytes) -> list[Document]:
+        message = None
+        if isinstance(raw, str) and len(raw) <= AGENT_MESSAGE_MAX_BYTES:
+            try:
+                message = json.loads(raw)
+            except ValueError:
+                message = None
+        if (
+            not isinstance(message, dict)
+            or message.get("v") != AGENT_PROTOCOL
+            or message.get("type") not in ("hello", "heartbeat")
+            or not isinstance(message.get("paused"), bool)
+            or set(message) - {"v", "type", "paused", "agent_version"}
+        ):
+            self.done, self.close_code = True, POLICY_VIOLATION
+            return []
+        device = self.database.devices.find_one_and_update(
+            {"_id": self.device_id, "pairing_state": "paired", "revoked_at": None},
+            {"$set": {"last_heartbeat_at": now(), "ws_connected": True, "agent_paused": message["paused"]}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if device is None:
+            self.done = True
+            return [{"v": AGENT_PROTOCOL, "type": "revoked"}]
+        status = agent_onboarding_status(self.database, self.device_id) or {
+            "state": None, "session_id": None, "collection": None,
+        }
+        if message["type"] == "hello" or status != self.last_status:
+            self.last_status = status
+            return [{"v": AGENT_PROTOCOL, "type": "status", **status}]
+        return []
+
+    def closed(self) -> None:
+        self.database.devices.update_one({"_id": self.device_id}, {"$set": {"ws_connected": False}})
 
 
 def progress(database: Database, onboarding: Document) -> Document:
@@ -509,6 +593,7 @@ def register(
             [("device_id", ASCENDING), ("session_id", ASCENDING), ("sequence", ASCENDING)], unique=True
         )
     blueprint = Blueprint("hosted", __name__)
+    sock = Sock()
 
     def start_training(onboarding: Document, status: Document) -> None:
         claimed = database.onboarding.find_one_and_update(
@@ -1181,17 +1266,36 @@ def register(
     @blueprint.get("/api/agent/onboarding")
     def agent_onboarding():
         device = device_auth()
-        onboarding = database.onboarding.find_one({"device_id": device["_id"]})
-        if onboarding is None:
+        status = agent_onboarding_status(database, device["_id"])
+        if status is None:
             abort(404)
-        active = None
-        if onboarding["state"] == "collecting" and collection_state(onboarding) == "active":
-            active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "status": "active"})
-        return jsonify(
-            state=onboarding["state"],
-            session_id=active["_id"] if active else None,
-            collection=collection_state(onboarding),
-        )
+        return jsonify(**status)
+
+    @blueprint.before_request
+    def authorize_agent_socket():
+        # flask-sock accepts the upgrade before the view runs, so reject here while a plain HTTP error
+        # can still be returned. A browser always sends Origin; refusing foreign ones stops cross-site
+        # WebSocket hijacking. The agent sends none.
+        if request.path != "/api/agent/ws":
+            return None
+        if request.headers.get("Origin") not in (None, public_origin):
+            abort(403)
+        g.agent_device = device_auth()
+        return None
+
+    @sock.route("/api/agent/ws", bp=blueprint)
+    def agent_socket(ws):
+        link = AgentLink(database, g.agent_device["_id"])
+        try:
+            while not link.done:
+                raw = ws.receive(timeout=AGENT_SOCKET_IDLE.total_seconds())
+                if raw is None:
+                    break
+                for reply in link.receive(raw):
+                    ws.send(json.dumps(reply))
+            ws.close(reason=link.close_code or 1000)
+        finally:
+            link.closed()
 
     @blueprint.post("/api/agent/windows")
     def upload_window():
@@ -1281,11 +1385,10 @@ def register(
         return device
 
     def agent_state(device: Document | None) -> tuple[str, bool]:
-        seen = device.get("last_heartbeat_at") if device else None
-        if not isinstance(seen, datetime) or now() - aware(seen) > HEARTBEAT_ONLINE:
+        if device is None or not device_online(device):
             return "offline", True
         onboarding = database.onboarding.find_one({"device_id": device["_id"], "user_id": device["user_id"]})
-        if onboarding is not None and collection_state(onboarding) == "paused":
+        if (onboarding is not None and collection_state(onboarding) == "paused") or device.get("agent_paused") is True:
             return "paused", False
         return "active", False
 
@@ -1428,7 +1531,7 @@ def register(
     def device_payload(device: Document) -> Document:
         seen = device.get("last_heartbeat_at")
         revoked = device.get("revoked_at") is not None or device.get("pairing_state") == "revoked"
-        fresh = isinstance(seen, datetime) and now() - aware(seen) <= HEARTBEAT_ONLINE
+        fresh = device_online(device)
         return {
             "id": device["_id"],
             "name": device.get("name"),

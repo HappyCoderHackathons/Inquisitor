@@ -36,8 +36,15 @@ not presented as a live signal.
 
 The selected architecture uses an authenticated outbound `wss://` connection
 from the Windows agent to a hosted relay, with the signed-in dashboard connected
-to that relay. This local Flask prototype is not the hosted relay; do not make
-the browser connect directly to a private PC or expose the local detector.
+to that relay. Do not make the browser connect directly to a private PC or
+expose the local detector.
+
+The agent half exists in hosted mode: the Rust tray holds a socket at
+`GET /api/agent/ws` (`hosted.py`, `AgentLink`) for presence, pause state,
+collection status, and revocation. Windows still upload over HTTPS. The
+dashboard half does not exist yet; the dashboard keeps polling and reads the
+presence the socket records. A push channel to the browser, if wanted, is
+follow-up work.
 
 The follow-up implementer should:
 

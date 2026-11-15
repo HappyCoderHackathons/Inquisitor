@@ -1177,6 +1177,51 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.delete("/api/me/data", json={}).status_code, 200)
         self.assertEqual(self.database.demo_switches.count_documents({}), 0)
 
+    def test_agent_socket_reports_status_presence_and_revocation(self):
+        device_id, _agent = self.pair()
+        link = hosted.AgentLink(self.database, device_id)
+        hello = link.receive('{"v": 1, "type": "hello", "paused": false, "agent_version": "0.1.0"}')
+        self.assertEqual(hello, [{"v": 1, "type": "status", "state": "collecting", "session_id": None,
+                                  "collection": "active"}])
+        device = self.database.devices.find_one({"_id": device_id})
+        self.assertTrue(device["ws_connected"])
+        self.assertEqual(device["last_heartbeat_at"], self.clock)
+        self.assertEqual(self.client.get("/api/devices").get_json()["devices"][0]["stale"], False)
+        # An unchanged status is not resent; pausing shows on the dashboard.
+        self.assertEqual(link.receive('{"v": 1, "type": "heartbeat", "paused": true}'), [])
+        self.assertEqual(self.client.get("/api/onboarding").get_json()["agent"], "paused")
+        # A closed socket is offline at once, without waiting out the 90-second heartbeat window.
+        link.closed()
+        self.assertEqual(self.client.get("/api/onboarding").get_json()["agent"], "offline")
+        self.assertTrue(self.client.get("/api/devices").get_json()["devices"][0]["stale"])
+        again = hosted.AgentLink(self.database, device_id)
+        again.receive('{"v": 1, "type": "hello", "paused": false}')
+        self.assertEqual(self.client.post(f"/api/devices/{device_id}/revoke", json={}).status_code, 200)
+        self.assertEqual(again.receive('{"v": 1, "type": "heartbeat", "paused": false}'),
+                         [{"v": 1, "type": "revoked"}])
+        self.assertTrue(again.done)
+
+    def test_agent_socket_closes_on_malformed_messages(self):
+        device_id, _agent = self.pair()
+        for raw in ("not json", "[]", '{"v": 2, "type": "hello", "paused": false}',
+                    '{"v": 1, "type": "window", "paused": false}', '{"v": 1, "type": "hello"}',
+                    '{"v": 1, "type": "hello", "paused": false, "keys": "abc"}', b"{}",
+                    '{"v": 1, "type": "hello", "paused": false, "agent_version": "' + "x" * 5000 + '"}'):
+            link = hosted.AgentLink(self.database, device_id)
+            self.assertEqual(link.receive(raw), [], raw)
+            self.assertTrue(link.done)
+            self.assertEqual(link.close_code, hosted.POLICY_VIOLATION)
+
+    def test_agent_socket_handshake_needs_a_token_and_no_foreign_origin(self):
+        _device_id, agent = self.pair()
+        # Werkzeug routes WebSocket rules only for upgrade requests; rejection happens before the upgrade.
+        upgrade = {"Upgrade": "websocket", "Connection": "Upgrade"}
+        self.assertEqual(self.client.get("/api/agent/ws", headers=upgrade).status_code, 401)
+        wrong = {**upgrade, "Authorization": "Bearer wrong"}
+        self.assertEqual(self.client.get("/api/agent/ws", headers=wrong).status_code, 401)
+        foreign = {**upgrade, **agent, "Origin": "https://evil.example.test"}
+        self.assertEqual(self.client.get("/api/agent/ws", headers=foreign).status_code, 403)
+
 
 if __name__ == "__main__":
     unittest.main()
