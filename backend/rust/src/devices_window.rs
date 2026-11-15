@@ -23,10 +23,8 @@ use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::Graphics::Gdi::{
-    CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, COLOR_GRAYTEXT, COLOR_WINDOW, CreateFontW,
-    DEFAULT_CHARSET, DeleteObject, FW_NORMAL, FW_SEMIBOLD, GetMonitorInfoW, GetSysColor,
-    GetSysColorBrush, HDC, HFONT, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
-    OUT_DEFAULT_PRECIS, SetBkMode, SetTextColor, TRANSPARENT,
+    COLOR_GRAYTEXT, COLOR_WINDOW, DeleteObject, FW_NORMAL, FW_SEMIBOLD, GetSysColor,
+    GetSysColorBrush, HDC, HFONT, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
@@ -41,18 +39,19 @@ use windows::Win32::UI::Controls::{
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     BS_PUSHBUTTON, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
-    GetClientRect, GetCursorPos, GetWindowLongPtrW, HMENU, IDC_ARROW, IDI_APPLICATION, IsWindow,
-    KillTimer, LoadCursorW, LoadIconW, MINMAXINFO, MoveWindow, RegisterClassExW, SW_RESTORE,
-    SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetTimer,
-    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_CLOSE, WM_COMMAND, WM_CTLCOLORBTN, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED,
-    WM_GETMINMAXINFO, WM_NOTIFY, WM_SETFONT, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CAPTION,
-    WS_CHILD, WS_CLIPCHILDREN, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_THICKFRAME, WS_VISIBLE,
+    GetClientRect, GetWindowLongPtrW, HMENU, IDC_ARROW, IsWindow, KillTimer, LoadCursorW,
+    MINMAXINFO, MoveWindow, RegisterClassExW, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER,
+    SendMessageW, SetForegroundWindow, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+    ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CTLCOLORBTN,
+    WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_GETMINMAXINFO, WM_NOTIFY, WM_SETFONT, WM_SIZE,
+    WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN, WS_OVERLAPPED,
+    WS_SYSMENU, WS_TABSTOP, WS_THICKFRAME, WS_VISIBLE,
 };
 use windows::core::{PCWSTR, PWSTR, w};
 
 use crate::config::Config;
 use crate::devices::{DeviceKind, list_input_devices};
+use crate::ui::{self, scale, to_wide};
 
 const CLASS: PCWSTR = w!("InquisitorDevicesWnd");
 
@@ -125,14 +124,6 @@ impl WindowState {
     fn scale(&self, v: i32) -> i32 {
         scale(v, self.dpi)
     }
-}
-
-fn scale(v: i32, dpi: u32) -> i32 {
-    v * dpi as i32 / 96
-}
-
-fn to_wide(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// Open the window, or bring an existing one forward and refresh its device list
@@ -283,7 +274,7 @@ pub fn open(existing: Option<HWND>, config: *mut Config) -> Option<HWND> {
 
     apply_fonts(st);
     populate(st);
-    place_centered(hwnd, st);
+    ui::place_centered(hwnd, st.scale(640), st.scale(460));
     layout(hwnd, st);
 
     unsafe {
@@ -315,7 +306,8 @@ fn register_class() {
             lpfnWndProc: Some(wnd_proc),
             hInstance: hinstance.into(),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-            hIcon: LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+            hIcon: crate::icon::large(),
+            hIconSm: crate::icon::small(),
             hbrBackground: GetSysColorBrush(COLOR_WINDOW),
             lpszClassName: CLASS,
             ..Default::default()
@@ -331,26 +323,8 @@ unsafe fn state_mut<'a>(hwnd: HWND) -> Option<&'a mut WindowState> {
 
 /// (Re)create Segoe UI fonts for the current DPI and assign them to every child.
 fn apply_fonts(st: &mut WindowState) {
-    let make = |pt: i32, weight: u32| unsafe {
-        CreateFontW(
-            -(pt * st.dpi as i32 / 72),
-            0,
-            0,
-            0,
-            weight as i32,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY,
-            0,
-            w!("Segoe UI"),
-        )
-    };
-    let font = make(9, FW_NORMAL.0);
-    let title_font = make(14, FW_SEMIBOLD.0);
+    let font = ui::font(9, FW_NORMAL.0, st.dpi);
+    let title_font = ui::font(14, FW_SEMIBOLD.0, st.dpi);
     unsafe {
         if !st.font.is_invalid() {
             let _ = DeleteObject(st.font.into());
@@ -565,28 +539,6 @@ fn is_checked(list: HWND, index: usize) -> bool {
     state.0 as u32 & LVIS_STATEIMAGEMASK.0 == STATE_CHECKED
 }
 
-/// Size the window for the current DPI and center it on the work area of the
-/// monitor under the cursor (the one the user just clicked the tray icon on).
-fn place_centered(hwnd: HWND, st: &WindowState) {
-    let (w, h) = (st.scale(640), st.scale(460));
-    let mut cursor = POINT::default();
-    let mut info = MONITORINFO {
-        cbSize: size_of::<MONITORINFO>() as u32,
-        ..Default::default()
-    };
-    unsafe {
-        let _ = GetCursorPos(&mut cursor);
-        let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-        let _ = GetMonitorInfoW(monitor, &mut info);
-    }
-    let work = info.rcWork;
-    let x = work.left + ((work.right - work.left) - w) / 2;
-    let y = work.top + ((work.bottom - work.top) - h) / 2;
-    unsafe {
-        let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
-    }
-}
-
 /// Position children for the current client size:
 ///
 /// ```text
@@ -784,17 +736,5 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::scale;
-
-    #[test]
-    fn scale_converts_96_dpi_layout_units() {
-        assert_eq!(scale(100, 96), 100);
-        assert_eq!(scale(100, 144), 150);
-        assert_eq!(scale(16, 192), 32);
     }
 }

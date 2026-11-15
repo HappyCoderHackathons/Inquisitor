@@ -19,11 +19,11 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW, GetWindowLongPtrW, HMENU,
-    HWND_MESSAGE, IDI_APPLICATION, IsWindow, LoadIconW, MF_CHECKED, MF_POPUP, MF_SEPARATOR,
-    MF_STRING, MF_UNCHECKED, MSG, PostMessageW, PostQuitMessage, RegisterClassExW,
-    SetForegroundWindow, SetWindowLongPtrW, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTALIGN,
-    TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_INPUT, WM_LBUTTONUP, WM_NULL, WNDCLASSEXW,
+    HWND_MESSAGE, IsWindow, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG,
+    PostMessageW, PostQuitMessage, RegisterClassExW, SetForegroundWindow, SetWindowLongPtrW,
+    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTALIGN, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenu,
+    TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU,
+    WM_DESTROY, WM_INPUT, WM_LBUTTONUP, WM_NULL, WNDCLASSEXW,
 };
 use windows::core::{PCWSTR, w};
 
@@ -31,7 +31,12 @@ use crate::capture::{self, Capture};
 use crate::config::Config;
 use crate::devices_window;
 use crate::folder_picker;
+use crate::icon;
 use crate::startup;
+
+/// Class of the tray's message-only window. The installer finds running trays
+/// by this name to close them before replacing the exe.
+pub const CLASS_NAME: PCWSTR = w!("InquisitorTrayWnd");
 
 // Tray notification callback. WM_APP + N is the recommended range for app-defined
 // messages per MSDN (WM_USER is reserved for controls).
@@ -105,7 +110,7 @@ pub fn run() -> windows::core::Result<()> {
     let state = Box::new(AppState::new(config, capture, current_path));
 
     let hinstance = unsafe { GetModuleHandleW(PCWSTR::null())? };
-    let class_name = w!("InquisitorTrayWnd");
+    let class_name = CLASS_NAME;
 
     let wc = WNDCLASSEXW {
         cbSize: size_of::<WNDCLASSEXW>() as u32,
@@ -152,7 +157,7 @@ pub fn run() -> windows::core::Result<()> {
 
 fn add_tray_icon(hwnd: HWND) -> windows::core::Result<()> {
     unsafe {
-        let icon = LoadIconW(None, IDI_APPLICATION)?;
+        let icon = icon::small();
         let mut tip = [0u16; 128];
         for (i, c) in "Inquisitor".encode_utf16().enumerate().take(127) {
             tip[i] = c;

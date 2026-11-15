@@ -8,8 +8,12 @@ mod config;
 mod devices;
 mod devices_window;
 mod folder_picker;
+mod icon;
+mod install;
 mod startup;
 mod tray;
+mod ui;
+mod wizard;
 
 use std::path::PathBuf;
 
@@ -18,11 +22,15 @@ use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
 
 fn main() -> windows::core::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let has_subcommand = args.len() > 1;
+    // Window modes never print, so they skip the console.
+    let windowed = matches!(
+        args.get(1).map(String::as_str),
+        None | Some("tray" | "setup" | "uninstall")
+    );
 
     // CLI mode: try to reattach to the parent console so println/eprintln are
     // visible. This is a no-op when there is no parent console (double-click).
-    if has_subcommand {
+    if !windowed {
         unsafe {
             let _ = AttachConsole(ATTACH_PARENT_PROCESS);
         }
@@ -42,12 +50,25 @@ fn main() -> windows::core::Result<()> {
             print_help();
             Ok(())
         }
+        Some("tray") => tray::run(),
+        Some("setup") => run_wizard(false),
+        Some("uninstall") => run_wizard(true),
         Some(other) => {
             eprintln!("unknown subcommand: {other}");
             print_help();
             Ok(())
         }
-        None => tray::run(),
+        // Double-clicking the installed exe starts the tray. Any other copy (a
+        // download or a dev build) opens the wizard, which can also run it once.
+        None if install::mode() == install::Mode::Installed => tray::run(),
+        None => run_wizard(false),
+    }
+}
+
+fn run_wizard(remove: bool) -> windows::core::Result<()> {
+    match wizard::run(remove)? {
+        wizard::Outcome::RunTray => tray::run(),
+        wizard::Outcome::Exit => Ok(()),
     }
 }
 
@@ -82,7 +103,10 @@ fn print_help() {
     println!("inquisitor");
     println!();
     println!("Usage:");
-    println!("  inquisitor                    Launch the tray app (default)");
+    println!("  inquisitor                    Tray app if installed, otherwise the setup wizard");
+    println!("  inquisitor tray               Launch the tray app");
+    println!("  inquisitor setup              Install, update, repair, or remove");
+    println!("  inquisitor uninstall          Open setup on the remove page");
     println!("  inquisitor list               List connected input devices");
     println!("  inquisitor capture            Capture to %APPDATA%\\inquisitor\\capture-<ts>.csv");
     println!("  inquisitor capture --out <p>  Capture to file <p>");
