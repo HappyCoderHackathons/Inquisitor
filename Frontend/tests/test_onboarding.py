@@ -1048,8 +1048,11 @@ class OnboardingTests(unittest.TestCase):
         page = self.client.get("/onboarding").get_data(as_text=True)
         for label in ("Warm-up", "Typing Sample", "Natural Activity", "Train Model"):
             self.assertIn(label, page)
-        self.assertIn("What is collected", page)
-        self.assertIn("What is not collected", page)
+        self.assertIn("What the agent sends", page)
+        self.assertIn("What is never sent", page)
+        # The agent always sends mouse aggregates; v1 pause and burst fields are not part of it.
+        self.assertNotIn("only when mouse collection is enabled", page)
+        self.assertNotIn("pauses, and bursts", page)
         self.assertIn('id="practiceText"', page)
         self.assertNotIn('name="practiceText"', page)
         self.assertNotIn("<form", page[page.index('id="practiceText"') : page.index('id="enrollmentProgress"')])
