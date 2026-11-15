@@ -5,12 +5,12 @@
 
 use std::path::Path;
 
-use windows::core::{Error, HRESULT, Result, w};
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR};
 use windows::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE, REG_SZ, RegCloseKey, RegDeleteValueW,
     RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
 };
+use windows::core::{Error, HRESULT, Result, w};
 
 const RUN_KEY: windows::core::PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 const APP_NAME: windows::core::PCWSTR = w!("Inquisitor");
@@ -28,8 +28,7 @@ fn check(err: WIN32_ERROR) -> Result<()> {
 pub fn is_enabled() -> bool {
     unsafe {
         let mut hkey = HKEY::default();
-        if RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, Some(0), KEY_READ, &mut hkey)
-            != ERROR_SUCCESS
+        if RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, Some(0), KEY_READ, &mut hkey) != ERROR_SUCCESS
         {
             return false;
         }

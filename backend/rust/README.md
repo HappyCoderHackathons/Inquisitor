@@ -26,7 +26,7 @@ From [`rust/`](rust/):
 
 ```sh
 cargo build            # debug
-cargo build --release  # release exe at target/release/inquisitor.exe
+cargo build --release  # release exe at target/release/Inquisitor.exe
 ```
 
 ## Usage

@@ -241,9 +241,8 @@ pub fn product_name(path: &str) -> Option<String> {
 
     // HID strings are capped at 126 wide chars plus terminator by the spec.
     let mut buf = [0u16; 127];
-    let ok = unsafe {
-        HidD_GetProductString(handle, buf.as_mut_ptr().cast(), (buf.len() * 2) as u32)
-    };
+    let ok =
+        unsafe { HidD_GetProductString(handle, buf.as_mut_ptr().cast(), (buf.len() * 2) as u32) };
     unsafe {
         let _ = CloseHandle(handle);
     }
@@ -339,5 +338,161 @@ fn device_kind(device: HANDLE, raw_type: u32) -> DeviceKind {
             },
             other => DeviceKind::Unknown(other.0),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Instance ids contain "TEST" so CreateFileW never resolves them to a real
+    // device; display_name therefore always exercises the fallback naming.
+    fn device(path: &str, kind: DeviceKind) -> InputDevice {
+        InputDevice {
+            name: path.to_string(),
+            kind,
+        }
+    }
+
+    fn keyboard() -> DeviceKind {
+        DeviceKind::Keyboard {
+            keys: 101,
+            function_keys: 12,
+        }
+    }
+
+    fn mouse() -> DeviceKind {
+        DeviceKind::Mouse {
+            buttons: 2,
+            sample_rate: 0,
+        }
+    }
+
+    fn hid(vendor_id: u32, product_id: u32, usage_page: u16, usage: u16) -> DeviceKind {
+        DeviceKind::Hid {
+            vendor_id,
+            product_id,
+            usage_page,
+            usage,
+        }
+    }
+
+    #[test]
+    fn id_label_uses_hid_ids_and_collection() {
+        let d = device(
+            r"\\?\HID#VEN_06CB&Col02#5&TEST&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}",
+            hid(0x06CB, 0xCF06, 0x0D, 0x05),
+        );
+        assert_eq!(d.id_label(), "06CB:CF06 · Col02");
+    }
+
+    #[test]
+    fn id_label_parses_vid_pid_from_path_for_keyboards_and_mice() {
+        let kb = device(
+            r"\\?\HID#VID_046D&PID_C52B&MI_00#7&TEST&0&0000#{884b96c3-56ef-11d1-bc8c-00a0c91405dd}",
+            keyboard(),
+        );
+        assert_eq!(kb.id_label(), "046D:C52B");
+
+        let ms = device(
+            r"\\?\HID#VEN_06CB&Col01#5&TEST&0&0000#{378de44c-56ef-11d1-bc8c-00a0c91405dd}",
+            mouse(),
+        );
+        assert_eq!(ms.id_label(), "06CB · Col01");
+    }
+
+    #[test]
+    fn id_label_falls_back_to_hardware_segment_or_virtual() {
+        let acpi = device(
+            r"\\?\ACPI#DLLK0C15#4&TEST&0#{884b96c3-56ef-11d1-bc8c-00a0c91405dd}",
+            keyboard(),
+        );
+        assert_eq!(acpi.id_label(), "DLLK0C15");
+
+        let rid = device(r"\\?\Microsoft HID RID\000D_0002\0", hid(0, 0, 0x0D, 0x02));
+        assert_eq!(rid.id_label(), "Virtual");
+    }
+
+    #[test]
+    fn display_name_falls_back_to_vendor_and_type() {
+        let touch = device(
+            r"\\?\HID#VEN_06CB&Col02#5&TEST&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}",
+            hid(0x06CB, 0xCF06, 0x0D, 0x05),
+        );
+        assert_eq!(touch.display_name(), "Synaptics touch pad");
+
+        let vendor = device(
+            r"\\?\HID#WACF3233&Col06#5&TEST&0&0005#{4d1e55b2-f16f-11cf-88cb-001111000030}",
+            hid(0x056A, 0x4A1F, 0xFF11, 0x02),
+        );
+        assert_eq!(vendor.display_name(), "Wacom device");
+
+        let unknown_vendor = device(
+            r"\\?\HID#VID_ABCD&PID_0001#7&TEST&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}",
+            hid(0xABCD, 0x0001, 0x01, 0x05),
+        );
+        assert_eq!(unknown_vendor.display_name(), "Gamepad");
+    }
+
+    #[test]
+    fn display_name_for_builtin_and_plain_devices() {
+        let acpi = device(
+            r"\\?\ACPI#DLLK0C15#4&TEST&0#{884b96c3-56ef-11d1-bc8c-00a0c91405dd}",
+            keyboard(),
+        );
+        assert_eq!(acpi.display_name(), "Built-in keyboard");
+
+        let ms = device(
+            r"\\?\HID#WACF3233&Col03#5&TEST&0&0002#{4d1e55b2-f16f-11cf-88cb-001111000030}",
+            mouse(),
+        );
+        assert_eq!(ms.display_name(), "Mouse");
+    }
+
+    #[test]
+    fn type_label_capitalizes_hid_usage() {
+        assert_eq!(device("x", keyboard()).type_label(), "Keyboard");
+        assert_eq!(
+            device("x", hid(1, 1, 0x0D, 0x04)).type_label(),
+            "Touch screen"
+        );
+        assert_eq!(
+            device("x", hid(1, 1, 0xFF00, 0x01)).type_label(),
+            "Vendor-defined"
+        );
+        assert_eq!(device("x", DeviceKind::Unknown(9)).type_label(), "Other");
+    }
+
+    #[test]
+    fn generic_driver_names_are_detected() {
+        for name in [
+            "HIDI2C Device",
+            "HID-compliant mouse",
+            "USB Input Device",
+            "HID device",
+        ] {
+            assert!(is_generic_product(name), "{name}");
+        }
+        for name in ["USB Receiver", "Pro Controller", "Xbox Wireless Controller"] {
+            assert!(!is_generic_product(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn vendor_lookup() {
+        assert_eq!(vendor_name(0x046D), Some("Logitech"));
+        assert_eq!(vendor_name(0x057E), Some("Nintendo"));
+        assert_eq!(vendor_name(0x0000), None);
+    }
+
+    #[test]
+    fn product_name_is_none_for_paths_that_do_not_exist() {
+        assert_eq!(product_name(r"\\?\HID#VID_0000&PID_0000#TEST#{0}"), None);
+    }
+
+    #[test]
+    fn listing_devices_succeeds() {
+        // CI runners may have no input devices; the call itself must still work.
+        assert!(list_input_devices().is_ok());
     }
 }

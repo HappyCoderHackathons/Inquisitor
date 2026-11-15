@@ -8,7 +8,6 @@ use std::mem::size_of;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use windows::core::{PCWSTR, w};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
@@ -23,10 +22,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     HWND_MESSAGE, IDI_APPLICATION, IsWindow, LoadIconW, MF_CHECKED, MF_POPUP, MF_SEPARATOR,
     MF_STRING, MF_UNCHECKED, MSG, PostMessageW, PostQuitMessage, RegisterClassExW,
     SetForegroundWindow, SetWindowLongPtrW, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_RIGHTALIGN,
-    TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_INPUT, WM_LBUTTONUP,
-    WM_NULL, WNDCLASSEXW,
+    TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_INPUT, WM_LBUTTONUP, WM_NULL, WNDCLASSEXW,
 };
+use windows::core::{PCWSTR, w};
 
 use crate::capture::{self, Capture};
 use crate::config::Config;
@@ -275,7 +274,10 @@ fn show_menu(hwnd: HWND, state: &mut AppState) {
 /// monitor, the same way Explorer's own tray menus behave. With the taskbar at
 /// the bottom-right this puts the menu's bottom-right corner at the cursor, so it
 /// rises up and to the left of the icon instead of covering it.
-fn menu_anchor() -> (POINT, windows::Win32::UI::WindowsAndMessaging::TRACK_POPUP_MENU_FLAGS) {
+fn menu_anchor() -> (
+    POINT,
+    windows::Win32::UI::WindowsAndMessaging::TRACK_POPUP_MENU_FLAGS,
+) {
     let mut pt = POINT::default();
     let mut info = MONITORINFO {
         cbSize: size_of::<MONITORINFO>() as u32,
@@ -325,12 +327,7 @@ fn append_sep(menu: HMENU) {
 fn append_submenu(menu: HMENU, submenu: HMENU, label: &str) {
     let w = to_wide(label);
     unsafe {
-        let _ = AppendMenuW(
-            menu,
-            MF_POPUP,
-            submenu.0 as usize,
-            PCWSTR(w.as_ptr()),
-        );
+        let _ = AppendMenuW(menu, MF_POPUP, submenu.0 as usize, PCWSTR(w.as_ptr()));
     }
 }
 
@@ -415,4 +412,72 @@ fn handle_command(hwnd: HWND, state: &mut AppState, id: u16) {
 fn pause_for(state: &mut AppState, seconds: u64) {
     state.paused = true;
     state.pause_until = Some(Instant::now() + std::time::Duration::from_secs(seconds));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    const ALLOWED: &str =
+        r"\\?\HID#VID_046D&PID_C52B&MI_00#7&TEST#{884b96c3-56ef-11d1-bc8c-00a0c91405dd}";
+    const OTHER: &str =
+        r"\\?\HID#VID_057E&PID_2069&MI_00#7&TEST#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+
+    fn state() -> AppState {
+        let config = Config {
+            data_dir: std::env::temp_dir(),
+            allowed_devices: [ALLOWED.to_string()].into_iter().collect(),
+        };
+        AppState::new(
+            config,
+            Capture::new(Box::new(std::io::sink())),
+            PathBuf::new(),
+        )
+    }
+
+    #[test]
+    fn only_whitelisted_devices_are_captured() {
+        let mut s = state();
+        assert!(!s.drop_event(ALLOWED));
+        assert!(s.drop_event(OTHER));
+        // Pointer input Windows synthesizes without a device handle has no path.
+        assert!(s.drop_event(""));
+    }
+
+    #[test]
+    fn pause_drops_everything_until_resumed() {
+        let mut s = state();
+        s.paused = true;
+        assert!(s.drop_event(ALLOWED));
+        s.paused = false;
+        assert!(!s.drop_event(ALLOWED));
+    }
+
+    #[test]
+    fn timed_pause_holds_until_the_deadline() {
+        let mut s = state();
+        pause_for(&mut s, 60);
+        assert!(s.drop_event(ALLOWED));
+        assert!(s.paused);
+    }
+
+    #[test]
+    fn timed_pause_auto_resumes_after_the_deadline() {
+        let mut s = state();
+        s.paused = true;
+        s.pause_until = Instant::now().checked_sub(Duration::from_millis(1));
+        assert!(!s.drop_event(ALLOWED));
+        assert!(!s.paused);
+        assert!(s.pause_until.is_none());
+    }
+
+    #[test]
+    fn whitelist_changes_take_effect_immediately() {
+        let mut s = state();
+        s.config.allowed_devices.insert(OTHER.to_string());
+        assert!(!s.drop_event(OTHER));
+        s.config.allowed_devices.clear();
+        assert!(s.drop_event(ALLOWED));
+    }
 }

@@ -16,7 +16,6 @@ use std::mem::size_of;
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use windows::core::{PCWSTR, w};
 use windows::Win32::Devices::HumanInterfaceDevice::{
     HID_USAGE_GENERIC_GAMEPAD, HID_USAGE_GENERIC_JOYSTICK, HID_USAGE_GENERIC_KEYBOARD,
     HID_USAGE_GENERIC_MOUSE, HID_USAGE_GENERIC_MULTI_AXIS_CONTROLLER, HID_USAGE_PAGE_GENERIC,
@@ -35,6 +34,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG,
     RegisterClassExW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_INPUT, WNDCLASSEXW,
 };
+use windows::core::{PCWSTR, w};
 
 // Mouse flag constants (not re-exported by the windows crate at every path).
 const RI_MOUSE_LEFT_BUTTON_DOWN: u16 = 0x0001;
@@ -251,7 +251,9 @@ impl Capture {
 
     fn now_iso(&self) -> String {
         // RFC3339-ish without a date crate: seconds since epoch with millis.
-        let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        let d = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         let secs = d.as_secs();
         let millis = d.subsec_millis();
         // Compute Y-M-D h:m:s in UTC using a small civil-from-days calc.
@@ -264,6 +266,8 @@ impl Capture {
         format!("{y:04}-{m:02}-{d2:02}T{h:02}:{mi:02}:{s:02}.{millis:03}Z")
     }
 
+    // One parameter per CSV column keeps every call site readable as a row.
+    #[allow(clippy::too_many_arguments)]
     fn write_row(
         &mut self,
         io_type: &str,
@@ -427,15 +431,7 @@ impl Capture {
             (None, flight)
         };
         self.write_row(
-            "mouse",
-            &device_id.to_string(),
-            event,
-            control,
-            hold_ms,
-            flight_ms,
-            None,
-            None,
-            None,
+            "mouse", device_id, event, control, hold_ms, flight_ms, None, None, None,
         );
     }
 
@@ -479,7 +475,9 @@ impl Capture {
         match ev {
             HidEvent::ButtonPress(control) => {
                 let state = self.state.entry(device_id.to_string()).or_default();
-                let flight = state.last_release.map(|t| now.duration_since(t).as_millis());
+                let flight = state
+                    .last_release
+                    .map(|t| now.duration_since(t).as_millis());
                 state.press_times.insert(control.clone(), now);
                 self.write_row(
                     io_type, device_id, "press", &control, None, flight, None, None, None,
@@ -543,15 +541,20 @@ fn load_hid_caps(handle: HANDLE) -> Option<HidCaps> {
 
     let mut button_caps = Vec::new();
     if caps.NumberInputButtonCaps > 0 {
-        button_caps.resize(caps.NumberInputButtonCaps as usize, HIDP_BUTTON_CAPS::default());
+        button_caps.resize(
+            caps.NumberInputButtonCaps as usize,
+            HIDP_BUTTON_CAPS::default(),
+        );
         let mut len = caps.NumberInputButtonCaps;
-        let _ =
-            unsafe { HidP_GetButtonCaps(HidP_Input, button_caps.as_mut_ptr(), &mut len, prep) };
+        let _ = unsafe { HidP_GetButtonCaps(HidP_Input, button_caps.as_mut_ptr(), &mut len, prep) };
     }
 
     let mut value_caps = Vec::new();
     if caps.NumberInputValueCaps > 0 {
-        value_caps.resize(caps.NumberInputValueCaps as usize, HIDP_VALUE_CAPS::default());
+        value_caps.resize(
+            caps.NumberInputValueCaps as usize,
+            HIDP_VALUE_CAPS::default(),
+        );
         let mut len = caps.NumberInputValueCaps;
         let _ = unsafe { HidP_GetValueCaps(HidP_Input, value_caps.as_mut_ptr(), &mut len, prep) };
     }
@@ -624,13 +627,7 @@ fn collect_hid_events(caps: &HidCaps, prev: &mut HidPrev, report: &mut [u8]) -> 
             let mut value = 0u32;
             let status = unsafe {
                 HidP_GetUsageValue(
-                    HidP_Input,
-                    usage_page,
-                    None,
-                    usage,
-                    &mut value,
-                    prep,
-                    &*report,
+                    HidP_Input, usage_page, None, usage, &mut value, prep, &*report,
                 )
             };
             if status == HIDP_STATUS_SUCCESS {
@@ -917,4 +914,241 @@ extern "system" fn cli_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
         cap.process_wm_input(lparam, |_| true);
     }
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use windows::Win32::UI::Input::{RAWMOUSE_0, RAWMOUSE_0_0};
+
+    /// Writer whose bytes the test can read back after Capture writes rows.
+    #[derive(Clone, Default)]
+    struct SharedBuf(Rc<RefCell<Vec<u8>>>);
+
+    impl Write for SharedBuf {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.borrow_mut().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl SharedBuf {
+        fn lines(&self) -> Vec<String> {
+            String::from_utf8(self.0.borrow().clone())
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+    }
+
+    /// Split a CSV row into its 11 columns, asserting the shape.
+    fn cols(line: &str) -> Vec<String> {
+        let c: Vec<String> = line.split(',').map(str::to_string).collect();
+        assert_eq!(c.len(), 11, "row must have 11 columns: {line}");
+        c
+    }
+
+    fn capture() -> (Capture, SharedBuf) {
+        let buf = SharedBuf::default();
+        (Capture::new(Box::new(buf.clone())), buf)
+    }
+
+    const KBD: HANDLE = HANDLE(0x10 as *mut _);
+    const MOUSE: HANDLE = HANDLE(0x20 as *mut _);
+
+    fn key(scan: u16, up: bool) -> RAWKEYBOARD {
+        RAWKEYBOARD {
+            MakeCode: scan,
+            Flags: if up { RI_KEY_BREAK } else { 0 },
+            ..Default::default()
+        }
+    }
+
+    fn mouse(dx: i32, dy: i32, flags: u16, data: u16) -> RAWMOUSE {
+        RAWMOUSE {
+            lLastX: dx,
+            lLastY: dy,
+            Anonymous: RAWMOUSE_0 {
+                Anonymous: RAWMOUSE_0_0 {
+                    usButtonFlags: flags,
+                    usButtonData: data,
+                },
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn header_is_written_once_before_the_first_row() {
+        let (mut cap, buf) = capture();
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        cap.handle_keyboard(KBD, &key(0x1E, true));
+        let lines = buf.lines();
+        assert_eq!(lines[0], CSV_HEADER);
+        assert_eq!(lines.iter().filter(|l| *l == CSV_HEADER).count(), 1);
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn keyboard_rows_carry_timing_but_never_key_identity() {
+        let (mut cap, buf) = capture();
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        cap.handle_keyboard(KBD, &key(0x1E, true));
+        cap.handle_keyboard(KBD, &key(0x30, false));
+        cap.handle_keyboard(KBD, &key(0x30, true));
+        let lines = buf.lines();
+
+        let press = cols(&lines[1]);
+        assert_eq!(&press[2..6], ["keyboard", "kbd0", "press", "key"]);
+        assert!(
+            press[6].is_empty() && press[7].is_empty(),
+            "first press has no timing"
+        );
+
+        let release = cols(&lines[2]);
+        assert_eq!(release[4], "release");
+        assert!(
+            release[6].parse::<u128>().is_ok(),
+            "release carries hold_ms"
+        );
+
+        let second_press = cols(&lines[3]);
+        assert!(
+            second_press[7].parse::<u128>().is_ok(),
+            "press carries flight_ms"
+        );
+
+        // AGENTS.md: key identities must never be persisted.
+        let all = buf.lines().join("\n");
+        assert!(!all.contains("sc_"), "scan-code token leaked: {all}");
+        for line in &lines[1..] {
+            assert_eq!(cols(line)[5], "key");
+        }
+    }
+
+    #[test]
+    fn keyboard_auto_repeat_is_suppressed() {
+        let (mut cap, buf) = capture();
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        cap.handle_keyboard(KBD, &key(0x1E, true));
+        assert_eq!(buf.lines().len(), 3, "header + one press + one release");
+    }
+
+    #[test]
+    fn mouse_move_button_and_scroll_rows() {
+        const LEFT_DOWN: u16 = 0x0001;
+        const LEFT_UP: u16 = 0x0002;
+        let (mut cap, buf) = capture();
+        cap.handle_mouse(MOUSE, &mouse(3, -2, 0, 0));
+        cap.handle_mouse(MOUSE, &mouse(0, 0, LEFT_DOWN, 0));
+        cap.handle_mouse(MOUSE, &mouse(0, 0, LEFT_UP, 0));
+        cap.handle_mouse(MOUSE, &mouse(0, 0, RI_MOUSE_WHEEL, 120));
+        // 0xFF88 is -120 as the signed wheel delta Windows sends for scroll-down.
+        cap.handle_mouse(MOUSE, &mouse(0, 0, RI_MOUSE_HWHEEL, 0xFF88));
+        let lines = buf.lines();
+
+        let mv = cols(&lines[1]);
+        assert_eq!(&mv[2..6], ["mouse", "mouse0", "move", "motion"]);
+        assert_eq!((mv[8].as_str(), mv[9].as_str()), ("3", "-2"));
+
+        assert_eq!(&cols(&lines[2])[4..6], ["press", "button_left"]);
+        let up = cols(&lines[3]);
+        assert_eq!(&up[4..6], ["release", "button_left"]);
+        assert!(
+            up[6].parse::<u128>().is_ok(),
+            "button release carries hold_ms"
+        );
+
+        let v = cols(&lines[4]);
+        assert_eq!(
+            (&v[4][..], &v[5][..], &v[10][..]),
+            ("scroll", "wheel_v", "120")
+        );
+        let h = cols(&lines[5]);
+        assert_eq!((&h[5][..], &h[10][..]), ("wheel_h", "-120"));
+    }
+
+    #[test]
+    fn device_ids_are_stable_per_handle_and_numbered_per_kind() {
+        let (mut cap, _) = capture();
+        assert_eq!(cap.device_id(KBD, "kbd"), "kbd0");
+        assert_eq!(cap.device_id(HANDLE(0x11 as *mut _), "kbd"), "kbd1");
+        assert_eq!(cap.device_id(KBD, "kbd"), "kbd0");
+        assert_eq!(cap.device_id(MOUSE, "mouse"), "mouse0");
+    }
+
+    #[test]
+    fn set_writer_rewrites_the_header_in_the_new_output() {
+        let (mut cap, _) = capture();
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        let second = SharedBuf::default();
+        cap.set_writer(Box::new(second.clone()));
+        cap.handle_keyboard(KBD, &key(0x1E, true));
+        let lines = second.lines();
+        assert_eq!(lines[0], CSV_HEADER);
+        assert_eq!(lines.len(), 2);
+    }
+
+    #[test]
+    fn hid_control_names() {
+        assert_eq!(button_name((0x09, 3)), "button_03");
+        assert_eq!(button_name((0x0C, 0xE9)), "button_000c_e9");
+        assert_eq!(value_name(0x01, 0x30), "axis_x");
+        assert_eq!(value_name(0x01, 0x35), "axis_rz");
+        assert_eq!(value_name(0x01, 0x39), "dpad");
+        assert_eq!(value_name(0xFF00, 0x01), "value_ff00_01");
+    }
+
+    #[test]
+    fn hid_io_types() {
+        assert_eq!(hid_io_type(0x01, 0x05), "gamepad");
+        assert_eq!(hid_io_type(0x01, 0x04), "gamepad");
+        assert_eq!(hid_io_type(0x01, 0x07), "keypad");
+        assert_eq!(hid_io_type(0x0C, 0x01), "consumer");
+        assert_eq!(hid_io_type(0x0D, 0x02), "pen");
+        assert_eq!(hid_io_type(0x0D, 0x04), "touchscreen");
+        assert_eq!(hid_io_type(0x0D, 0x05), "touchpad");
+        assert_eq!(hid_io_type(0x0D, 0x01), "digitizer");
+        assert_eq!(hid_io_type(0xFF00, 0x01), "hid");
+    }
+
+    #[test]
+    fn civil_from_days_matches_known_dates() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(19_723), (2024, 1, 1));
+        assert_eq!(civil_from_days(19_723 + 31 + 28), (2024, 2, 29));
+        assert_eq!(civil_from_days(-1), (1969, 12, 31));
+    }
+
+    #[test]
+    fn timestamps_have_the_documented_shape() {
+        let (cap, _) = capture();
+        let iso = cap.now_iso();
+        assert_eq!(iso.len(), "2026-11-15T03:13:19.875Z".len(), "{iso}");
+        assert!(iso.ends_with('Z') && iso.as_bytes()[10] == b'T');
+
+        let compact = utc_timestamp_compact();
+        assert_eq!(compact.len(), "20261115-031319Z".len(), "{compact}");
+    }
+
+    #[test]
+    fn default_output_path_is_a_timestamped_csv_in_the_data_dir() {
+        let dir = std::env::temp_dir().join(format!("inquisitor-test-{}-out", std::process::id()));
+        let path = default_output_path(&dir);
+        assert_eq!(path.parent(), Some(dir.as_path()));
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(
+            name.starts_with("capture-") && name.ends_with(".csv"),
+            "{name}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

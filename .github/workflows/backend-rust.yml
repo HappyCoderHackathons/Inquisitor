@@ -10,15 +10,55 @@ on:
     paths:
       - 'backend/rust/**'
       - '.github/workflows/backend-rust.yml'
+  workflow_dispatch:
 
 concurrency:
   group: backend-rust-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  build-and-test:
-    name: Build and test
+  check:
+    name: Format, lint and test
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: backend/rust
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend/rust
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Test
+        run: cargo test --locked
+
+  release:
+    name: Release build
+    runs-on: windows-latest
+    needs: check
     defaults:
       run:
         working-directory: backend/rust
@@ -33,9 +73,27 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: backend/rust
+          key: release
 
-      - name: Build
-        run: cargo build --locked --verbose
+      - name: Build release exe
+        run: cargo build --release --locked
 
-      - name: Test
-        run: cargo test --locked --verbose
+      # build.rs embeds app.manifest (themed controls, per-monitor DPI). If the
+      # linker silently skipped it, the tray UI would fall back to the classic look.
+      - name: Verify embedded manifest
+        shell: pwsh
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes("target/release/Inquisitor.exe")
+          $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+          foreach ($needle in "Microsoft.Windows.Common-Controls", "PerMonitorV2") {
+            if (-not $text.Contains($needle)) { throw "manifest missing '$needle'" }
+          }
+          "manifest OK"
+
+      - name: Upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: inquisitor-windows-x64
+          path: backend/rust/target/release/Inquisitor.exe
+          if-no-files-found: error
+          retention-days: 14

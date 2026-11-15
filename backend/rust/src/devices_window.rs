@@ -20,8 +20,8 @@ use std::mem::size_of;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use windows::core::{PCWSTR, PWSTR, w};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::Graphics::Gdi::{
     CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, COLOR_GRAYTEXT, COLOR_WINDOW, CreateFontW,
     DEFAULT_CHARSET, DeleteObject, FW_NORMAL, FW_SEMIBOLD, GetMonitorInfoW, GetSysColor,
@@ -35,10 +35,9 @@ use windows::Win32::UI::Controls::{
     LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_STATE, LVIF_TEXT, LVIS_STATEIMAGEMASK, LVITEMW,
     LVM_DELETEALLITEMS, LVM_ENSUREVISIBLE, LVM_GETITEMSTATE, LVM_INSERTCOLUMNW, LVM_INSERTITEMW,
     LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE, LVM_SETITEMTEXTW,
-    LVN_ITEMCHANGED, LVS_EX_CHECKBOXES, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT,
-    NM_CUSTOMDRAW, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW, SetWindowTheme, WC_LISTVIEWW,
+    LVN_ITEMCHANGED, LVS_EX_CHECKBOXES, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, NM_CUSTOMDRAW,
+    NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW, SetWindowTheme, WC_LISTVIEWW,
 };
-use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     BS_PUSHBUTTON, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
@@ -47,10 +46,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetTimer,
     SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE,
     WM_CLOSE, WM_COMMAND, WM_CTLCOLORBTN, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED,
-    WM_GETMINMAXINFO, WM_NOTIFY, WM_SETFONT, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER,
-    WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_THICKFRAME,
-    WS_VISIBLE,
+    WM_GETMINMAXINFO, WM_NOTIFY, WM_SETFONT, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CAPTION,
+    WS_CHILD, WS_CLIPCHILDREN, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_THICKFRAME, WS_VISIBLE,
 };
+use windows::core::{PCWSTR, PWSTR, w};
 
 use crate::config::Config;
 use crate::devices::{DeviceKind, list_input_devices};
@@ -395,13 +394,16 @@ fn populate(st: &mut WindowState) {
             path: d.name,
         })
         .collect();
-    rows.sort_by(|a, b| {
-        (a.rank, &a.name, &a.kind, &a.id).cmp(&(b.rank, &b.name, &b.kind, &b.id))
-    });
+    rows.sort_by(|a, b| (a.rank, &a.name, &a.kind, &a.id).cmp(&(b.rank, &b.name, &b.kind, &b.id)));
 
     st.suppress = true;
     unsafe {
-        SendMessageW(st.list, LVM_DELETEALLITEMS, Some(WPARAM(0)), Some(LPARAM(0)));
+        SendMessageW(
+            st.list,
+            LVM_DELETEALLITEMS,
+            Some(WPARAM(0)),
+            Some(LPARAM(0)),
+        );
     }
     for (i, row) in rows.iter().enumerate() {
         let name = to_wide(&row.name);
@@ -435,7 +437,11 @@ fn populate(st: &mut WindowState) {
                 );
             }
         }
-        set_checked(st.list, i as isize, config.allowed_devices.contains(&row.path));
+        set_checked(
+            st.list,
+            i as isize,
+            config.allowed_devices.contains(&row.path),
+        );
     }
     st.suppress = false;
     st.lit_until = vec![None; rows.len()];
@@ -458,7 +464,11 @@ pub fn report_activity(hwnd: HWND, path: &str) {
     }
     let now = Instant::now();
     let mut found = st.rows.iter().position(|r| r.path == path);
-    if found.is_none() && st.last_refresh.is_none_or(|t| now - t >= Duration::from_secs(1)) {
+    if found.is_none()
+        && st
+            .last_refresh
+            .is_none_or(|t| now - t >= Duration::from_secs(1))
+    {
         // A device plugged in after the list was built: re-enumerate once, keeping
         // existing highlights where the same device is still present.
         st.last_refresh = Some(now);
@@ -608,7 +618,14 @@ fn layout(hwnd: HWND, st: &WindowState) {
         let _ = MoveWindow(st.identify, w - m - 2 * bw - iw - 2 * gap, by, iw, bh, true);
         let _ = MoveWindow(st.allow_all, w - m - 2 * bw - gap, by, bw, bh, true);
         let _ = MoveWindow(st.remove_all, w - m - bw, by, bw, bh, true);
-        let _ = MoveWindow(st.list, m, list_top, w - 2 * m, (h - list_top - m).max(0), true);
+        let _ = MoveWindow(
+            st.list,
+            m,
+            list_top,
+            w - 2 * m,
+            (h - list_top - m).max(0),
+            true,
+        );
 
         // Split the list's client width (which already excludes a vertical
         // scrollbar when one is showing) so the columns never overflow:
@@ -729,9 +746,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                     if cd.nmcd.dwDrawStage == CDDS_PREPAINT {
                         return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
                     }
-                    if cd.nmcd.dwDrawStage == CDDS_ITEMPREPAINT
-                        && is_lit(st, cd.nmcd.dwItemSpec)
-                    {
+                    if cd.nmcd.dwDrawStage == CDDS_ITEMPREPAINT && is_lit(st, cd.nmcd.dwItemSpec) {
                         cd.clrTextBk = HIGHLIGHT;
                         return LRESULT(CDRF_NEWFONT as isize);
                     }
@@ -739,8 +754,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 }
                 if hdr.idFrom == ID_LIST as usize && hdr.code == LVN_ITEMCHANGED && !st.suppress {
                     let nm = &*(lparam.0 as *const NMLISTVIEW);
-                    let image_changed =
-                        (nm.uNewState ^ nm.uOldState) & LVIS_STATEIMAGEMASK.0 != 0;
+                    let image_changed = (nm.uNewState ^ nm.uOldState) & LVIS_STATEIMAGEMASK.0 != 0;
                     if nm.uChanged.0 & LVIF_STATE.0 != 0
                         && image_changed
                         && let Some(row) = st.rows.get(nm.iItem as usize)
@@ -770,5 +784,17 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scale;
+
+    #[test]
+    fn scale_converts_96_dpi_layout_units() {
+        assert_eq!(scale(100, 96), 100);
+        assert_eq!(scale(100, 144), 150);
+        assert_eq!(scale(16, 192), 32);
     }
 }
