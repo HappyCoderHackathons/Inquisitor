@@ -146,7 +146,7 @@ Any other message, an extra field, or a message over 4 KiB closes the socket wit
 90 seconds is dropped. When it closes, `ws_connected` becomes false and the device shows offline at once.
 Feature windows still go over `POST /api/agent/windows`, never over the socket.
 
-Hosted agent audit records are single-line JSON with allowlisted event metadata only. They may include device ID, outcome, controlled rejection reason, and validated window schema, mode, and sequence. They never include window contents, feature values, bearer tokens, or authorization headers.
+Hosted audit records for pairing, device revocation, behavioral-data deletion, and agent activity are single-line JSON with allowlisted metadata only. They may include event, outcome, pseudonymous user/device IDs, device counts, controlled reasons, and for agent-window events only validated schema, mode, and sequence. They never include pairing codes, device names, window contents, feature values, bearer tokens, or authorization headers.
 
 ### Model service bearer
 
