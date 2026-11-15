@@ -25,7 +25,7 @@
         <section class="dashboard-heading">
           <p class="eyebrow"><span class="eyebrow-line"></span> {% if signed_in %}SETUP{% elif mode|default('login') == 'signup' %}CREATE ACCOUNT{% else %}LOG IN{% endif %}</p>
           <h1>{% if signed_in %}Set up your model{% elif mode|default('login') == 'signup' %}Create an account{% else %}Sign in{% endif %}</h1>
-          <p>{% if signed_in %}Sign in, connect the Windows agent, then play each of the four games for 2.5 minutes. The agent measures aggregate keyboard and mouse timing while you play; your model trains when enough data is collected.{% elif mode|default('login') == 'signup' %}Create an account to pair the Windows agent and keep this PC's calibration with you. A password needs at least 8 characters.{% else %}Sign in to link the agent and your calibration data to your account.{% endif %}</p>
+          <p>{% if signed_in %}Connect the Windows agent, then follow the enrollment steps. The agent measures aggregate timing. It does not receive the characters you type. Play each of the four games for 2.5 minutes. Your model trains when enough usable windows are collected.{% elif mode|default('login') == 'signup' %}Create an account to pair the Windows agent and keep this PC's calibration with you. A password needs at least 8 characters.{% else %}Sign in to link the agent and your calibration data to your account.{% endif %}</p>
         </section>
 
         <section class="dashboard-panel" aria-labelledby="signInTitle">
@@ -66,13 +66,80 @@
           <p><strong id="pairingCode" class="pairing-code"></strong> <span id="pairingExpiry" role="timer"></span></p>
         </section>
 
-        <section class="dashboard-panel" aria-labelledby="gamesTitle">
-          <h2 id="gamesTitle">3. Play the calibration games</h2>
+        <section class="dashboard-panel" aria-labelledby="wizardTitle">
+          <h2 id="wizardTitle">3. Enrollment</h2>
           <p id="onboardingState" class="collection-status" role="status" aria-live="polite">Loading setup status…</p>
-          <ul id="gameProgress" class="collection-summary"></ul>
+          <p id="agentStatus" class="collection-status" role="status">Agent status: offline</p>
+          <nav class="wizard-steps" aria-label="Enrollment steps">
+            <button class="wizard-step" type="button" data-step-tab="warmup" aria-current="step">1. Warm-up</button>
+            <button class="wizard-step" type="button" data-step-tab="typing" disabled>2. Typing Sample</button>
+            <button class="wizard-step" type="button" data-step-tab="activity" disabled>3. Natural Activity</button>
+            <button class="wizard-step" type="button" data-step-tab="train" disabled>4. Train Model</button>
+          </nav>
+
+          <div class="wizard-panel" data-step-panel="warmup">
+            <h3>Warm-up</h3>
+            <p class="dashboard-panel-copy">This step explains the measurement before any sample starts. A score compares a window with this device's enrollment. It is an anomaly signal, not an identity.</p>
+            <div class="wizard-lists">
+              <div>
+                <h3>What is collected</h3>
+                <ul>
+                  <li>Keyboard timing summaries: hold times, gaps between presses, pauses, and bursts.</li>
+                  <li>Counts for the window, such as how many presses occurred and how long the window lasted.</li>
+                  <li>Mouse timing aggregates only when mouse collection is enabled.</li>
+                </ul>
+              </div>
+              <div>
+                <h3>What is not collected</h3>
+                <ul>
+                  <li>Typed text, passwords, key names, and the order of individual keys.</li>
+                  <li>Screenshots, application names, and page addresses.</li>
+                  <li>The pointer path and absolute pointer position.</li>
+                  <li>The practice text on Typing Sample. It stays in this browser.</li>
+                </ul>
+              </div>
+            </div>
+            <p class="dashboard-footnote">The field names and units are on the <a href="/privacy">privacy page</a>.</p>
+          </div>
+
+          <div class="wizard-panel" data-step-panel="typing" hidden>
+            <h3>Typing Sample</h3>
+            <p class="dashboard-panel-copy">Type in the box if you want a neutral passage to practice on. The words stay in this browser. The page does not save them and does not send them. The agent, when it is running, can send only timing summaries.</p>
+            <label class="practice-field">Practice text
+              <textarea id="practiceText" maxlength="500" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="practiceNote"></textarea>
+            </label>
+            <p id="practiceNote" class="dashboard-footnote">Nothing you type here is included in a request.</p>
+          </div>
+
+          <div class="wizard-panel" data-step-panel="activity" hidden>
+            <h3>Natural Activity</h3>
+            <p class="dashboard-panel-copy">Use this PC as you usually would, or play the calibration games. Usable windows are keyboard summaries with at least 30 presses. This demo asks for 30 of them before training.</p>
+            <ul id="gameProgress" class="collection-summary"></ul>
+            <a id="playGames" class="button primary" href="/arcade" hidden>Open the games</a>
+          </div>
+
+          <div class="wizard-panel" data-step-panel="train" hidden>
+            <h3>Train Model</h3>
+            <p class="dashboard-panel-copy">Train stays off until each game has its time and the usable windows cover training and calibration. Training uses those summaries, not the practice text.</p>
+            <button id="trainModel" class="button primary" type="button" disabled>Train my model</button>
+          </div>
+
+          <div class="collector-progress-row">
+            <progress id="enrollmentProgress" max="30" value="0">0 of 30 usable windows</progress>
+            <span id="enrollmentProgressLabel">0 of 30 usable windows · 0 s recorded</span>
+          </div>
           <p id="windowProgress" class="dashboard-footnote"></p>
-          <a id="playGames" class="button primary" href="/arcade" hidden>Open the games</a>
-          <button id="trainModel" class="button primary" type="button" disabled>Train my model</button>
+          <div class="collection-actions">
+            <button id="pauseEnrollment" class="button secondary-button" type="button">Pause</button>
+            <button id="resumeEnrollment" class="button secondary-button" type="button" disabled>Resume</button>
+            <button id="discardEnrollment" class="button secondary-button" type="button">Discard</button>
+            <button id="finishEnrollment" class="button secondary-button" type="button">Finish enrollment</button>
+          </div>
+          <p id="enrollmentControlStatus" class="action-status" role="status" aria-live="polite"></p>
+          <div class="wizard-nav">
+            <button id="wizardBack" class="button secondary-button" type="button" hidden>Back</button>
+            <button id="wizardNext" class="button primary" type="button" disabled>Continue</button>
+          </div>
         </section>
 
         <section class="dashboard-panel" aria-labelledby="dataTitle">

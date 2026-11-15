@@ -16,6 +16,39 @@
   var element = (id) => document.getElementById(id);
   var authForm = element("authForm");
   var signingUp = false;
+  var agentOffline = true;
+  var wizardStep = 0;
+  var wizardSteps = ["warmup", "typing", "activity", "train"];
+  function showWizard(index, announce = false) {
+    if (agentOffline && index > 0) {
+      if (announce) {
+        const note = element("enrollmentControlStatus");
+        if (note) {
+          note.classList.add("error");
+          note.textContent = "The agent is offline. Stay on Warm-up until it is active or paused.";
+        }
+      }
+      index = 0;
+    }
+    wizardStep = Math.min(Math.max(index, 0), wizardSteps.length - 1);
+    wizardSteps.forEach((name, step) => {
+      const panel = document.querySelector(`[data-step-panel="${name}"]`);
+      if (panel instanceof HTMLElement) panel.hidden = step !== wizardStep;
+      const tab = document.querySelector(`[data-step-tab="${name}"]`);
+      if (tab instanceof HTMLButtonElement) {
+        if (step === wizardStep) tab.setAttribute("aria-current", "step");
+        else tab.removeAttribute("aria-current");
+        tab.disabled = agentOffline && step > 0;
+      }
+    });
+    const back = element("wizardBack");
+    const next = element("wizardNext");
+    if (back) back.hidden = wizardStep === 0;
+    if (next) {
+      next.hidden = wizardStep === wizardSteps.length - 1;
+      next.disabled = agentOffline;
+    }
+  }
   function showSignUp(next) {
     signingUp = next;
     const name = element("authName");
@@ -168,6 +201,10 @@
     }
     const stateLabel = element("onboardingState");
     if (response.status === 404) {
+      agentOffline = true;
+      const agent2 = element("agentStatus");
+      if (agent2) agent2.textContent = "Agent status: offline";
+      showWizard(0);
       if (stateLabel?.textContent === "Loading setup status\u2026") {
         stateLabel.classList.remove("error");
         stateLabel.textContent = "Waiting for the agent to connect.";
@@ -212,6 +249,30 @@
       train.hidden = status.state !== "collecting";
       train.disabled = !status.ready_to_train;
     }
+    const required = status.required_windows;
+    const progressBar = element("enrollmentProgress");
+    const progressLabel = element("enrollmentProgressLabel");
+    if (progressBar) {
+      progressBar.max = required;
+      progressBar.value = Math.min(status.usable_windows, required);
+      progressBar.textContent = `${status.usable_windows} of ${required} usable windows`;
+    }
+    if (progressLabel) {
+      progressLabel.textContent = `${status.usable_windows} of ${required} usable windows \xB7 ${status.duration_seconds} s recorded`;
+    }
+    agentOffline = status.agent === "offline";
+    const agent = element("agentStatus");
+    if (agent) agent.textContent = `Agent status: ${status.agent}`;
+    const collecting = status.state === "collecting";
+    const pause = element("pauseEnrollment");
+    const resume = element("resumeEnrollment");
+    const discard = element("discardEnrollment");
+    const finish = element("finishEnrollment");
+    if (pause) pause.disabled = !collecting || status.collection !== "active";
+    if (resume) resume.disabled = !collecting || status.collection !== "paused";
+    if (discard) discard.disabled = !collecting;
+    if (finish) finish.disabled = !collecting || status.collection === "finished";
+    showWizard(agentOffline ? 0 : wizardStep);
   }
   element("createCode")?.addEventListener("click", async () => {
     const button = element("createCode");
@@ -313,6 +374,65 @@
       () => fetch("/api/me/data", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: "{}" })
     );
   });
+  async function enrollmentControl(path, confirmText) {
+    if (confirmText && !window.confirm(confirmText)) return;
+    const status = element("enrollmentControlStatus");
+    if (status) {
+      status.classList.remove("error");
+      status.textContent = "Please wait.";
+    }
+    try {
+      const response = await post(path);
+      if (!response.ok) {
+        if (status) {
+          status.classList.add("error");
+          status.textContent = response.status >= 500 ? "Could not update enrollment. The server is unavailable." : `Could not update enrollment (${response.status}).`;
+        }
+        return;
+      }
+    } catch {
+      if (status) {
+        status.classList.add("error");
+        status.textContent = "Could not update enrollment. The server did not respond.";
+      }
+      return;
+    }
+    try {
+      await refresh();
+      if (status && status.textContent === "Please wait.") status.textContent = "";
+    } catch (error) {
+      if (status) {
+        status.classList.add("error");
+        status.textContent = error instanceof Error ? error.message : "Could not load setup status.";
+      }
+    }
+  }
+  element("pauseEnrollment")?.addEventListener("click", () => {
+    void enrollmentControl("/api/onboarding/pause", null);
+  });
+  element("resumeEnrollment")?.addEventListener("click", () => {
+    void enrollmentControl("/api/onboarding/resume", null);
+  });
+  element("discardEnrollment")?.addEventListener("click", () => {
+    void enrollmentControl(
+      "/api/onboarding/discard",
+      "Discard collected enrollment windows for this setup? The account and the paired agent stay."
+    );
+  });
+  element("finishEnrollment")?.addEventListener("click", () => {
+    void enrollmentControl(
+      "/api/onboarding/finish",
+      "Finish enrollment? The agent stops sending enrollment windows. Training can still use the windows already collected."
+    );
+  });
+  document.querySelectorAll("[data-step-tab]").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const name = tab.dataset.stepTab;
+      showWizard(wizardSteps.indexOf(name), true);
+    });
+  });
+  element("wizardBack")?.addEventListener("click", () => showWizard(wizardStep - 1));
+  element("wizardNext")?.addEventListener("click", () => showWizard(wizardStep + 1, true));
   if (element("gameProgress")) {
     const tick = () => refresh().catch((error) => {
       const label = element("onboardingState");

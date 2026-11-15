@@ -382,6 +382,82 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(dashboard.status_code, 200)
         self.assertIn("Your dashboard", dashboard.get_data(as_text=True))
 
+    def test_enrollment_wizard_explains_collection_and_keeps_practice_text_local(self):
+        unsigned = self.client.get("/onboarding").get_data(as_text=True)
+        self.assertNotIn("practiceText", unsigned)
+        self.sign_in()
+        page = self.client.get("/onboarding").get_data(as_text=True)
+        for label in ("Warm-up", "Typing Sample", "Natural Activity", "Train Model"):
+            self.assertIn(label, page)
+        self.assertIn("What is collected", page)
+        self.assertIn("What is not collected", page)
+        self.assertIn('id="practiceText"', page)
+        self.assertNotIn('name="practiceText"', page)
+        self.assertNotIn("<form", page[page.index('id="practiceText"') : page.index('id="enrollmentProgress"')])
+        self.assertIn('id="enrollmentProgress"', page)
+        self.assertIn('id="pauseEnrollment"', page)
+        self.assertIn('id="resumeEnrollment"', page)
+        self.assertIn('id="discardEnrollment"', page)
+        self.assertIn('id="finishEnrollment"', page)
+        script = Path(__file__).parents[1].joinpath("frontend/onboarding.ts").read_text(encoding="utf-8")
+        self.assertNotIn("practiceText", script)
+        self.assertIn("usable windows", script)
+        for path in ("pause", "resume", "discard", "finish"):
+            self.assertIn(f"/api/onboarding/{path}", script)
+
+    def test_enrollment_controls_pause_resume_discard_and_finish(self):
+        self.assertEqual(self.client.post("/api/onboarding/pause", json={}).status_code, 401)
+        device_id, agent = self.pair()
+        self.assertEqual(self.client.post("/api/onboarding/pause", data="{}").status_code, 415)
+        blocked = self.client.post(
+            "/api/onboarding/pause", json={"practiceText": "secret phrase"}, headers={"Origin": "https://evil.example"}
+        )
+        self.assertEqual(blocked.status_code, 403)
+        initial = self.client.get("/api/onboarding").get_json()
+        self.assertEqual((initial["agent"], initial["collection"], initial["usable_windows"]), ("offline", "active", 0))
+        self.assertEqual(initial["required_windows"], 30)
+        self.client.get("/api/agent/onboarding", headers=agent)
+        self.assertEqual(self.client.get("/api/onboarding").get_json()["agent"], "active")
+        self.assertEqual(self.client.post("/api/onboarding/resume", json={}).status_code, 409)
+        session_id = self.client.post("/api/onboarding/rounds", json={"game": "typing"}).get_json()["session_id"]
+        uploaded = self.client.post("/api/agent/windows", headers=agent, json=window(device_id, session_id, 0))
+        self.assertEqual(uploaded.status_code, 201)
+        paused = self.client.post("/api/onboarding/pause", json={"practiceText": "secret phrase"})
+        self.assertEqual(paused.status_code, 200)
+        self.assertEqual(paused.get_json()["agent"], "paused")
+        self.assertEqual(paused.get_json()["usable_windows"], 1)
+        self.assertNotIn("secret phrase", str(list(self.database.onboarding.find())))
+        self.assertNotIn("secret phrase", str(list(self.database.windows.find())))
+        self.assertIsNone(self.client.get("/api/agent/onboarding", headers=agent).get_json()["session_id"])
+        self.assertEqual(
+            self.client.post("/api/agent/windows", headers=agent, json=window(device_id, session_id, 1)).status_code,
+            409,
+        )
+        self.assertEqual(self.client.post("/api/onboarding/rounds", json={"game": "aim"}).status_code, 409)
+        resumed = self.client.post("/api/onboarding/resume", json={})
+        self.assertEqual(resumed.status_code, 200)
+        self.assertEqual(resumed.get_json()["agent"], "active")
+        self.assertEqual(self.client.get("/api/agent/onboarding", headers=agent).get_json()["session_id"], session_id)
+        self.clock += timedelta(seconds=91)
+        self.assertEqual(self.client.get("/api/onboarding").get_json()["agent"], "offline")
+        self.client.get("/api/agent/onboarding", headers=agent)
+        finished = self.client.post("/api/onboarding/finish", json={})
+        self.assertEqual(finished.status_code, 200)
+        self.assertEqual(finished.get_json()["collection"], "finished")
+        self.assertEqual(finished.get_json()["duration_seconds"], 60)
+        self.assertEqual(finished.get_json()["usable_windows"], 1)
+        self.assertEqual(
+            self.client.post("/api/agent/windows", headers=agent, json=window(device_id, session_id, 2)).status_code,
+            409,
+        )
+        self.assertEqual(self.client.post("/api/onboarding/pause", json={}).status_code, 409)
+        self.assertEqual(self.client.post("/api/onboarding/finish", json={}).get_json()["collection"], "finished")
+        discarded = self.client.post("/api/onboarding/discard", json={})
+        self.assertEqual(discarded.status_code, 200)
+        cleared = discarded.get_json()
+        self.assertEqual((cleared["collection"], cleared["usable_windows"], cleared["duration_seconds"]), ("active", 0, 0))
+        self.assertEqual(self.database.windows.count_documents({"device_id": device_id}), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
