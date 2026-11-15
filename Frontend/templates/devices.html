@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#09070D">
+    <meta name="description" content="Paired agents for this account, with last check-in and revoke.">
+    <title>Inquisitor | Devices</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/devices.js" defer></script>
+  </head>
+  <body>
+    <div class="arcade-layout">
+      <header class="arcade-header">
+        <a class="brand" href="/">Inquisitor</a>
+        <nav class="arcade-nav" aria-label="Main navigation">
+          <a href="/">Home</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/dashboard">Dashboard</a>
+          <a href="/demo">Demo</a>
+          <a href="/devices" aria-current="page">Devices</a>
+        </nav>
+      </header>
+
+      <main class="dashboard-main">
+        <section class="dashboard-heading">
+          <p class="eyebrow"><span class="eyebrow-line"></span> PAIRED AGENTS</p>
+          <h1>Devices</h1>
+          <p>Each row is one paired agent. Revoke stops that agent token immediately.</p>
+        </section>
+
+        <section class="dashboard-panel" aria-labelledby="deviceListHeading">
+          <h2 id="deviceListHeading">This account</h2>
+          <p id="deviceListStatus" class="dashboard-panel-copy" role="status">No paired devices.</p>
+          <ul id="deviceList" class="alert-list"></ul>
+          <p class="dashboard-footnote">Last check-in is the latest authenticated agent request. Revoke does not delete enrollment windows or the trained model.</p>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

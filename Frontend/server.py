@@ -145,6 +145,16 @@ def dashboard():
     return render_template("dashboard.html")
 
 
+@app.get("/demo")
+def demo():
+    return render_template("demo.html")
+
+
+@app.get("/devices")
+def devices():
+    return render_template("devices.html")
+
+
 @app.get("/privacy")
 def privacy():
     return render_template("privacy.html", sample_payload=json.dumps(SAMPLE_FEATURE_WINDOW, indent=2))
