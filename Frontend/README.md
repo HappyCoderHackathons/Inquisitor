@@ -37,6 +37,20 @@ Collection sessions use a random local browser ID and a new session ID each time
 
 Xbox and Nintendo controllers work through the browser Gamepad API. Connect the controller and press a button once so the browser can recognize it. Keyboard controls are shown in each game. The arcade sprint rotates through four one-minute rounds; each game can also be played on its own.
 
+## Hosted onboarding
+
+When all of these environment variables are set, `server.py` also serves SSOJet sign-in and agent pairing backed by MongoDB Atlas. If none are set, the app stays local-only. If only some are set, startup fails.
+
+| Variable | Purpose |
+| --- | --- |
+| `SSOJET_AUTHORITY` | SSOJet base URL; `/.well-known/openid-configuration` is appended |
+| `SSOJET_CLIENT_ID`, `SSOJET_CLIENT_SECRET` | SSOJet regular web application credentials |
+| `SSOJET_REDIRECT_URI` | Must exactly match the SSOJet callback, e.g. `https://<host>/auth/callback` |
+| `SESSION_SECRET` | Random string that signs session cookies |
+| `MONGODB_URI`, `MONGODB_DB` | Atlas connection string and database name |
+
+The user signs in at `/onboarding` and gets a single-use pairing code that expires after 10 minutes. The agent redeems it at `POST /api/agent/pair` and receives a device token; only the token's SHA-256 hash is stored. Store Atlas and SSOJet credentials only in deployment configuration.
+
 ## Privacy and current scope
 
 - Game input is handled in the browser for gameplay. Input events are transient and are not sent to Flask.
