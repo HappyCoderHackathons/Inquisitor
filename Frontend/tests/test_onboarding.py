@@ -248,6 +248,57 @@ class OnboardingTests(unittest.TestCase):
             expected_heartbeat,
         )
 
+    def test_id_scoped_endpoints_reject_another_accounts_ids(self):
+        device_id, _agent = self.pair()
+        enrollment = self.client.post(
+            "/api/enrollments", json={"device_id": device_id, "game": "typing"},
+        )
+        self.assertEqual(enrollment.status_code, 201, enrollment.get_json())
+        enrollment_id = enrollment.get_json()["id"]
+        alert_id = "user-a-alert"
+        self.database.alerts.insert_one({
+            "_id": alert_id,
+            "user_id": "better-auth:user-a",
+            "device_id": device_id,
+            "status": "open",
+            "started_at": self.clock,
+        })
+
+        self.sign_in("user-b")
+        requests = [
+            ("GET model", lambda: self.client.get(f"/api/model?device_id={device_id}")),
+            ("POST enrollment", lambda: self.client.post(
+                "/api/enrollments", json={"device_id": device_id, "game": "typing"},
+            )),
+            ("GET enrollment", lambda: self.client.get(f"/api/enrollments/{enrollment_id}")),
+            ("complete enrollment", lambda: self.client.post(
+                f"/api/enrollments/{enrollment_id}/complete", json={},
+            )),
+            ("revoke device", lambda: self.client.post(f"/api/devices/{device_id}/revoke", json={})),
+            ("monitoring status API", lambda: self.client.get(f"/api/monitoring/status?device_id={device_id}")),
+            ("monitoring status alias", lambda: self.client.get(f"/monitoring/status?device_id={device_id}")),
+            ("monitoring history API", lambda: self.client.get(f"/api/monitoring/history?device_id={device_id}")),
+            ("monitoring history alias", lambda: self.client.get(f"/monitoring/history?device_id={device_id}")),
+            ("alerts API", lambda: self.client.get(f"/api/alerts?status=open&device_id={device_id}")),
+            ("alerts alias", lambda: self.client.get(f"/alerts?status=open&device_id={device_id}")),
+            ("monitoring stream", lambda: self.client.get(f"/api/monitoring/stream?device_id={device_id}")),
+            ("demo switch list", lambda: self.client.get(f"/api/demo/switches?device_id={device_id}")),
+            ("create demo switch", lambda: self.client.post(
+                f"/api/demo/switches?device_id={device_id}", json={},
+            )),
+            ("acknowledge alert", lambda: self.client.post(
+                f"/api/alerts/{alert_id}/acknowledge", json={"label": "expected"},
+            )),
+        ]
+        for endpoint, send in requests:
+            with self.subTest(endpoint=endpoint):
+                self.assertEqual(send().status_code, 404)
+
+        self.assertEqual(self.client.get("/api/devices").get_json()["devices"], [])
+        self.assertIsNone(self.database.devices.find_one({"_id": device_id})["revoked_at"])
+        self.assertIsNone(self.database.alerts.find_one({"_id": alert_id}).get("acknowledgement"))
+        self.assertEqual(self.database.rounds.find_one({"_id": enrollment_id})["status"], "active")
+
     def test_agent_heartbeat_stores_online_status_and_last_seen(self):
         device_id, agent = self.pair()
         self.assertEqual(self.client.post("/agent/heartbeat").status_code, 401)
