@@ -92,6 +92,15 @@ class AccountStore:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def check_available(self) -> None:
+        uri = f"{self.database.resolve().as_uri()}?mode=ro"
+        with self._lock, closing(sqlite3.connect(uri, uri=True, timeout=1)) as conn:
+            policy = conn.execute(
+                "SELECT monitoring_retention_seconds FROM retention_policy WHERE id = 1"
+            ).fetchone()
+            if policy is None:
+                raise sqlite3.DatabaseError("account database retention policy is unavailable")
+
     def _artifact_path(self, model_id: str) -> Path:
         try:
             if UUID(model_id).hex != model_id:

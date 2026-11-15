@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,12 +36,29 @@ class ModelServiceTests(unittest.TestCase):
     def test_authentication_and_health(self) -> None:
         self.assertEqual(self.client.get("/health").status_code, 401)
         self.assertEqual(self.client.get("/health", headers={"Authorization": "Bearer wrong"}).status_code, 401)
-        self.assertEqual(self.client.get("/health", headers=self.headers).json, {"state": "ok"})
+        self.assertEqual(self.client.get("/health", headers=self.headers).json, {
+            "state": "ok", "database": "available", "model_store": "available",
+        })
         with (
             patch.dict(os.environ, {"ML_TOKEN_FILE": str(Path(self.temporary.name) / "missing")}),
             self.assertRaises(FileNotFoundError),
         ):
             create_app()
+
+    def test_health_reports_each_dependency_failure(self) -> None:
+        with patch("backend.ml.app.AccountStore.check_available", side_effect=sqlite3.OperationalError("offline")):
+            response = create_app().test_client().get("/health", headers=self.headers)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json, {
+            "state": "degraded", "database": "unavailable", "model_store": "available",
+        })
+
+        with patch("backend.ml.app.ModelStore.check_available", side_effect=OSError("offline")):
+            response = create_app().test_client().get("/health", headers=self.headers)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json, {
+            "state": "degraded", "database": "available", "model_store": "unavailable",
+        })
 
     def test_shared_schema_fixtures(self) -> None:
         for version in (1, 2):

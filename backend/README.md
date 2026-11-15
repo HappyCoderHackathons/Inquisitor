@@ -37,7 +37,7 @@ the application's user/device authentication.
 
 | Endpoint | Request | Result |
 | --- | --- | --- |
-| `GET /health` | No body | Authenticated readiness |
+| `GET /health` | No body | Authenticated dependency readiness; returns database and model-store availability, HTTP 503 if either is unavailable |
 | `GET /model` | Configured published owner/device headers | Published model version, hash, threshold, and summary |
 | `POST /score` | `window` object and configured owner/device headers | Published model inference without a private model ID |
 | `POST /models/train` | `windows` array and `validation_session_id` or `validation_session_ids`; optional `profile` | Ready model metadata, HTTP 201 |
