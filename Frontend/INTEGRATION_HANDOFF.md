@@ -15,8 +15,11 @@ so the page does not present placeholder data as live.
   and API calls. It keeps key identifiers transient and sends only feature
   windows that match the v1 contract.
 - `server.py`: `/api/feature-windows` validates and stores windows,
-  `/api/feature-windows/export` returns JSONL, and `/api/local-data` clears the
-  local prototype data.
+  `/api/feature-windows/export` returns JSONL, and the danger-zone actions
+  require an exact confirmation phrase. `DELETE /api/local-data` with `DELETE`
+  removes arcade samples and feature windows. `POST /api/enrollment/reset` with
+  `RESET` removes enrollment windows only. `POST /api/model/deactivate` with
+  `DEACTIVATE` reports that this prototype stores no model.
 - `shared/feature-window-v1.schema.json`: shared schema used to validate saved
   windows.
 - `static/dashboard.js`: generated from `frontend/dashboard.ts` by `npm run build`.
@@ -43,8 +46,9 @@ The follow-up implementer should:
 4. Mark stale connections offline and avoid showing old detection results as
    current. A detection is a verification prompt, not proof of identity.
 5. Implement account-scoped deletion on the hosted service, with authorization,
-   confirmation, and an explicit result.    The local delete button clears arcade samples and collected windows from this
-   prototype database; it does not delete an authenticated user's account.
+   confirmation, and an explicit result. The local danger zone deletes or resets
+   rows in this prototype database after a typed phrase. It does not delete an
+   authenticated user's account or a remote model artifact.
 6. Add tests for authorization, account/device isolation, message validation,
    disconnect/revocation, stale status, and deletion before presenting the
    integration as complete.

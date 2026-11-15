@@ -104,12 +104,65 @@ class FeatureWindowApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/feature-windows", json=forged).status_code, 422)
         self.assertEqual(self.client.post("/api/feature-windows", json={**window, "schema_version": 3}).status_code, 422)
 
-    def test_local_data_delete_clears_feature_windows(self):
-        self.client.post("/api/feature-windows", json=valid_window())
-        response = self.client.delete("/api/local-data")
+    def stored_counts(self):
+        with server.db() as conn:
+            samples = conn.execute("SELECT COUNT(*) n FROM samples").fetchone()["n"]
+            windows = conn.execute("SELECT COUNT(*) n FROM feature_windows").fetchone()["n"]
+            enrollment = conn.execute(
+                "SELECT COUNT(*) n FROM feature_windows WHERE mode = 'enrollment'"
+            ).fetchone()["n"]
+            monitoring = conn.execute(
+                "SELECT COUNT(*) n FROM feature_windows WHERE mode = 'monitoring'"
+            ).fetchone()["n"]
+        return samples, windows, enrollment, monitoring
 
+    def save_sample_and_windows(self):
+        sample = {
+            "game": "typing", "duration_ms": 1000, "input_count": 10, "keyboard_count": 10,
+            "controller_count": 0, "mean_interval_ms": 100.0, "interval_std_ms": 10.0,
+            "mean_hold_ms": 80.0, "score": 1, "source": "test",
+        }
+        monitoring = {**valid_window(), "session_id": "monitor-session", "sequence": 1, "mode": "monitoring"}
+        self.assertEqual(self.client.post("/api/samples", json=sample).status_code, 201)
+        self.assertEqual(self.client.post("/api/feature-windows", json=valid_window()).status_code, 201)
+        self.assertEqual(self.client.post("/api/feature-windows", json=monitoring).status_code, 201)
+
+    def test_local_data_delete_leaves_no_rows(self):
+        self.save_sample_and_windows()
+        self.assertEqual(self.stored_counts(), (1, 2, 1, 1))
+
+        rejected = self.client.delete("/api/local-data", json={"confirmation": "delete"})
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(self.stored_counts(), (1, 2, 1, 1))
+
+        response = self.client.delete("/api/local-data", json={"confirmation": "DELETE"})
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.stored_counts(), (0, 0, 0, 0))
         self.assertEqual(self.client.get("/api/feature-windows").get_json()["windows"], 0)
+        self.assertEqual(self.client.get("/api/feature-windows/export").get_data(), b"")
+        self.assertEqual(self.client.get("/api/summary").get_json()["samples"], 0)
+
+    def test_reset_removes_only_enrollment_windows(self):
+        self.save_sample_and_windows()
+        rejected = self.client.post("/api/enrollment/reset", json={})
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(self.stored_counts(), (1, 2, 1, 1))
+
+        response = self.client.post("/api/enrollment/reset", json={"confirmation": "RESET"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["deleted"], 1)
+        self.assertEqual(self.stored_counts(), (1, 1, 0, 1))
+
+    def test_deactivate_requires_phrase_and_keeps_rows(self):
+        self.save_sample_and_windows()
+        rejected = self.client.post("/api/model/deactivate")
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(self.stored_counts(), (1, 2, 1, 1))
+
+        response = self.client.post("/api/model/deactivate", json={"confirmation": "DEACTIVATE"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"ok": True, "active": False, "stored": False})
+        self.assertEqual(self.stored_counts(), (1, 2, 1, 1))
 
 
 if __name__ == "__main__":

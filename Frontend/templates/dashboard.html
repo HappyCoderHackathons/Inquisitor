@@ -117,13 +117,58 @@
             <div class="dashboard-panel-heading">
               <div><p class="eyebrow">DATA &amp; ACCOUNT CONTROLS</p><h2 id="dataTitle">Your choices</h2></div>
             </div>
+            <h3 class="danger-heading" id="dangerTitle">Danger zone</h3>
+            <p class="dashboard-footnote danger-note">These actions change this machine's local prototype database. Type the requested phrase before each one runs. They do not delete a Better Auth account or a remote model.</p>
             <div class="data-action">
-              <div><strong>Delete local data</strong><p>Removes arcade rounds and feature windows stored by this local prototype.</p></div>
-              <button id="deleteLocalData" class="button danger-button" type="button">Delete data</button>
+              <div class="data-action-row">
+                <div><strong>Delete data</strong><p>Removes every arcade round and feature window stored by this local prototype.</p></div>
+                <button id="deleteLocalData" class="button danger-button" type="button" data-danger-open aria-controls="deleteLocalDataConfirm" aria-expanded="false">Delete data</button>
+              </div>
+              <form id="deleteLocalDataConfirm" class="typed-confirm" hidden data-phrase="DELETE" data-method="DELETE" data-path="/api/local-data" data-success="Local arcade rounds and feature windows deleted.">
+                <label for="deleteLocalDataInput">Type DELETE to confirm
+                  <input id="deleteLocalDataInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
+                </label>
+                <div class="typed-confirm-actions">
+                  <button class="button danger-button" type="submit" disabled>Delete data</button>
+                  <button class="button secondary-button typed-cancel" type="button">Cancel</button>
+                </div>
+              </form>
             </div>
             <div class="data-action">
-              <div><strong>Delete account</strong><p>Account deletion will be available after Better Auth and user-scoped storage are connected.</p></div>
-              <button class="button disabled-button" type="button" disabled aria-describedby="accountDeleteHelp">Unavailable</button>
+              <div class="data-action-row">
+                <div><strong>Reset enrollment</strong><p>Removes enrollment feature windows. Monitoring windows and arcade rounds stay.</p></div>
+                <button id="resetEnrollment" class="button danger-button" type="button" data-danger-open aria-controls="resetEnrollmentConfirm" aria-expanded="false">Reset</button>
+              </div>
+              <form id="resetEnrollmentConfirm" class="typed-confirm" hidden data-phrase="RESET" data-method="POST" data-path="/api/enrollment/reset" data-success="Enrollment feature windows removed. Monitoring windows were kept.">
+                <label for="resetEnrollmentInput">Type RESET to confirm
+                  <input id="resetEnrollmentInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
+                </label>
+                <div class="typed-confirm-actions">
+                  <button class="button danger-button" type="submit" disabled>Reset enrollment</button>
+                  <button class="button secondary-button typed-cancel" type="button">Cancel</button>
+                </div>
+              </form>
+            </div>
+            <div class="data-action">
+              <div class="data-action-row">
+                <div><strong>Deactivate model</strong><p>Confirms that no trained model is stored or left active in this prototype.</p></div>
+                <button id="deactivateModel" class="button danger-button" type="button" data-danger-open aria-controls="deactivateModelConfirm" aria-expanded="false">Deactivate</button>
+              </div>
+              <form id="deactivateModelConfirm" class="typed-confirm" hidden data-phrase="DEACTIVATE" data-method="POST" data-path="/api/model/deactivate" data-success="No model is stored in this prototype. Nothing remains active.">
+                <label for="deactivateModelInput">Type DEACTIVATE to confirm
+                  <input id="deactivateModelInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
+                </label>
+                <div class="typed-confirm-actions">
+                  <button class="button danger-button" type="submit" disabled>Deactivate model</button>
+                  <button class="button secondary-button typed-cancel" type="button">Cancel</button>
+                </div>
+              </form>
+            </div>
+            <div class="data-action">
+              <div class="data-action-row">
+                <div><strong>Delete account</strong><p>Account deletion will be available after Better Auth and user-scoped storage are connected.</p></div>
+                <button class="button disabled-button" type="button" disabled aria-describedby="accountDeleteHelp">Unavailable</button>
+              </div>
             </div>
             <p id="accountDeleteHelp" class="dashboard-footnote">Account deletion is disabled; there is no authenticated account or account data connected here.</p>
             <p id="dataActionStatus" class="action-status" role="status" aria-live="polite"></p>

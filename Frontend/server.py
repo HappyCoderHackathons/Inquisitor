@@ -184,12 +184,40 @@ def delete_samples():
     return jsonify(ok=True)
 
 
+def confirmation_rejected(phrase: str):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {"confirmation"} or data.get("confirmation") != phrase:
+        return jsonify(error=f"Type {phrase} to confirm this action"), 400
+    return None
+
+
 @app.delete("/api/local-data")
 def delete_local_data():
+    rejected = confirmation_rejected("DELETE")
+    if rejected:
+        return rejected
     with db() as conn:
         conn.execute("DELETE FROM samples")
         conn.execute("DELETE FROM feature_windows")
     return jsonify(ok=True)
+
+
+@app.post("/api/enrollment/reset")
+def reset_enrollment():
+    rejected = confirmation_rejected("RESET")
+    if rejected:
+        return rejected
+    with db() as conn:
+        deleted = conn.execute("DELETE FROM feature_windows WHERE mode = 'enrollment'").rowcount
+    return jsonify(ok=True, deleted=deleted)
+
+
+@app.post("/api/model/deactivate")
+def deactivate_model():
+    rejected = confirmation_rejected("DEACTIVATE")
+    if rejected:
+        return rejected
+    return jsonify(ok=True, active=False, stored=False)
 
 
 def onboarding_window_error(window: dict[str, object]) -> str | None:
