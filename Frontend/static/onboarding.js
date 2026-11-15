@@ -19,7 +19,7 @@
   var signingUp = false;
   var agentOffline = true;
   var wizardStep = 0;
-  var wizardSteps = ["warmup", "typing", "activity", "train"];
+  var wizardSteps = ["warmup", "activity", "train"];
   function showWizard(index, announce = false) {
     if (agentOffline && index > 0) {
       if (announce) {

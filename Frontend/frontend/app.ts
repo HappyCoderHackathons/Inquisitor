@@ -52,10 +52,12 @@ function trapGameFocus(event: KeyboardEvent) {
   }
 }
 overlay.addEventListener("keydown", trapGameFocus);
+// Matches the server's GAME_SECONDS: one round covers a game's required onboarding time.
+const ROUND_SECONDS = 150;
 let active: GameId | null = null,
   sprint = false,
   running = false,
-  remaining = 60,
+  remaining = ROUND_SECONDS,
   score = 0,
   tick = 0,
   timerId = 0,
@@ -169,7 +171,7 @@ function openGame(id: GameId, isSprint = false) {
   active = id;
   sprint = isSprint;
   running = false;
-  remaining = 60;
+  remaining = ROUND_SECONDS;
   score = 0;
   intervals = [];
   holds = [];
@@ -183,7 +185,7 @@ function openGame(id: GameId, isSprint = false) {
   const m = modes.find((x) => x.id === id)!;
   $("#modalMode").textContent = isSprint ? "Sprint" : "";
   $("#modalTitle").textContent = m.name;
-  $("#gameTimer").textContent = "60";
+  $("#gameTimer").textContent = String(ROUND_SECONDS);
   $("#gameScore").textContent = "0";
   $("#gameInstruction").textContent = instruction(id);
   $("#gameHint").textContent = isSprint ? "Next game starts automatically · Esc to close" : "Esc to close";
@@ -259,7 +261,7 @@ function start() {
   clearInterval(gravityTimerId);
   cancelAnimationFrame(animation);
   running = true;
-  remaining = 60;
+  remaining = ROUND_SECONDS;
   score = 0;
   tick = Date.now();
   intervals = [];
@@ -270,7 +272,7 @@ function start() {
   linesCleared = 0;
   arenaKeys.clear();
   if (active === "typing") wordDeck = shuffleWords(wordDeck);
-  $("#gameTimer").textContent = "60";
+  $("#gameTimer").textContent = String(ROUND_SECONDS);
   $("#gameScore").textContent = "0";
   $("#startGame").classList.add("hidden");
   stage.focus();

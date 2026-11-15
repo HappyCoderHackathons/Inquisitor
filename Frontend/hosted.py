@@ -54,7 +54,8 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 GAMES = ("aim", "tetris", "typing", "arena")
 GAME_SECONDS = 150
-ROUND_MS = 60_000
+# One round covers a game's required time, so its latest round gives enough calibration windows.
+ROUND_MS = GAME_SECONDS * 1000
 MIN_TRAINING_WINDOWS = 20
 MIN_VALIDATION_WINDOWS = 10
 REQUIRED_WINDOWS = MIN_TRAINING_WINDOWS + MIN_VALIDATION_WINDOWS

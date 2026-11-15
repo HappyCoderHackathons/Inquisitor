@@ -404,7 +404,7 @@ class OnboardingTests(unittest.TestCase):
             upload = self.client.post("/api/agent/windows", headers=agent,
                                       json=window(device_id, session_id, sequence, key_count))
             self.assertEqual(upload.status_code, 201, upload.get_json())
-        self.clock += timedelta(seconds=61)
+        self.clock += timedelta(seconds=hosted.GAME_SECONDS + 1)
         return session_id, self.client.post("/api/onboarding/rounds/current/finish", json={}).get_json()
 
     def enroll(self, device_id, agent):
@@ -587,7 +587,8 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(first_session["device_id"], device_id)
         self.assertEqual(first_session["status"], "completed")
         self.assertEqual(first_session["valid_window_count"], 4)
-        self.assertEqual(status["seconds"]["typing"], 120)
+        # Each round is capped at one game's required time.
+        self.assertEqual(status["seconds"]["typing"], 2 * hosted.GAME_SECONDS)
         self.assertEqual(status["validation_sessions"], [latest])
         self.assertEqual((status["training_windows"], status["validation_windows"]), (4, 4))
         cancelled_session_id = self.client.post("/api/onboarding/rounds", json={"game": "aim"}).get_json()["session_id"]
@@ -1041,18 +1042,16 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(dashboard.status_code, 200)
         self.assertIn("Your dashboard", dashboard.get_data(as_text=True))
 
-    def test_enrollment_wizard_explains_collection_and_keeps_practice_text_local(self):
+    def test_enrollment_wizard_explains_collection(self):
         unsigned = self.client.get("/onboarding").get_data(as_text=True)
         self.assertNotIn("practiceText", unsigned)
         self.sign_in()
         page = self.client.get("/onboarding").get_data(as_text=True)
-        for label in ("Warm-up", "Typing Sample", "Natural Activity", "Train Model"):
+        for label in ("Warm-up", "Natural Activity", "Train Model"):
             self.assertIn(label, page)
         self.assertIn("What is collected", page)
         self.assertIn("What is not collected", page)
-        self.assertIn('id="practiceText"', page)
-        self.assertNotIn('name="practiceText"', page)
-        self.assertNotIn("<form", page[page.index('id="practiceText"') : page.index('id="enrollmentProgress"')])
+        self.assertNotIn("Typing Sample", page)
         self.assertIn('id="enrollmentProgress"', page)
         self.assertIn('id="pauseEnrollment"', page)
         self.assertIn('id="resumeEnrollment"', page)
@@ -1103,7 +1102,7 @@ class OnboardingTests(unittest.TestCase):
         finished = self.client.post("/api/onboarding/finish", json={})
         self.assertEqual(finished.status_code, 200)
         self.assertEqual(finished.get_json()["collection"], "finished")
-        self.assertEqual(finished.get_json()["duration_seconds"], 60)
+        self.assertEqual(finished.get_json()["duration_seconds"], 91)
         self.assertEqual(finished.get_json()["usable_windows"], 1)
         self.assertEqual(
             self.client.post("/api/agent/windows", headers=agent, json=window(device_id, session_id, 2)).status_code,
