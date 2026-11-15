@@ -29,16 +29,34 @@ def window(device_id, session_id, sequence, key_count=40):
     }
 
 
+class SyncThread:
+    def __init__(self, target, daemon):
+        self.target = target
+
+    def start(self):
+        self.target()
+
+
 class OnboardingTests(unittest.TestCase):
     def setUp(self):
         self.clock = datetime.now(timezone.utc)
-        patcher = patch("hosted.now", lambda: self.clock)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for target, value in (("hosted.now", lambda: self.clock), ("hosted.threading.Thread", SyncThread)):
+            patcher = patch(target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.database = mongomock.MongoClient(tz_aware=True).db
+        self.trained = []
+        self.training_error = None
+
+        def trainer(user_id, device_id, windows, validation_sessions):
+            self.trained.append((user_id, device_id, windows, validation_sessions))
+            if self.training_error:
+                raise self.training_error
+            return "model-1"
+
         app = Flask(__name__, template_folder=str(Path(server.__file__).parent / "templates"))
         with patch.dict(os.environ, ENV):
-            hosted.register(app, self.database, server.onboarding_window_error)
+            hosted.register(app, self.database, trainer, server.onboarding_window_error)
         self.client = app.test_client()
 
     def sign_in(self, user_id="user-a"):
@@ -111,6 +129,41 @@ class OnboardingTests(unittest.TestCase):
         cancelled = self.client.post("/api/onboarding/rounds/current/cancel", json={}).get_json()
         self.assertEqual(cancelled["seconds"]["aim"], 0)
         self.assertFalse(cancelled["ready_to_train"])
+
+    def test_ten_minutes_of_games_trains_and_activates_model(self):
+        device_id, agent = self.pair()
+        latest = {}
+        for index in range(3):
+            if index < 2:
+                self.play("aim", [0], device_id, agent)
+            for game in ("tetris", "typing", "arena"):
+                latest[game], status = self.play(game, [40] * 4, device_id, agent)
+                self.assertEqual(status["state"], "collecting")
+        cancelled = self.client.post("/api/onboarding/rounds", json={"game": "typing"}).get_json()["session_id"]
+        self.client.post("/api/agent/windows", headers=agent, json=window(device_id, cancelled, 0))
+        self.client.post("/api/onboarding/rounds/current/cancel", json={})
+        self.assertEqual(self.trained, [])
+        self.clock += timedelta(seconds=1)
+        _, status = self.play("aim", [0], device_id, agent)
+        self.assertEqual(status["state"], "ready")
+        self.assertEqual(status["model_id"], "model-1")
+        user_id, trained_device, windows, validation = self.trained[0]
+        self.assertEqual((user_id, trained_device), ("user-a", device_id))
+        self.assertEqual(sorted(validation), sorted(latest.values()))
+        self.assertEqual(len(windows), 36)
+        self.assertNotIn(cancelled, {item["session_id"] for item in windows})
+        self.assertTrue(all(item["features"]["key_count"] >= 30 for item in windows))
+        self.assertEqual(self.client.post("/api/onboarding/rounds", json={"game": "aim"}).status_code, 409)
+
+    def test_training_failure_is_reported(self):
+        self.training_error = RuntimeError("model service returned 422: all training features are constant")
+        device_id, agent = self.pair()
+        for _ in range(3):
+            for game in ("aim", "tetris", "typing", "arena"):
+                _, status = self.play(game, [40] * 4, device_id, agent)
+        self.assertEqual(status["state"], "failed")
+        self.assertIn("all training features are constant", status["error"])
+        self.assertEqual(len(self.trained), 1)
 
     def test_partial_configuration_fails_loudly(self):
         with patch.dict(os.environ, {"SSOJET_AUTHORITY": "https://sso.example.test"}, clear=True):

@@ -1,9 +1,13 @@
-"""Hosted onboarding: SSOJet sign-in, agent pairing, and game-round collection in Atlas."""
+"""Hosted onboarding: SSOJet sign-in, agent pairing, game-round collection in Atlas, and model training."""
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import secrets
+import threading
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -24,10 +28,11 @@ PAIRING_TTL = timedelta(minutes=10)
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ENV = (
     "SSOJET_AUTHORITY", "SSOJET_CLIENT_ID", "SSOJET_CLIENT_SECRET", "SSOJET_REDIRECT_URI",
-    "SESSION_SECRET", "MONGODB_URI", "MONGODB_DB",
+    "SESSION_SECRET", "MONGODB_URI", "MONGODB_DB", "ML_SERVICE_URL", "ML_TOKEN_FILE",
 )
 
 Document = dict[str, Any]
+Trainer = Callable[[str, str, list[Document], list[str]], str]
 
 
 def configured() -> bool:
@@ -44,6 +49,31 @@ def digest(value: str) -> str:
 
 def now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def ml_trainer(base_url: str, token: str) -> Trainer:
+    def call(method: str, path: str, user_id: str, device_id: str, body: object | None = None) -> Document:
+        request_ = urllib.request.Request(
+            base_url.rstrip("/") + path, method=method,
+            data=None if body is None else json.dumps(body, allow_nan=False).encode(),
+            headers={"Authorization": f"Bearer {token}", "X-User-ID": user_id, "X-Device-ID": device_id,
+                     "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request_, timeout=120) as response:
+                return cast(Document, json.load(response))
+        except urllib.error.HTTPError as error:
+            message = json.loads(error.read() or b"{}").get("error", "model service error")
+            raise RuntimeError(f"model service returned {error.code}: {message}") from None
+
+    def train(user_id: str, device_id: str, windows: list[Document], validation_sessions: list[str]) -> str:
+        metadata = call("POST", "/models/train", user_id, device_id,
+                        {"windows": windows, "validation_session_ids": validation_sessions})
+        model_id = cast(str, metadata["model_id"])
+        call("PUT", f"/models/{model_id}/active", user_id, device_id)
+        return model_id
+
+    return train
 
 
 def progress(database: Database, onboarding: Document) -> Document:
@@ -68,7 +98,7 @@ def progress(database: Database, onboarding: Document) -> Document:
     }
 
 
-def register(app: Flask, database: Database, window_error: Callable[[Document], str | None]) -> None:
+def register(app: Flask, database: Database, trainer: Trainer, window_error: Callable[[Document], str | None]) -> None:
     from authlib.integrations.flask_client import OAuth
 
     app.secret_key = os.environ["SESSION_SECRET"]
@@ -89,6 +119,29 @@ def register(app: Flask, database: Database, window_error: Callable[[Document], 
         [("device_id", ASCENDING), ("session_id", ASCENDING), ("sequence", ASCENDING)], unique=True
     )
     blueprint = Blueprint("hosted", __name__)
+
+    def start_training(onboarding: Document, status: Document) -> None:
+        claimed = database.onboarding.find_one_and_update(
+            {"_id": onboarding["_id"], "state": "collecting"}, {"$set": {"state": "training", "error": None}}
+        )
+        if claimed is None:
+            return
+        windows = [item["window"] for item in database.windows.find(
+            {"onboarding_id": onboarding["_id"], "usable": True, "session_id": {"$in": status["sessions"]}},
+            {"_id": 0, "window": 1},
+        )]
+
+        def run() -> None:
+            try:
+                model_id = trainer(onboarding["user_id"], onboarding["device_id"], windows,
+                                   status["validation_sessions"])
+                update = {"state": "ready", "model_id": model_id, "completed_at": now()}
+            except (RuntimeError, OSError, KeyError, ValueError) as error:
+                update = {"state": "failed", "error": str(error)}
+            database.onboarding.update_one({"_id": onboarding["_id"]}, {"$set": update})
+
+        # shortcut: in-process thread loses the job on restart; move to a job queue if training gets slow.
+        threading.Thread(target=run, daemon=True).start()
 
     def current_user() -> str:
         user_id = session.get("user_id")
@@ -193,7 +246,11 @@ def register(app: Flask, database: Database, window_error: Callable[[Document], 
         started = cast(datetime, active["started_at"]).replace(tzinfo=timezone.utc)
         credited = min(int((ended - started).total_seconds() * 1000), ROUND_MS) if outcome == "finish" else 0
         database.rounds.update_one({"_id": active["_id"]}, {"$set": {"ended_at": ended, "credited_ms": credited}})
-        return jsonify(progress(database, onboarding))
+        status = progress(database, onboarding)
+        if status["ready_to_train"]:
+            start_training(onboarding, status)
+            status = progress(database, user_onboarding(onboarding["user_id"]))
+        return jsonify(status)
 
     @blueprint.post("/api/agent/pair")
     def pair():

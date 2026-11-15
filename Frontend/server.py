@@ -202,6 +202,7 @@ if hosted.configured():
     hosted.register(
         app,
         MongoClient(os.environ["MONGODB_URI"], tz_aware=True)[os.environ["MONGODB_DB"]],
+        hosted.ml_trainer(os.environ["ML_SERVICE_URL"], Path(os.environ["ML_TOKEN_FILE"]).read_text().strip()),
         onboarding_window_error,
     )
 
