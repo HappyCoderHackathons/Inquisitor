@@ -224,6 +224,27 @@ class ModelServiceTests(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/models/{model_id}", headers=self.headers).status_code, 204)
         self.assertEqual(self.client.get("/models/active", headers=self.headers).status_code, 404)
 
+    def test_each_device_of_one_user_keeps_an_independent_model(self) -> None:
+        laptop, desktop = "0" * 31 + "1", "0" * 31 + "2"
+        for model_id, device_id in ((laptop, "synthetic-device"), (desktop, "second-device")):
+            model_dir = Path(self.temporary.name) / "models" / model_id
+            model_dir.mkdir(parents=True)
+            (model_dir / "metadata.json").write_text(json.dumps(
+                {"model_id": model_id, "user_id": "synthetic-user", "device_id": device_id}), encoding="utf-8")
+        second = {**self.headers, "X-Device-ID": "second-device"}
+        window = generate_windows(49, 1)[0] | {"device_id": "second-device", "mode": "monitoring"}
+        self.assertEqual(self.client.put(f"/models/{laptop}/active", headers=self.headers).status_code, 200)
+        self.assertEqual(self.client.get("/models/active", headers=second).status_code, 404)
+        self.assertEqual(self.client.get(f"/models/{laptop}", headers=second).status_code, 403)
+        self.assertEqual(self.client.put(f"/models/{laptop}/active", headers=second).status_code, 403)
+        score = self.client.post(f"/models/{laptop}/score", headers=second, json={"window": window})
+        self.assertEqual(score.status_code, 403)
+        self.assertEqual(self.client.put(f"/models/{desktop}/active", headers=second).status_code, 200)
+        self.assertEqual(self.client.get("/models/active", headers=self.headers).json["model_id"], laptop)
+        self.assertEqual(self.client.get("/models/active", headers=second).json["model_id"], desktop)
+        self.assertEqual(self.client.delete(f"/models/{desktop}", headers=second).status_code, 204)
+        self.assertEqual(self.client.get("/models/active", headers=self.headers).json["model_id"], laptop)
+
     def test_published_artifact_validation_and_portable_hash(self) -> None:
         artifact = Path(__file__).resolve().parents[1] / "archive_models/labeled-overlap-v1.json"
         original = PublishedModel(artifact)
