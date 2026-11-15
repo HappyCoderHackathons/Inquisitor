@@ -1,7 +1,8 @@
 //! "Connect to your account" dialog.
 //!
-//! The user creates a pairing code on the website (Setup page) and types it here
-//! with the website's address. The code is checked against the server's format
+//! The user creates a pairing code on the website (Setup page) and types it here.
+//! The website is the hosted Inquisitor site unless one was remembered or
+//! `INQUISITOR_SERVER` overrides it for local testing. The code is checked against the server's format
 //! before anything is sent, then redeemed on a worker thread so the tray stays
 //! responsive. On success the device credential is saved (encrypted, see
 //! `credential.rs`) and the tray is told through `WM_PAIRED`.
@@ -43,8 +44,10 @@ const CLASS: PCWSTR = w!("InquisitorPairWnd");
 // IDOK and IDCANCEL, so Enter and Escape work through IsDialogMessage.
 const ID_CONNECT: u16 = 1;
 const ID_CANCEL: u16 = 2;
-const ID_URL: u16 = 10;
 const ID_CODE: u16 = 11;
+
+/// The hosted website the agent pairs with by default.
+pub const DEFAULT_SERVER: &str = "https://inquisitor-web.fly.dev";
 
 const SS_NOPREFIX: u32 = 0x0080;
 const ES_AUTOHSCROLL: u32 = 0x0080;
@@ -52,9 +55,9 @@ const ES_UPPERCASE: u32 = 0x0008;
 
 // Client area in 96-DPI layout units.
 const WIDTH: i32 = 460;
-const HEIGHT: i32 = 330;
+const HEIGHT: i32 = 270;
 
-const HINT: &str = "Sign in on the website, open Setup, and create a pairing code. \
+const HINT: &str = "Sign in on the Inquisitor website, open Setup, and create a pairing code. \
                     A code works once and expires after 10 minutes.";
 
 static OPEN: AtomicIsize = AtomicIsize::new(0);
@@ -69,8 +72,7 @@ struct PairState {
     title_font: HFONT,
     title: HWND,
     hint: HWND,
-    url_label: HWND,
-    url: HWND,
+    server: String,
     code_label: HWND,
     code: HWND,
     message: HWND,
@@ -150,8 +152,10 @@ pub fn open(tray: HWND, server_url: Option<&str>) {
         title_font: HFONT::default(),
         title: child(w!("STATIC"), "Connect to your account", SS_NOPREFIX, 0),
         hint: child(w!("STATIC"), HINT, SS_NOPREFIX, 0),
-        url_label: child(w!("STATIC"), "Website address", SS_NOPREFIX, 0),
-        url: child(w!("EDIT"), server_url.unwrap_or("https://"), field, ID_URL),
+        server: std::env::var("INQUISITOR_SERVER")
+            .ok()
+            .or_else(|| server_url.map(str::to_string))
+            .unwrap_or_else(|| DEFAULT_SERVER.to_string()),
         code_label: child(w!("STATIC"), "Pairing code", SS_NOPREFIX, 0),
         code: child(w!("EDIT"), "", field | ES_UPPERCASE, ID_CODE),
         message: child(w!("STATIC"), "", SS_NOPREFIX, 0),
@@ -189,12 +193,7 @@ pub fn open(tray: HWND, server_url: Option<&str>) {
     unsafe {
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = SetForegroundWindow(hwnd);
-        // Start where the user has to type: the code when the address is known.
-        let _ = SetFocus(Some(if server_url.is_some() {
-            st.code
-        } else {
-            st.url
-        }));
+        let _ = SetFocus(Some(st.code));
     }
 }
 
@@ -231,8 +230,6 @@ fn apply_fonts(st: &mut PairState) {
     set(st.title, st.title_font);
     for h in [
         st.hint,
-        st.url_label,
-        st.url,
         st.code_label,
         st.code,
         st.message,
@@ -251,11 +248,9 @@ fn layout(st: &PairState) {
     unsafe {
         let _ = MoveWindow(st.title, m, m, inner, s(32), true);
         let _ = MoveWindow(st.hint, m, s(60), inner, s(40), true);
-        let _ = MoveWindow(st.url_label, m, s(110), inner, s(20), true);
-        let _ = MoveWindow(st.url, m, s(132), inner, s(28), true);
-        let _ = MoveWindow(st.code_label, m, s(170), inner, s(20), true);
-        let _ = MoveWindow(st.code, m, s(192), s(160), s(28), true);
-        let _ = MoveWindow(st.message, m, s(228), inner, s(36), true);
+        let _ = MoveWindow(st.code_label, m, s(110), inner, s(20), true);
+        let _ = MoveWindow(st.code, m, s(132), s(160), s(28), true);
+        let _ = MoveWindow(st.message, m, s(168), inner, s(36), true);
         let (bw, bh, gap) = (s(100), s(32), s(8));
         let _ = MoveWindow(st.cancel, w - m - bw, h - m - bh, bw, bh, true);
         let _ = MoveWindow(st.connect, w - m - 2 * bw - gap, h - m - bh, bw, bh, true);
@@ -280,7 +275,7 @@ fn set_text(hwnd: HWND, value: &str) {
 
 fn busy(st: &PairState, busy: bool) {
     unsafe {
-        for h in [st.url, st.code, st.connect] {
+        for h in [st.code, st.connect] {
             let _ = EnableWindow(h, !busy);
         }
     }
@@ -288,7 +283,7 @@ fn busy(st: &PairState, busy: bool) {
 
 /// Validate the fields, then redeem the code on a worker thread.
 fn connect(hwnd: HWND, st: &mut PairState) {
-    let endpoint = match Endpoint::parse(&text(st.url)) {
+    let endpoint = match Endpoint::parse(&st.server) {
         Ok(endpoint) => endpoint,
         Err(e) => return set_text(st.message, &e),
     };

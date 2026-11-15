@@ -185,8 +185,9 @@ client: Not connected, Connecting, Connected (enrolling or monitoring),
 Offline, or Disconnected.
 
 1. **Pairing.** On the website, sign in, open Setup, and create a pairing
-   code. In the tray choose **Connect to account...**, enter the website
-   address and the 8-character code.
+   code. In the tray choose **Connect to account...** and enter the 8-character
+   code. The agent pairs with `https://inquisitor-web.fly.dev`, or the address
+   remembered in `config.ini`, or `INQUISITOR_SERVER` when set (local testing).
    - The code is checked against the server's alphabet before it is sent,
      then redeemed at `POST /api/agent/pair`.
    - The device token the website returns is saved in
