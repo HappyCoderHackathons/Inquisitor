@@ -1,0 +1,177 @@
+{
+ "total": 172.182,
+ "scenes": [
+  {
+   "name": "title",
+   "start": 0.0,
+   "duration": 3.5
+  },
+  {
+   "name": "team",
+   "start": 3.5,
+   "duration": 19.186
+  },
+  {
+   "name": "landing",
+   "start": 22.686,
+   "duration": 12.624
+  },
+  {
+   "name": "privacy",
+   "start": 35.31,
+   "duration": 14.16
+  },
+  {
+   "name": "agent_setup",
+   "start": 49.47,
+   "duration": 13.6
+  },
+  {
+   "name": "signup",
+   "start": 63.07,
+   "duration": 8
+  },
+  {
+   "name": "agent_pair",
+   "start": 71.07,
+   "duration": 12.9
+  },
+  {
+   "name": "game",
+   "start": 83.97,
+   "duration": 8.64
+  },
+  {
+   "name": "train",
+   "start": 92.61,
+   "duration": 16.894
+  },
+  {
+   "name": "dashboard",
+   "start": 109.504,
+   "duration": 12.754
+  },
+  {
+   "name": "demo_switch",
+   "start": 122.258,
+   "duration": 13.38
+  },
+  {
+   "name": "alert",
+   "start": 135.638,
+   "duration": 12.28
+  },
+  {
+   "name": "gemini",
+   "start": 147.918,
+   "duration": 12.484
+  },
+  {
+   "name": "devices",
+   "start": 160.402,
+   "duration": 5.78
+  },
+  {
+   "name": "end",
+   "start": 166.182,
+   "duration": 6.0
+  }
+ ],
+ "cues": [
+  {
+   "id": "c01_title",
+   "start": 0.4,
+   "duration": 2.014
+  },
+  {
+   "id": "c02_austin",
+   "start": 3.9,
+   "duration": 3.798
+  },
+  {
+   "id": "c03_ian",
+   "start": 8.098,
+   "duration": 4.8
+  },
+  {
+   "id": "c04_conner",
+   "start": 13.298,
+   "duration": 4.24
+  },
+  {
+   "id": "c05_colin",
+   "start": 17.938,
+   "duration": 4.048
+  },
+  {
+   "id": "c06_problem",
+   "start": 23.086,
+   "duration": 10.324
+  },
+  {
+   "id": "c07_privacy",
+   "start": 35.71,
+   "duration": 13.06
+  },
+  {
+   "id": "c08_agent",
+   "start": 49.87,
+   "duration": 11.88
+  },
+  {
+   "id": "c09_signup",
+   "start": 63.47,
+   "duration": 4.72
+  },
+  {
+   "id": "c10_pair",
+   "start": 71.47,
+   "duration": 10.84
+  },
+  {
+   "id": "c11_games",
+   "start": 84.37,
+   "duration": 6.34
+  },
+  {
+   "id": "c12_rounds",
+   "start": 93.01,
+   "duration": 6.896
+  },
+  {
+   "id": "c13_train",
+   "start": 100.306,
+   "duration": 8.498
+  },
+  {
+   "id": "c14_monitor",
+   "start": 109.904,
+   "duration": 10.454
+  },
+  {
+   "id": "c15_switch",
+   "start": 122.658,
+   "duration": 11.08
+  },
+  {
+   "id": "c16_alert",
+   "start": 136.038,
+   "duration": 11.18
+  },
+  {
+   "id": "c16b_gemini",
+   "start": 148.318,
+   "duration": 11.384
+  },
+  {
+   "id": "c17_devices",
+   "start": 160.802,
+   "duration": 4.68
+  },
+  {
+   "id": "c18_end",
+   "start": 166.582,
+   "duration": 1.902
+  }
+ ]
+}

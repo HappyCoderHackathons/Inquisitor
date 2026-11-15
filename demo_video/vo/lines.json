@@ -1,0 +1,116 @@
+[
+ {
+  "id": "c01_title",
+  "scene": "title",
+  "speaker": "Austin",
+  "text": "Hi, this is Inquisitor."
+ },
+ {
+  "id": "c02_austin",
+  "scene": "team",
+  "speaker": "Austin",
+  "text": "I'm Austin Sternberg. I built the model service and tied the system together."
+ },
+ {
+  "id": "c03_ian",
+  "scene": "team",
+  "speaker": "Ian",
+  "text": "Hi, I'm Ian Rohrbacher. I built the Windows agent in Rust."
+ },
+ {
+  "id": "c04_conner",
+  "scene": "team",
+  "speaker": "Conner",
+  "text": "I'm Conner Brunner. I built the website, the games, and the dashboard."
+ },
+ {
+  "id": "c05_colin",
+  "scene": "team",
+  "speaker": "Colin",
+  "text": "And I'm Colin Grant. I built the backend data model and its API."
+ },
+ {
+  "id": "c06_problem",
+  "scene": "landing",
+  "speaker": "Austin",
+  "text": "The password is checked once. If someone sits down after you unlock your PC, nothing notices. Inquisitor keeps checking whether the keyboard and mouse rhythm still looks like the person who enrolled."
+ },
+ {
+  "id": "c07_privacy",
+  "scene": "privacy",
+  "speaker": "Conner",
+  "text": "It works on timing, not content. Every thirty seconds, the agent sends counts, averages, and spreads. Never which keys, never what you typed, and never what's on screen. The privacy page lists every field."
+ },
+ {
+  "id": "c08_agent",
+  "scene": "agent_setup",
+  "speaker": "Ian",
+  "text": "The agent is a native Windows app written in Rust. Before anything is collected, it shows what is recorded and what it never collects. It installs for one user without the need of admin rights."
+ },
+ {
+  "id": "c09_signup",
+  "scene": "signup",
+  "speaker": "Conner",
+  "text": "On the website, you create an account and get a one-time pairing code."
+ },
+ {
+  "id": "c10_pair",
+  "scene": "agent_pair",
+  "speaker": "Ian",
+  "text": "You enter that code in the agent. It gets its own revocable device credential, never your password, and it only connects outwards, so nothing reaches inside your PC."
+ },
+ {
+  "id": "c11_games",
+  "scene": "game",
+  "speaker": "Conner",
+  "text": "Enrollment runs through short calibration games. While you play, the agent sends timing windows for the round."
+ },
+ {
+  "id": "c12_rounds",
+  "scene": "train",
+  "speaker": "Colin",
+  "text": "The backend tracks every round and counts the usable windows. Once there are enough for training and calibration, you can train your model."
+ },
+ {
+  "id": "c13_train",
+  "scene": "train",
+  "speaker": "Austin",
+  "text": "Training runs on a separate, private model service. For this account, it fits an Isolation Forest and sets a threshold from the latest rounds."
+ },
+ {
+  "id": "c14_monitor",
+  "scene": "dashboard",
+  "speaker": "Austin",
+  "text": "Now it's monitoring. For this recording, a script sends synthetic windows through the same agent API. Each window is scored against the threshold, and below the line, the status stays normal."
+ },
+ {
+  "id": "c15_switch",
+  "scene": "demo_switch",
+  "speaker": "Conner",
+  "text": "This is the judge view. We mark the moment a second person takes over. Their windows score above the threshold, and a few seconds later the account shows Needs verification."
+ },
+ {
+  "id": "c16_alert",
+  "scene": "alert",
+  "speaker": "Colin",
+  "text": "An alert opens when three of the last four windows are unusual, so one odd window isn't enough. It's a signal to check, not proof of who's typing, and Inquisitor never locks the PC."
+ },
+ {
+  "id": "c16b_gemini",
+  "scene": "gemini",
+  "speaker": "Austin",
+  "text": "When an alert opens, Gemini suggests a few things to check, like who had access to the PC or a new keyboard. It only gets aggregate scores and feature names, never keystrokes or what's on screen."
+ },
+ {
+  "id": "c17_devices",
+  "scene": "devices",
+  "speaker": "Colin",
+  "text": "You can revoke a device at any time, and delete your data and models from your account."
+ },
+ {
+  "id": "c18_end",
+  "scene": "end",
+  "speaker": "Austin",
+  "text": "That's Inquisitor. Thanks for watching."
+ }
+]
