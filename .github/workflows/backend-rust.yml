@@ -6,11 +6,13 @@ on:
     paths:
       - 'backend/rust/**'
       - 'docs/icons/png/**'
+      - 'shared/fixtures/**'
       - '.github/workflows/backend-rust.yml'
   pull_request:
     paths:
       - 'backend/rust/**'
       - 'docs/icons/png/**'
+      - 'shared/fixtures/**'
       - '.github/workflows/backend-rust.yml'
   workflow_dispatch:
 

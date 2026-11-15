@@ -36,6 +36,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, w};
 
+use crate::features::{Row, Windower};
+
 // Mouse flag constants (not re-exported by the windows crate at every path).
 const RI_MOUSE_LEFT_BUTTON_DOWN: u16 = 0x0001;
 const RI_MOUSE_LEFT_BUTTON_UP: u16 = 0x0002;
@@ -130,6 +132,8 @@ pub struct Capture {
     writer: io::BufWriter<Box<dyn Write>>,
     /// Instance-level header flag so swapping the writer re-emits the header.
     header_written: bool,
+    /// Live aggregate windows for upload, fed from every written row.
+    windower: Option<Windower>,
 }
 
 impl Capture {
@@ -146,6 +150,7 @@ impl Capture {
             hid_prev: HashMap::new(),
             writer: io::BufWriter::new(writer),
             header_written: false,
+            windower: None,
         }
     }
 
@@ -249,21 +254,20 @@ impl Capture {
         id
     }
 
-    fn now_iso(&self) -> String {
-        // RFC3339-ish without a date crate: seconds since epoch with millis.
-        let d = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        let secs = d.as_secs();
-        let millis = d.subsec_millis();
-        // Compute Y-M-D h:m:s in UTC using a small civil-from-days calc.
-        let days = (secs / 86_400) as i64;
-        let tod = secs % 86_400;
-        let (y, m, d2) = civil_from_days(days);
-        let h = tod / 3600;
-        let mi = (tod % 3600) / 60;
-        let s = tod % 60;
-        format!("{y:04}-{m:02}-{d2:02}T{h:02}:{mi:02}:{s:02}.{millis:03}Z")
+    /// Attach (or detach) the live feature windower. Every row written to the CSV
+    /// is also fed to it, so the uploaded windows match what `tray_csv.py` would
+    /// compute from the same capture file.
+    pub fn set_windower(&mut self, windower: Option<Windower>) {
+        self.windower = windower;
+    }
+
+    pub fn windower_mut(&mut self) -> Option<&mut Windower> {
+        self.windower.as_mut()
+    }
+
+    /// Seconds since capture start, the CSV's `monotonic_s` clock.
+    pub fn monotonic_s(&self) -> f64 {
+        self.start.elapsed().as_secs_f64()
     }
 
     // One parameter per CSV column keeps every call site readable as a row.
@@ -284,8 +288,24 @@ impl Capture {
             let _ = writeln!(self.writer, "{CSV_HEADER}");
             self.header_written = true;
         }
-        let iso = self.now_iso();
+        let unix_ms = unix_ms_now();
+        let iso = iso_utc(unix_ms);
         let mono = self.start.elapsed().as_secs_f64();
+        if let Some(windower) = self.windower.as_mut() {
+            // Timing and motion only, the same values the CSV row carries.
+            windower.push(
+                &Row {
+                    monotonic_s: mono,
+                    io_type,
+                    device_id,
+                    event,
+                    hold_ms: hold_ms.map(|v| v as f64),
+                    dx,
+                    dy,
+                },
+                unix_ms,
+            );
+        }
         let hold = hold_ms.map(|v| v.to_string()).unwrap_or_default();
         let flight = flight_ms.map(|v| v.to_string()).unwrap_or_default();
         let dx = dx.map(|v| v.to_string()).unwrap_or_default();
@@ -815,6 +835,27 @@ pub fn open_timestamped_file(data_dir: &std::path::Path) -> (Box<dyn Write>, Pat
     (w, path)
 }
 
+pub(crate) fn unix_ms_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+/// `2026-11-15T03:13:19.875Z` for a Unix time in milliseconds. RFC 3339 without a
+/// date crate, using a small civil-from-days calculation.
+pub(crate) fn iso_utc(unix_ms: i64) -> String {
+    let secs = unix_ms.div_euclid(1000);
+    let millis = unix_ms.rem_euclid(1000);
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+    let (y, m, d) = civil_from_days(days);
+    let h = tod / 3600;
+    let mi = (tod % 3600) / 60;
+    let s = tod % 60;
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{millis:03}Z")
+}
+
 fn utc_timestamp_compact() -> String {
     let d = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1130,10 +1171,11 @@ mod tests {
 
     #[test]
     fn timestamps_have_the_documented_shape() {
-        let (cap, _) = capture();
-        let iso = cap.now_iso();
+        let iso = iso_utc(unix_ms_now());
         assert_eq!(iso.len(), "2026-11-15T03:13:19.875Z".len(), "{iso}");
         assert!(iso.ends_with('Z') && iso.as_bytes()[10] == b'T');
+        // 2026-01-01T00:00:00.250Z, also the parity fixture's first row.
+        assert_eq!(iso_utc(1_767_225_600_250), "2026-01-01T00:00:00.250Z");
 
         let compact = utc_timestamp_compact();
         assert_eq!(compact.len(), "20261115-031319Z".len(), "{compact}");

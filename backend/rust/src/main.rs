@@ -7,6 +7,7 @@ mod capture;
 mod config;
 mod devices;
 mod devices_window;
+mod features;
 mod folder_picker;
 mod icon;
 mod install;
