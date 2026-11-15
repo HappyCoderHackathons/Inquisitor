@@ -79,14 +79,14 @@ class SampleWindowsTests(unittest.TestCase):
             second = Path(directory) / "second.jsonl"
             command = [sys.executable, str(ROOT / "scripts" / "generate_sample_windows.py")]
             for output in (first, second):
-                result = subprocess.run(command + ["--output", str(output)], capture_output=True)
+                result = subprocess.run(command + ["--output", str(output)], capture_output=True, check=False)
                 self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(first.read_bytes(), second.read_bytes())
             original = first.read_bytes()
-            result = subprocess.run(command + ["--output", str(first)], capture_output=True)
+            result = subprocess.run(command + ["--output", str(first)], capture_output=True, check=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(first.read_bytes(), original)
-            result = subprocess.run(command + ["--count", "0", "--output", str(first)], capture_output=True)
+            result = subprocess.run(command + ["--count", "0", "--output", str(first)], capture_output=True, check=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(b"--count must be positive", result.stderr)
             self.assertEqual(first.read_bytes(), original)

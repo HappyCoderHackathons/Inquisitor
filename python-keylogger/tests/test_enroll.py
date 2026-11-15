@@ -1,10 +1,25 @@
 import json
 import unittest
 
-from keylogger.enroll import WindowAccumulator
+from jsonschema import Draft202012Validator, FormatChecker
+from keylogger.enroll import ROOT, WindowAccumulator
+
+VALIDATOR = Draft202012Validator(
+    json.loads((ROOT / "shared/feature-window-v1.schema.json").read_text(encoding="utf-8")),
+    format_checker=FormatChecker(),
+)
 
 
 class EnrollmentTests(unittest.TestCase):
+    def test_shared_schema_fixtures(self) -> None:
+        fixtures = json.loads((ROOT / "shared/fixtures/feature-window-v1.json").read_text(encoding="utf-8"))
+        for name, window in fixtures["valid"].items():
+            with self.subTest(name):
+                self.assertTrue(VALIDATOR.is_valid(window))
+        for name, window in fixtures["invalid"].items():
+            with self.subTest(name):
+                self.assertFalse(VALIDATOR.is_valid(window))
+
     def test_complete_window_ignores_repeat_and_keeps_only_aggregates(self) -> None:
         window = WindowAccumulator()
         window.release("unmatched", 0)
@@ -22,6 +37,7 @@ class EnrollmentTests(unittest.TestCase):
         self.assertAlmostEqual(payload["features"]["hold_mean_ms"], 180)
         self.assertEqual(window.held, {})
         self.assertNotIn("private-key", json.dumps(payload))
+        VALIDATOR.validate(payload)
 
     def test_incomplete_window_is_not_emitted(self) -> None:
         window = WindowAccumulator()
