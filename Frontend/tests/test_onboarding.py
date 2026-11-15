@@ -221,6 +221,24 @@ class OnboardingTests(unittest.TestCase):
             expected_heartbeat,
         )
 
+    def test_agent_heartbeat_stores_online_status_and_last_seen(self):
+        device_id, agent = self.pair()
+        self.assertEqual(self.client.post("/agent/heartbeat").status_code, 401)
+        self.assertEqual(
+            self.client.post("/api/agent/heartbeat", headers={"Authorization": "Bearer nope"}).status_code, 401,
+        )
+        self.clock += timedelta(seconds=1)
+        response = self.client.post("/agent/heartbeat", headers=agent)
+        expected_heartbeat = self.clock.replace(microsecond=(self.clock.microsecond // 1000) * 1000)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json(), {
+            "status": "online",
+            "last_seen": expected_heartbeat.isoformat(),
+        })
+        stored = self.database.devices.find_one({"_id": device_id})
+        self.assertEqual(stored["status"], "online")
+        self.assertEqual(stored["last_heartbeat_at"], expected_heartbeat)
+
     def play(self, game, windows, device_id, agent):
         session_id = self.client.post("/api/onboarding/rounds", json={"game": game}).get_json()["session_id"]
         self.assertEqual(self.client.get("/api/agent/onboarding", headers=agent).get_json()["session_id"], session_id)

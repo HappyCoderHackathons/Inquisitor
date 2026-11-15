@@ -684,7 +684,7 @@ def register(
                 "pairing_state": "paired",
                 "revoked_at": None,
             },
-            {"$set": {"last_heartbeat_at": now()}},
+            {"$set": {"status": "online", "last_heartbeat_at": now()}},
             return_document=ReturnDocument.AFTER,
         )
         if device is None:
@@ -1177,6 +1177,15 @@ def register(
         database.onboarding.insert_one({"_id": uuid4().hex, "user_id": pairing["user_id"], "device_id": device_id,
                                         "state": "collecting", "created_at": now()})
         return jsonify(device_id=device_id, token=token), 201
+
+    @blueprint.post("/agent/heartbeat")
+    @blueprint.post("/api/agent/heartbeat")
+    def agent_heartbeat():
+        device = device_auth()
+        return jsonify(
+            status=device["status"],
+            last_seen=timestamp_text(device.get("last_heartbeat_at")),
+        )
 
     @blueprint.get("/api/agent/onboarding")
     def agent_onboarding():
