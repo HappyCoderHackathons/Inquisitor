@@ -182,18 +182,18 @@ pub struct Outbox {
 impl Outbox {
     /// Read held summaries back. Unreadable lines are skipped.
     pub fn load(path: PathBuf) -> Self {
-        let items = fs::read_to_string(&path)
+        let mut items: VecDeque<Held> = fs::read_to_string(&path)
             .map(|text| {
                 text.lines()
                     .filter_map(|line| serde_json::from_str(line).ok())
                     .collect()
             })
             .unwrap_or_default();
-        Self {
-            items,
-            path,
-            dirty: false,
+        let dirty = items.len() > OUTBOX_CAP;
+        while items.len() > OUTBOX_CAP {
+            items.pop_front();
         }
+        Self { items, path, dirty }
     }
 
     pub fn push(&mut self, item: Held) {
@@ -815,6 +815,28 @@ mod tests {
             std::env::temp_dir().join(format!("inquisitor-test-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn oversized_outbox_keeps_newest_entries_after_reload() {
+        let dir = temp_dir("outbox-cap");
+        let path = dir.join("outbox.jsonl");
+        fs::create_dir_all(&dir).unwrap();
+        let item = held(1, Purpose::Monitoring);
+        let line = serde_json::to_string(&item).unwrap() + "\n";
+        fs::write(&path, line.repeat(OUTBOX_CAP + 1)).unwrap();
+        let mut outbox = Outbox::load(path.clone());
+        assert_eq!(outbox.len(), OUTBOX_CAP);
+        outbox.push(held(2, Purpose::Monitoring));
+        assert_eq!(outbox.len(), OUTBOX_CAP);
+        outbox.save();
+        let reloaded = Outbox::load(path);
+        assert_eq!(reloaded.len(), OUTBOX_CAP);
+        assert_eq!(
+            reloaded.get(OUTBOX_CAP - 1).unwrap().window.started_unix_ms,
+            2
+        );
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
