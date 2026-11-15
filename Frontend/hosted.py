@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import queue
 import secrets
 import threading
 import urllib.error
@@ -26,12 +27,14 @@ from atlas_persistence import (
 from flask import (
     Blueprint,
     Flask,
+    Response,
     abort,
     g,
     jsonify,
     redirect,
     render_template,
     request,
+    stream_with_context,
     url_for,
 )
 from models import (
@@ -202,6 +205,39 @@ def verification_delay(
     return alert_before, None
 
 
+_listener_lock = threading.Lock()
+_listeners: dict[tuple[str, str], list[queue.Queue[Document]]] = {}
+
+
+def publish_monitoring(user_id: str, device_id: str, payload: Document) -> None:
+    with _listener_lock:
+        listeners = list(_listeners.get((user_id, device_id), ()))
+    for listener in listeners:
+        listener.put(payload)
+
+
+def listen_monitoring(user_id: str, device_id: str):
+    updates: queue.Queue[Document] = queue.Queue()
+    key = (user_id, device_id)
+    with _listener_lock:
+        _listeners.setdefault(key, []).append(updates)
+    try:
+        while True:
+            try:
+                yield updates.get(timeout=15)
+            except queue.Empty:
+                yield None
+    finally:
+        with _listener_lock:
+            current = _listeners.get(key, [])
+            if updates in current:
+                current.remove(updates)
+
+
+def monitoring_event(payload: Document) -> str:
+    return f"event: monitoring\ndata: {json.dumps(payload)}\n\n"
+
+
 def whole_count(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return None
@@ -264,10 +300,17 @@ def paired_count(metadata: Document, alerts_key: str, windows_key: str) -> tuple
     return alerts, windows
 
 
-def model_summary(database: Database, user_id: str) -> Document:
-    onboarding = database.onboarding.find_one({"user_id": user_id}, sort=[("created_at", -1)])
-    if onboarding is None:
-        return empty_model_summary()
+def model_summary(database: Database, user_id: str, device_id: str | None = None) -> Document:
+    if device_id is None:
+        onboarding = database.onboarding.find_one({"user_id": user_id}, sort=[("created_at", -1)])
+        if onboarding is None:
+            return empty_model_summary()
+    else:
+        onboarding = database.onboarding.find_one({"user_id": user_id, "device_id": device_id})
+        if onboarding is None:
+            device = database.devices.find_one({"_id": device_id, "user_id": user_id})
+            name = device.get("name") if device and isinstance(device.get("name"), str) else None
+            return empty_model_summary(device_id, name)
     device = database.devices.find_one({"_id": onboarding["device_id"], "user_id": user_id})
     device_name = device.get("name") if device and isinstance(device.get("name"), str) else None
     version = database.model_versions.find_one(
@@ -969,7 +1012,14 @@ def register(
 
     @blueprint.get("/api/model")
     def model_details():
-        return jsonify(model_summary(database, current_user()))
+        user_id = current_user()
+        device_id = request.args.get("device_id")
+        if device_id not in (None, ""):
+            if database.devices.find_one({"_id": device_id, "user_id": user_id}) is None:
+                abort(404)
+        else:
+            device_id = None
+        return jsonify(model_summary(database, user_id, device_id))
 
     @blueprint.post("/api/models/reset")
     def reset_model_enrollment():
@@ -1378,11 +1428,7 @@ def register(
             "acknowledged_at": timestamp_text(alert.get("acknowledged_at")),
         }
 
-    @blueprint.get("/monitoring/status")
-    @blueprint.get("/api/monitoring/status")
-    def monitoring_status():
-        user_id = current_user()
-        device = owned_device(user_id, request.args.get("device_id"))
+    def status_document(user_id: str, device: Document | None) -> Document:
         presence, stale = agent_state(device)
         latest = None
         if device is not None:
@@ -1391,17 +1437,51 @@ def register(
             )
         score = finite_number(latest.get("score")) if latest else None
         threshold = finite_number(latest.get("threshold")) if latest else None
-        return jsonify(
-            state=monitoring_state(user_id, device, presence),
-            window_state=latest.get("classification") if latest else None,
-            score=score,
-            threshold=threshold,
-            scored_at=timestamp_text(latest.get("created_at")) if latest else None,
-            agent=presence if device is not None else "offline",
-            last_seen=timestamp_text(device.get("last_heartbeat_at")) if device else None,
-            stale=stale if device is not None else True,
-            device_id=device["_id"] if device else None,
-            device_name=device.get("name") if device else None,
+        return {
+            "state": monitoring_state(user_id, device, presence),
+            "window_state": latest.get("classification") if latest else None,
+            "score": score,
+            "threshold": threshold,
+            "scored_at": timestamp_text(latest.get("created_at")) if latest else None,
+            "agent": presence if device is not None else "offline",
+            "last_seen": timestamp_text(device.get("last_heartbeat_at")) if device else None,
+            "stale": stale if device is not None else True,
+            "device_id": device["_id"] if device else None,
+            "device_name": device.get("name") if device else None,
+        }
+
+    def stream_payload(user_id: str, device: Document) -> Document:
+        payload = status_document(user_id, device)
+        payload["alerts"] = [
+            alert_payload(item) for item in database.alerts.find(
+                {"user_id": user_id, "device_id": device["_id"], "status": "open"},
+            ).sort("started_at", -1)
+        ]
+        return payload
+
+    @blueprint.get("/monitoring/status")
+    @blueprint.get("/api/monitoring/status")
+    def monitoring_status():
+        user_id = current_user()
+        device = owned_device(user_id, request.args.get("device_id"))
+        return jsonify(status_document(user_id, device))
+
+    @blueprint.get("/api/monitoring/stream")
+    def monitoring_stream():
+        user_id = current_user()
+        device = owned_device(user_id, request.args.get("device_id"))
+        if device is None:
+            abort(404)
+
+        def generate():
+            yield monitoring_event(stream_payload(user_id, device))
+            for payload in listen_monitoring(user_id, device["_id"]):
+                yield ": keep-alive\n\n" if payload is None else monitoring_event(payload)
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
     @blueprint.get("/monitoring/history")
@@ -1471,6 +1551,9 @@ def register(
         )
         alert["acknowledgement"] = label
         alert["acknowledged_at"] = stamp
+        device = database.devices.find_one({"_id": alert["device_id"], "user_id": user_id})
+        if device is not None:
+            publish_monitoring(user_id, device["_id"], stream_payload(user_id, device))
         return jsonify(alert_payload(alert))
 
     def device_payload(device: Document) -> Document:
@@ -1570,6 +1653,7 @@ def register(
             database, user_id=device["user_id"], device_id=device["_id"], window=window, result=result, created_at=stamp,
         )
         apply_alert_rule(device["user_id"], device["_id"], stamp)
+        publish_monitoring(device["user_id"], device["_id"], stream_payload(device["user_id"], device))
         database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"result": result}})
         audit_agent_window(device["_id"], "accepted", window=window)
         return jsonify(result), 201

@@ -492,7 +492,7 @@
   async function refreshModelSummary() {
     let response;
     try {
-      response = await fetch("/api/model");
+      response = await fetch(withDevice("/api/model"));
     } catch {
       if (modelSummaryStatus) {
         modelSummaryStatus.classList.add("error");
@@ -578,6 +578,14 @@
   dangerForms.forEach(wireDangerForm);
   var monitoringPollMs = 5e3;
   var monitoringTimer = 0;
+  var monitoringSource = null;
+  var monitoringUnavailable = false;
+  var selectedDeviceId = "";
+  function withDevice(path) {
+    if (!selectedDeviceId) return path;
+    const join = path.includes("?") ? "&" : "?";
+    return `${path}${join}device_id=${encodeURIComponent(selectedDeviceId)}`;
+  }
   function renderAgentConnection(snapshot) {
     const heading = $("#agentConnectionStatus");
     const detail = $("#agentConnectionDetail");
@@ -689,15 +697,19 @@
     const alertStatus = $("#alertListStatus");
     let response;
     try {
-      response = await fetch("/api/monitoring/status");
+      response = await fetch(withDevice("/api/monitoring/status"));
     } catch {
       const detail = $("#monitoringStatusDetail");
       if (detail) detail.textContent = "Could not load monitoring status. The server did not respond.";
       return;
     }
     if (response.status === 404) {
+      monitoringUnavailable = true;
+      monitoringSource?.close();
+      monitoringSource = null;
       window.clearInterval(monitoringTimer);
       monitoringTimer = 0;
+      renderMonitoringStatus(null);
       return;
     }
     if (!response.ok) {
@@ -715,24 +727,89 @@
       modelDetail.textContent = "Recent windows are scored against this account's active model.";
     }
     try {
-      const history = await fetch("/api/monitoring/history?limit=60");
+      const history = await fetch(withDevice("/api/monitoring/history?limit=60"));
       if (history.ok) renderScoreChart((await history.json()).points ?? []);
       else if (chartSummary) chartSummary.textContent = `Could not load the anomaly score (${history.status}).`;
     } catch {
       if (chartSummary) chartSummary.textContent = "Could not load the anomaly score. The server did not respond.";
     }
     try {
-      const alerts = await fetch("/api/alerts");
+      const alerts = await fetch(withDevice("/api/alerts"));
       if (alerts.ok) renderAlerts((await alerts.json()).alerts ?? []);
       else if (alertStatus) alertStatus.textContent = `Could not load alerts (${alerts.status}).`;
     } catch {
       if (alertStatus) alertStatus.textContent = "Could not load alerts. The server did not respond.";
     }
   }
+  function startMonitoringPoll() {
+    if (monitoringTimer) return;
+    monitoringTimer = window.setInterval(() => void refreshMonitoring(), monitoringPollMs);
+  }
+  function openMonitoringStream() {
+    if (monitoringUnavailable) return;
+    monitoringSource?.close();
+    monitoringSource = null;
+    if (monitoringTimer) {
+      window.clearInterval(monitoringTimer);
+      monitoringTimer = 0;
+    }
+    if (typeof EventSource === "undefined") {
+      startMonitoringPoll();
+      return;
+    }
+    const source = new EventSource(withDevice("/api/monitoring/stream"));
+    monitoringSource = source;
+    source.addEventListener("monitoring", () => {
+      void refreshMonitoring();
+    });
+    source.onerror = () => {
+      source.close();
+      if (monitoringSource === source) monitoringSource = null;
+      if (monitoringUnavailable) return;
+      const detail = $("#monitoringStatusDetail");
+      if (detail) detail.textContent = "Could not open live monitoring. Checking again every few seconds.";
+      startMonitoringPoll();
+    };
+  }
+  async function loadDeviceSwitcher() {
+    const row = $("#deviceSwitcherRow");
+    const select = document.querySelector("#deviceSwitcher");
+    if (!select) return;
+    let response;
+    try {
+      response = await fetch("/api/devices");
+    } catch {
+      return;
+    }
+    if (!response.ok) return;
+    const devices = (await response.json()).devices ?? [];
+    select.replaceChildren();
+    for (const device of devices) {
+      const option = document.createElement("option");
+      option.value = device.id;
+      const name = device.name && device.name.length > 0 ? device.name : "Unnamed device";
+      option.textContent = device.revoked ? `${name} (revoked)` : name;
+      select.append(option);
+    }
+    if (row) row.hidden = devices.length < 2;
+    if (devices.length > 0 && !devices.some((device) => device.id === selectedDeviceId)) {
+      selectedDeviceId = devices[0]?.id ?? "";
+    }
+    if (selectedDeviceId) select.value = selectedDeviceId;
+  }
   updateControls();
-  void refreshModelSummary();
-  void refreshMonitoring();
-  monitoringTimer = window.setInterval(() => void refreshMonitoring(), monitoringPollMs);
+  void (async () => {
+    await loadDeviceSwitcher();
+    void refreshModelSummary();
+    void refreshMonitoring();
+    openMonitoringStream();
+  })();
+  $("#deviceSwitcher")?.addEventListener("change", (event) => {
+    selectedDeviceId = event.currentTarget.value;
+    void refreshModelSummary();
+    void refreshMonitoring();
+    openMonitoringStream();
+  });
   void (async () => {
     setCollectionStatus("Loading saved windows\u2026");
     try {
