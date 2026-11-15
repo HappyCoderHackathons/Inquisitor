@@ -16,5 +16,5 @@ services:
         sync: false
       - key: ML_SERVICE_URL
         sync: false
-      - key: ML_TOKEN_FILE
+      - key: ML_TOKEN
         sync: false

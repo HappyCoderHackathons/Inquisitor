@@ -152,7 +152,8 @@ The hosted website runs as a containerized service on a WebSocket-capable host s
 1. Push this repository to GitHub or GitLab.
 2. In Render Dashboard, click **New** > **Blueprint**.
 3. Connect your repository. Render detects [`render.yaml`](../render.yaml) automatically.
-4. When prompted, fill in the values for the required environment variables. If using a Render Secret File for `ML_TOKEN_FILE`, specify the file path (such as `/etc/secrets/ml-token`).
+4. When prompted, fill in the values for the required environment variables. Set `ML_TOKEN` to the token itself; the entrypoint writes it to a file. If using a Render Secret File for `ML_TOKEN_FILE`, specify the file path (such as `/etc/secrets/ml-token`).
+   `ML_SERVICE_URL` must be reachable from Render over authenticated HTTPS. An SSH tunnel to the private model host does not work from a Render service.
 5. Click **Apply** to build the Docker image and deploy the web service.
 
 ### Run with Docker locally

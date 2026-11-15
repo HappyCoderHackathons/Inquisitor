@@ -25,6 +25,9 @@ trap cleanup SIGTERM SIGINT
 
 cd /app/Frontend
 
+# gunicorn skips server.py's __main__ block, so create the arcade tables here.
+python -c "import server; server.initialize()"
+
 # 1. Start Better Auth Node service on loopback (127.0.0.1:3001)
 echo "Starting Better Auth service on 127.0.0.1:3001..."
 node --experimental-strip-types auth/server.mts &
