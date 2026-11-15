@@ -85,6 +85,10 @@ class OnboardingTests(unittest.TestCase):
         self.score_error = None
         self.deleted = []
         self.delete_error = None
+        self.reset_calls = []
+        self.deactivate_calls = []
+        self.model_service_error = None
+        self.training_result = None
         self.activated = []
         self.activate_error = None
         self.compared = []
@@ -97,6 +101,8 @@ class OnboardingTests(unittest.TestCase):
             self.trained.append((user_id, device_id, windows, validation_sessions))
             if self.training_error:
                 raise self.training_error
+            if self.training_result is not None:
+                return self.training_result
             return f"model-{len(self.trained)}"
 
         def deleter(user_id, device_id):
@@ -104,12 +110,24 @@ class OnboardingTests(unittest.TestCase):
                 raise self.delete_error
             self.deleted.append((user_id, device_id))
 
+        def resetter(user_id, device_id):
+            if self.model_service_error:
+                raise self.model_service_error
+            self.reset_calls.append((user_id, device_id))
+
+        def deactivator(user_id, device_id):
+            if self.model_service_error:
+                raise self.model_service_error
+            self.deactivate_calls.append((user_id, device_id))
+
         self.trainer = trainer
         self.deleter = deleter
         app = Flask(__name__, template_folder=str(Path(server.__file__).parent / "templates"))
         with patch.dict(os.environ, ENV):
-            hosted.register(app, self.database, self.trainer, self.score, server.onboarding_window_error, self.deleter,
-                            self.activate, self.compare)
+            hosted.register(
+                app, self.database, self.trainer, self.score, server.onboarding_window_error, self.deleter,
+                self.activate, self.compare, resetter, deactivator,
+            )
         self.client = app.test_client()
 
     def activate(self, user_id, device_id, model_id):
@@ -522,6 +540,145 @@ class OnboardingTests(unittest.TestCase):
             ("better-auth:user-a", device_id, "monitor-1", 0),
         )
         self.assertEqual(stored["result"]["state"], "NORMAL")
+
+    def test_model_summary_reports_device_counts_algorithm_and_optional_evaluation(self):
+        self.assertEqual(self.client.get("/api/model").status_code, 401)
+        device_id, _ = self.pair()
+        self.assertFalse(self.client.get("/api/model").get_json()["available"])
+        trained_at = "2026-01-02T03:04:05+00:00"
+        self.database.model_versions.insert_one({
+            "_id": "model-7",
+            "user_id": "better-auth:user-a",
+            "device_id": device_id,
+            "state": "ready",
+            "algorithm": "IsolationForest",
+            "active": True,
+            "created_at": self.clock,
+            "metadata": {
+                "model_id": "model-7",
+                "algorithm": "IsolationForest",
+                "trained_at": trained_at,
+                "training_window_count": 24,
+                "validation_window_count": 12,
+                "training_sessions": ["s1", "s2"],
+                "validation_sessions": ["s3"],
+                "threshold": 1.5,
+                "threshold_rule": "fit on this device's enrollment",
+                "holdout_alert_count": 2,
+                "holdout_window_count": 10,
+                "impostor_evaluation_alert_count": 7,
+                "impostor_evaluation_window_count": 8,
+            },
+        })
+        summary = self.client.get("/api/model").get_json()
+        self.assertEqual(summary["device_name"], "keyboard")
+        self.assertEqual(summary["device_id"], device_id)
+        self.assertEqual(summary["model_id"], "model-7")
+        self.assertEqual(summary["trained_at"], trained_at)
+        self.assertEqual((summary["training_windows"], summary["validation_windows"], summary["window_count"]), (24, 12, 36))
+        self.assertEqual(summary["session_count"], 3)
+        self.assertEqual(summary["algorithm"], "IsolationForest")
+        self.assertIn("Isolation Forest", summary["algorithm_label"])
+        self.assertIn("not an identity", summary["algorithm_label"])
+        self.assertEqual(summary["threshold"], 1.5)
+        self.assertIn("above 1.5", summary["threshold_label"])
+        self.assertEqual((summary["holdout_alerts"], summary["holdout_windows"]), (2, 10))
+        self.assertEqual((summary["impostor_alerts"], summary["impostor_windows"]), (7, 8))
+        self.assertIn("not proof of identity", summary["limitations"])
+        self.database.model_versions.update_one({"_id": "model-7"}, {"$set": {"active": False}})
+        hidden = self.client.get("/api/model").get_json()
+        self.assertFalse(hidden["available"])
+        self.assertIsNone(hidden["holdout_windows"])
+        self.assertIsNone(hidden["impostor_windows"])
+        self.sign_in("user-b")
+        self.assertFalse(self.client.get("/api/model").get_json()["available"])
+
+    def seed_enrollment(self, device_id):
+        onboarding = self.database.onboarding.find_one({"device_id": device_id})
+        base = self.clock - timedelta(minutes=10)
+        for index, game in enumerate(("aim", "tetris", "typing", "arena")):
+            for offset, count in ((0, 6), (1, 3)):
+                session_id = f"{game}-{offset}"
+                started = base + timedelta(seconds=index * 10 + offset)
+                self.database.rounds.insert_one({
+                    "_id": session_id,
+                    "onboarding_id": onboarding["_id"],
+                    "device_id": device_id,
+                    "game": game,
+                    "started_at": started,
+                    "ended_at": started + timedelta(seconds=150),
+                    "status": "completed",
+                    "credited_ms": 150_000,
+                    "valid_window_count": count,
+                    "generation": 0,
+                })
+                for sequence in range(count):
+                    self.database.windows.insert_one({
+                        "onboarding_id": onboarding["_id"],
+                        "user_id": "better-auth:user-a",
+                        "device_id": device_id,
+                        "session_id": session_id,
+                        "sequence": sequence,
+                        "usable": True,
+                        "window": {"session_id": session_id, "features": {"key_count": 30}},
+                        "created_at": started,
+                    })
+        self.database.monitoring_windows.insert_one({
+            "user_id": "better-auth:user-a", "device_id": device_id, "session_id": "kept-monitor",
+        })
+        return onboarding
+
+    def test_retrain_reset_and_deactivate_require_confirmation(self):
+        self.assertEqual(self.client.post("/api/models/reset", json={"confirmation": "RESET"}).status_code, 401)
+        device_id, _ = self.pair()
+        onboarding = self.seed_enrollment(device_id)
+        self.assertEqual(self.client.post("/api/models/reset", data="{}").status_code, 415)
+        self.assertEqual(
+            self.client.post("/api/models/reset", json={"confirmation": "RESET"},
+                             headers={"Origin": "https://evil.example"}).status_code,
+            403,
+        )
+        rejected = self.client.post("/api/models/reset", json={"confirmation": "reset", "practiceText": "secret"})
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(self.trained, [])
+        self.assertEqual(self.reset_calls, [])
+        self.assertNotIn("secret", str(list(self.database.model_versions.find())))
+        trained = self.client.post("/api/onboarding/train", json={})
+        self.assertEqual(trained.status_code, 202)
+        counted = self.client.get("/api/model").get_json()
+        self.assertEqual(counted["model_id"], "model-1")
+        self.assertIsNone(counted["algorithm"])
+        self.assertEqual(counted["window_count"], 36)
+        self.assertEqual(counted["session_count"], 8)
+        self.assertIsNone(counted["holdout_windows"])
+        self.assertIsNone(counted["impostor_windows"])
+        self.database.model_versions.update_one(
+            {"_id": "model-1"}, {"$set": {"metadata.algorithm": "LogisticRegression"}},
+        )
+        labeled = self.client.get("/api/model").get_json()
+        self.assertEqual(labeled["algorithm"], "LogisticRegression")
+        self.assertIn("Logistic regression", labeled["algorithm_label"])
+        self.sign_in("user-b")
+        self.assertEqual(self.client.post("/api/models/reset", json={"confirmation": "RESET"}).status_code, 404)
+        self.assertEqual(self.reset_calls, [])
+        self.sign_in()
+        self.model_service_error = RuntimeError("down")
+        failed = self.client.post("/api/models/deactivate", json={"confirmation": "DEACTIVATE"})
+        self.assertEqual(failed.status_code, 502)
+        self.assertTrue(self.database.model_versions.find_one({"_id": "model-1"})["active"])
+        self.assertEqual(self.database.windows.count_documents({"onboarding_id": onboarding["_id"]}), 36)
+        self.model_service_error = None
+        deactivated = self.client.post("/api/models/deactivate", json={"confirmation": "DEACTIVATE"})
+        self.assertEqual(deactivated.status_code, 200)
+        self.assertEqual(self.deactivate_calls, [("better-auth:user-a", device_id)])
+        self.assertFalse(self.client.get("/api/model").get_json()["available"])
+        self.assertEqual(self.database.windows.count_documents({"onboarding_id": onboarding["_id"]}), 36)
+        reset = self.client.post("/api/models/reset", json={"confirmation": "RESET"})
+        self.assertEqual(reset.status_code, 200)
+        self.assertEqual(self.reset_calls, [("better-auth:user-a", device_id)])
+        self.assertEqual(self.database.windows.count_documents({"onboarding_id": onboarding["_id"]}), 0)
+        self.assertEqual(self.database.monitoring_windows.count_documents({"session_id": "kept-monitor"}), 1)
+        self.assertFalse(self.client.get("/api/model").get_json()["available"])
 
     def test_monitoring_waits_for_a_trained_model(self):
         device_id, agent = self.pair()

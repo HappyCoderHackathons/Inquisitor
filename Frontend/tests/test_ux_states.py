@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 
+import hosted
 import server
 
 ROOT = Path(__file__).parents[2]
@@ -34,6 +35,22 @@ class UxStateTests(unittest.TestCase):
         self.assertIn("not proof of identity", page)
         self.assertIn('id="collectionStatus"', page)
         self.assertIn('id="dataActionStatus"', page)
+        self.assertIn('id="modelDevice"', page)
+        self.assertIn('id="modelVersion"', page)
+        self.assertIn('id="modelTrained"', page)
+        self.assertIn('id="modelWindows"', page)
+        self.assertIn('id="modelSessions"', page)
+        self.assertIn('id="modelAlgorithm"', page)
+        self.assertIn('id="modelThreshold"', page)
+        self.assertIn("Holdout alert rate", page)
+        self.assertIn("Impostor result", page)
+        self.assertIn(hosted.MODEL_LIMITATIONS, page)
+        self.assertIn('data-phrase="RETRAIN"', page)
+        self.assertIn('data-path="/api/onboarding/retrain"', page)
+        self.assertIn('data-approve="true"', page)
+        self.assertIn('data-path="/api/models/reset"', page)
+        self.assertIn('data-path="/api/models/deactivate"', page)
+        self.assertIn('id="detectionEnrollLink" href="/onboarding"', page)
         self.assertNotIn("Non-user activity", page)
         self.assertNotIn("activity detections", page)
         self.assertNotIn("identify or confirm another person", page)
@@ -76,6 +93,7 @@ class UxStateTests(unittest.TestCase):
         self.assertIn("Please wait.", onboarding)
         self.assertIn("Loading saved windows…", dashboard)
         self.assertIn("Could not load saved windows. The server did not respond.", dashboard)
+        self.assertIn("Could not load the model summary. The server did not respond.", dashboard)
         self.assertIn("Could not reach the server. Nothing was changed.", dashboard)
         self.assertIn("Could not save feature window. The server did not respond.", dashboard)
 
