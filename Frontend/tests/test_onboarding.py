@@ -1100,11 +1100,16 @@ class OnboardingTests(unittest.TestCase):
         self.clock += timedelta(seconds=91)
         self.assertEqual(self.client.get("/api/onboarding").get_json()["agent"], "offline")
         self.client.get("/api/agent/onboarding", headers=agent)
-        finished = self.client.post("/api/onboarding/finish", json={})
-        self.assertEqual(finished.status_code, 200)
-        self.assertEqual(finished.get_json()["collection"], "finished")
-        self.assertEqual(finished.get_json()["duration_seconds"], 60)
-        self.assertEqual(finished.get_json()["usable_windows"], 1)
+        # Finishing before training is possible is refused, so collection stays open.
+        early = self.client.post("/api/onboarding/finish", json={})
+        self.assertEqual(early.status_code, 409)
+        self.assertEqual(early.get_json()["collection"], "active")
+        self.assertEqual(early.get_json()["duration_seconds"], 60)
+        self.assertEqual(early.get_json()["usable_windows"], 1)
+        # A collection finished early by an older build can be reopened, then finished again.
+        self.database.onboarding.update_one({"device_id": device_id}, {"$set": {"collection": "finished"}})
+        self.assertEqual(self.client.post("/api/onboarding/resume", json={}).get_json()["collection"], "active")
+        self.database.onboarding.update_one({"device_id": device_id}, {"$set": {"collection": "finished"}})
         self.assertEqual(
             self.client.post("/api/agent/windows", headers=agent, json=window(device_id, session_id, 2)).status_code,
             409,

@@ -305,9 +305,9 @@
     const discard = element("discardEnrollment");
     const finish = element("finishEnrollment");
     if (pause) pause.disabled = !collecting || status.collection !== "active";
-    if (resume) resume.disabled = !collecting || status.collection !== "paused";
+    if (resume) resume.disabled = !collecting || status.collection === "active";
     if (discard) discard.disabled = !collecting;
-    if (finish) finish.disabled = !collecting || status.collection === "finished";
+    if (finish) finish.disabled = !collecting || status.collection === "finished" || !status.ready_to_train;
     showWizard(agentOffline ? 0 : wizardStep);
   }
   element("createCode")?.addEventListener("click", async () => {
