@@ -90,6 +90,19 @@ def create_app() -> Flask:
         finally:
             training_lock.release()
 
+    @app.get("/models/active")
+    def active_metadata():
+        return jsonify(store.metadata(store.active_model_id(g.user_id, g.device_id), g.user_id, g.device_id))
+
+    @app.post("/models/active/score")
+    def active_score():
+        model_id = store.active_model_id(g.user_id, g.device_id)
+        return jsonify(store.score(model_id, body({"window"})["window"], g.user_id, g.device_id))
+
+    @app.put("/models/<model_id>/active")
+    def activate(model_id: str):
+        return jsonify(store.activate(model_id, g.user_id, g.device_id))
+
     @app.get("/models/<model_id>")
     def metadata(model_id: str):
         return jsonify(store.metadata(model_id, g.user_id, g.device_id))

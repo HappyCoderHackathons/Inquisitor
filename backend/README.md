@@ -41,6 +41,9 @@ the application's user/device authentication.
 | `GET /model` | Configured published owner/device headers | Published model version, hash, threshold, and summary |
 | `POST /score` | `window` object and configured owner/device headers | Published model inference without a private model ID |
 | `POST /models/train` | `windows` array and `validation_session_id` or `validation_session_ids`; optional `profile` | Ready model metadata, HTTP 201 |
+| `PUT /models/{id}/active` | No body | Makes an owned model the active model for this user/device |
+| `GET /models/active` | No body | Active model metadata, or 404 if none is active |
+| `POST /models/active/score` | `window` object | Score using the active model |
 | `GET /models/{id}` | No body | Owned model metadata |
 | `POST /models/{id}/score` | `window` object | Score, threshold, model ID, and state |
 | `DELETE /models/{id}` | No body | Removes owned artifacts and cached model, HTTP 204 |
@@ -70,9 +73,19 @@ do not establish performance across other people or devices. The saved model was
 subsequently fitted on all 90 labeled windows on the designated remote host.
 
 Training is synchronous in this first implementation. One training request runs
-at a time; another receives 503. There is no queued/running job API or automatic
-active-model selection yet. The application backend must select the correct model
-ID. No monitoring request triggers retraining.
+at a time; another receives 503. There is no queued/running job API. Training never
+activates a model: the application backend activates one explicitly per user/device
+with `PUT /models/{id}/active`, and deleting the active model leaves none active.
+No monitoring request triggers retraining.
+
+UNUSUAL results from labeled-overlap models include an `explanation`. Each feature's
+`contribution` is its scaled value times the model weight, so the features are
+ranked by how much they pushed the score toward the second-user class. Models trained
+with this version also save a `genuine_baseline` (median and 1.4826 x MAD of genuine
+training windows) and add each feature's `baseline_z`. The published
+`labeled-overlap-v1` artifact predates the baseline, so it reports contributions only
+until it is re-exported. Isolation Forest models do not return explanations.
+Explanations describe the model's decision, not the cause of a user's behavior.
 
 The default minimum is 20 training windows and 10 validation windows from a
 different collection session. Every enrollment window needs at least 30 presses;

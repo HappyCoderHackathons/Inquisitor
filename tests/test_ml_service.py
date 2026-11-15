@@ -84,6 +84,44 @@ class ModelServiceTests(unittest.TestCase):
         window["features"]["key_count"] = 1
         self.assertEqual(client.post("/score", headers=self.headers, json={"window": window}).json["state"], "INSUFFICIENT_DATA")
 
+    def test_published_unusual_window_is_explained(self) -> None:
+        artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v1.json"
+        window = generate_windows(49, 1)[0]
+        window["features"]["press_overlap_fraction"] = 0.9
+        result = PublishedModel(artifact).score(window, "synthetic-device")
+        self.assertEqual(result["state"], "UNUSUAL")
+        self.assertEqual(result["explanation"]["features"][0]["feature"], "press_overlap_fraction")
+        self.assertIn("Key overlap contributed most", result["explanation"]["summary"])
+        value = json.loads(artifact.read_text(encoding="utf-8"))
+        value["genuine_baseline"] = {"median": [0.3, 0.1], "scale": [0.1, 0.2]}
+        with_baseline = Path(self.temporary.name) / "baseline.json"
+        with_baseline.write_text(json.dumps(value), encoding="utf-8")
+        explained = PublishedModel(with_baseline).score(window, "synthetic-device")["explanation"]
+        self.assertAlmostEqual(explained["features"][0]["baseline_z"], 4.0)
+        self.assertIn("4.0 robust deviations above the enrolled baseline", explained["summary"])
+        window["features"]["press_overlap_fraction"] = 0.1
+        self.assertNotIn("explanation", PublishedModel(artifact).score(window, "synthetic-device"))
+        value["genuine_baseline"]["scale"][0] = -1
+        with_baseline.write_text(json.dumps(value), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            PublishedModel(with_baseline)
+
+    def test_active_model_selection_and_ownership(self) -> None:
+        model_id = "0" * 31 + "1"
+        model_dir = Path(self.temporary.name) / "models" / model_id
+        model_dir.mkdir()
+        (model_dir / "metadata.json").write_text(json.dumps(
+            {"model_id": model_id, "user_id": "synthetic-user", "device_id": "synthetic-device"}), encoding="utf-8")
+        other = {**self.headers, "X-User-ID": "another-user"}
+        self.assertEqual(self.client.get("/models/active", headers=self.headers).status_code, 404)
+        self.assertEqual(self.client.put(f"/models/{model_id}/active", headers=other).status_code, 403)
+        self.assertEqual(self.client.put(f"/models/{model_id}/active", headers=self.headers).status_code, 200)
+        self.assertEqual(self.client.get("/models/active", headers=self.headers).json["model_id"], model_id)
+        self.assertEqual(self.client.get("/models/active", headers=other).status_code, 404)
+        self.assertEqual(create_app().test_client().get("/models/active", headers=self.headers).status_code, 200)
+        self.assertEqual(self.client.delete(f"/models/{model_id}", headers=self.headers).status_code, 204)
+        self.assertEqual(self.client.get("/models/active", headers=self.headers).status_code, 404)
+
     def test_published_artifact_validation_and_portable_hash(self) -> None:
         artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v1.json"
         original = PublishedModel(artifact)
@@ -120,6 +158,12 @@ class ModelServiceTests(unittest.TestCase):
         normal = self.client.post(url, headers=self.headers, json={"window": genuine[0]}).json
         guest = create_app().test_client().post(url, headers=self.headers, json={"window": impostor[0]}).json
         self.assertGreater(guest["score"], normal["score"])
+        self.assertEqual(len(metadata["genuine_baseline"]["median"]), 2)
+        self.assertEqual(guest["state"], "UNUSUAL")
+        self.assertIn("baseline_z", guest["explanation"]["features"][0])
+        self.client.put("/models/" + metadata["model_id"] + "/active", headers=self.headers)
+        active = self.client.post("/models/active/score", headers=self.headers, json={"window": impostor[0]}).json
+        self.assertEqual(active, guest)
         invalid = copy.deepcopy(payload)
         invalid["impostor_windows"][0]["device_id"] = "other-device"
         self.assertEqual(self.client.post("/models/train", headers=self.headers, json=invalid).status_code, 422)
