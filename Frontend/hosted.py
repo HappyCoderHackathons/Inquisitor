@@ -18,6 +18,7 @@ from typing import Any, cast
 from urllib.parse import urlencode
 from uuid import uuid4
 
+import gemini
 import requests
 from atlas_persistence import (
     activate_model_version,
@@ -1576,8 +1577,9 @@ def register(
         )
         open_alert = database.alerts.find_one({"user_id": user_id, "device_id": device_id, "status": "open"})
         if decision == "open" and open_alert is None:
+            alert_id = uuid4().hex
             database.alerts.insert_one({
-                "_id": uuid4().hex,
+                "_id": alert_id,
                 "user_id": user_id,
                 "device_id": device_id,
                 "status": "open",
@@ -1588,10 +1590,39 @@ def register(
                 "acknowledged_at": None,
                 "acknowledgement": None,
             })
+            if os.environ.get("GEMINI_API_KEY"):
+                threading.Thread(target=lambda: add_investigation(user_id, device_id, alert_id), daemon=True).start()
         elif decision == "close" and open_alert is not None:
             database.alerts.update_one(
                 {"_id": open_alert["_id"]}, {"$set": {"status": "closed", "ended_at": stamp}},
             )
+
+    def add_investigation(user_id: str, device_id: str, alert_id: str) -> None:
+        recent = list(database.inference_results.find(
+            {"user_id": user_id, "device_id": device_id}, {"classification": 1, "score": 1, "threshold": 1, "result": 1},
+        ).sort("created_at", -1).limit(8))
+        explanation = next((row["result"].get("explanation") for row in recent
+                            if isinstance(row.get("result"), dict) and row["result"].get("explanation")), None)
+        features = explanation.get("features", [])[:5] if isinstance(explanation, dict) else []
+        # Only aggregate scores and feature names leave the service; never windows, IDs, or timestamps.
+        context = {
+            "recent_window_states": [row.get("classification") for row in recent],
+            "latest_score": finite_number(recent[0].get("score")) if recent else None,
+            "threshold": finite_number(recent[0].get("threshold")) if recent else None,
+            "top_features": [
+                {"feature": item.get("feature"), "contribution": finite_number(item.get("contribution")),
+                 "deviation_from_enrolled_baseline": finite_number(item.get("baseline_z"))}
+                for item in features if isinstance(item, dict)
+            ],
+        }
+        try:
+            hints = gemini.investigation_hints(context)
+        except (requests.RequestException, KeyError, IndexError, ValueError) as error:
+            logger.warning(json.dumps({"component": "gemini", "outcome": "failed", "reason": type(error).__name__}))
+            return
+        if hints:
+            database.alerts.update_one({"_id": alert_id}, {"$set": {"investigation": hints}})
+            publish_device_monitoring(device_id)
 
     def aware(value: datetime) -> datetime:
         return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
@@ -1648,6 +1679,7 @@ def register(
             "status": alert.get("status"),
             "severity": alert.get("severity"),
             "explanation": alert.get("explanation") or ALERT_EXPLANATION,
+            "investigation": alert.get("investigation") or [],
             "started_at": timestamp_text(started),
             "ended_at": timestamp_text(ended),
             "duration_seconds": duration,

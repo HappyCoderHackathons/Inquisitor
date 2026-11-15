@@ -1429,6 +1429,17 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.delete("/api/me/data", json={}).status_code, 200)
         self.assertEqual(self.database.demo_switches.count_documents({}), 0)
 
+    def test_opened_alert_gets_gemini_hints_from_aggregates_only(self):
+        device_id, agent = self.ready_monitor()
+        hints = ["Check who had access to the PC.", "Look for a new keyboard or mouse."]
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test"}),                 patch("hosted.gemini.investigation_hints", return_value=hints) as ask:
+            self.upload_scores(device_id, agent, ["UNUSUAL"] * 4)
+        alert = self.client.get("/api/alerts?status=open").get_json()["alerts"][0]
+        self.assertEqual(alert["investigation"], hints)
+        context = ask.call_args.args[0]
+        self.assertEqual(set(context), {"recent_window_states", "latest_score", "threshold", "top_features"})
+        self.assertNotIn(device_id, json.dumps(context))
+
     def test_agent_socket_reports_status_presence_and_revocation(self):
         device_id, agent = self.ready_monitor()
         self.upload_scores(device_id, agent, ["NORMAL"])

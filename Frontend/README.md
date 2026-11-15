@@ -146,6 +146,8 @@ The hosted website runs as a containerized service on a WebSocket-capable host s
 | `INQUISITOR_MONITORING_RETENTION_SECONDS` | `604800` | Retention duration for monitoring data in seconds (7 days) |
 | `GUNICORN_WORKERS` | `1` | Number of Gunicorn worker processes (keep at 1 for in-process stream dispatch) |
 | `GUNICORN_THREADS` | `16` | Number of threads per worker to maintain open WebSocket connections |
+| `GEMINI_API_KEY` | unset | Enables Gemini investigation hints on new alerts (see `docs/privacy.md`) |
+| `GEMINI_MODEL` | `gemini-flash-lite-latest` | Gemini model for those hints |
 
 ### Deploy on Fly.io
 
