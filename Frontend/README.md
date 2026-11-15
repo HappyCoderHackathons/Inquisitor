@@ -32,7 +32,7 @@ See [INTEGRATION_HANDOFF.md](INTEGRATION_HANDOFF.md) for dashboard code location
 
 On `/dashboard`, choose `Enrollment` or `Monitoring`, check the consent box, and start collection. Focus the capture area and type naturally. After at least 30 seconds and 30 key presses, the page saves one aggregate feature window; keep typing to collect more. Pause or stop at any time. Incomplete windows are discarded.
 
-The browser sends only windows validated against [`shared/feature-window-v1.schema.json`](../shared/feature-window-v1.schema.json) to the local Flask app. Key identities and typed content are used only transiently in the browser and are not saved or sent. Windows are stored in the local `inputprint.sqlite3`; use **Download JSONL** to export them. These are browser-collected examples, not Windows-agent captures or model detections. No model training or remote service call is made.
+The browser sends only windows validated against [`shared/feature-window-v1.schema.json`](../shared/feature-window-v1.schema.json) to the local Flask app. Key identities and typed content are used only transiently in the browser and are not saved or sent. Windows are stored in the `arcade_feature_windows` MongoDB collection (`MONGODB_URI` and `MONGODB_DB`, defaulting to `mongodb://127.0.0.1:27017` and `inquisitor` when unset); use **Download JSONL** to export them. These are browser-collected examples, not Windows-agent captures or model detections. No model training or remote service call is made.
 
 Collection sessions use a random local browser ID and a new session ID each time collection starts. For session-separated evaluation, stop and start a new collection session between sessions. Label who produced each collection outside the exported feature contract before using it as genuine or second-user data.
 
@@ -113,7 +113,7 @@ the in-memory adapter; live Atlas connectivity still needs a deployment check.
 - Game input is handled in the browser for gameplay. Input events are transient and are not sent to Flask.
 - At the end of a round, the browser sends only counts and timing statistics, selected game, and score.
 - The typing exercise does not send typed words. It sends the same numeric timing summary as the other activities.
-- Flask stores those aggregate samples in a local SQLite database (`inputprint.sqlite3`). **Clear Data** removes them.
-- Arcade rounds still store only local aggregate samples in SQLite. The feature-window contract used by the agent and the model is the one on `/privacy`. Sign-in and pairing stay at `/onboarding` when hosted auth is configured. `/onboarding?mode=signup` opens account creation.
+- Flask stores those aggregate samples in the `arcade_samples` MongoDB collection. **Clear Data** removes them.
+- Arcade rounds store only aggregate samples there. The feature-window contract used by the agent and the model is the one on `/privacy`. Sign-in and pairing stay at `/onboarding` when hosted auth is configured. `/onboarding?mode=signup` opens account creation.
 
 The aim trainer uses mouse clicks or the A button. Block Stack uses arrows/WASD or the gamepad face buttons and D-pad. Arena Rush uses WASD or the arrow keys to move, the mouse to aim, and left-click to fire. Word Sprint shuffles its word list each round and highlights correct letters as you type.
