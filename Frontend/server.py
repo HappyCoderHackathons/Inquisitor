@@ -27,7 +27,7 @@ import security
 
 LOCAL_USER_ID = "local-user"
 LOCAL_DEVICE_ID = "local-device"
-DB_PATH = Path(os.environ.get("INPUTPRINT_DB", ROOT / "inputprint.sqlite3"))
+ARTIFACT_ROOT = Path(os.environ.get("INQUISITOR_ARTIFACT_DIR", ROOT / "account-artifacts"))
 _arcade_database: Database | None = None
 AGENT_FEATURE_VALIDATORS = {
     version: Draft202012Validator(
@@ -65,8 +65,8 @@ def arcade_database() -> Database:
 
 def open_account() -> AccountStore:
     global account
-    artifact_root = Path(os.environ.get("INQUISITOR_ARTIFACT_DIR", DB_PATH.parent / "account-artifacts"))
-    account = AccountStore(DB_PATH.parent / "account.sqlite3", artifact_root, retention_seconds_from_env())
+    database = arcade_database()
+    account = AccountStore(database, "local_account_", ARTIFACT_ROOT, retention_seconds_from_env())
     return account
 
 

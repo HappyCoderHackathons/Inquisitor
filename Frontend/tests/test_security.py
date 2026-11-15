@@ -24,17 +24,17 @@ class SecurityHeaderTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.previous_database = server._arcade_database
-        self.previous = server.DB_PATH
+        self.previous = server.ARTIFACT_ROOT
         self.previous_account = server.account
         server.set_arcade_database(mongomock.MongoClient(tz_aware=True).db)
-        server.DB_PATH = Path(self.temporary.name) / "inputprint.sqlite3"
+        server.ARTIFACT_ROOT = Path(self.temporary.name) / "account-artifacts"
         server.account = None
         server.initialize()
         self.client = server.app.test_client()
 
     def tearDown(self):
         server.set_arcade_database(self.previous_database)
-        server.DB_PATH = self.previous
+        server.ARTIFACT_ROOT = self.previous
         server.account = self.previous_account
         self.temporary.cleanup()
 

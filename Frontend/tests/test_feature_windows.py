@@ -40,16 +40,16 @@ class FeatureWindowApiTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.previous_database = server._arcade_database
-        self.previous_database_path = server.DB_PATH
+        self.previous_database_path = server.ARTIFACT_ROOT
         server.set_arcade_database(mongomock.MongoClient(tz_aware=True).db)
-        server.DB_PATH = Path(self.temporary_directory.name) / "inputprint.sqlite3"
+        server.ARTIFACT_ROOT = Path(self.temporary_directory.name) / "account-artifacts"
         server.account = None
         server.initialize()
         self.client = server.app.test_client()
 
     def tearDown(self):
         server.set_arcade_database(self.previous_database)
-        server.DB_PATH = self.previous_database_path
+        server.ARTIFACT_ROOT = self.previous_database_path
         self.temporary_directory.cleanup()
 
     def test_saves_and_exports_shared_schema_window_as_jsonl(self):

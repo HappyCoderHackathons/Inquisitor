@@ -190,7 +190,7 @@ feature values and request bodies. Pairing attempts are limited to 10 per 10 min
 IP. A stolen device token works until that device is revoked. Score requests have no
 separate nonce. The service token stays in server configuration.
 
-Local files are ordinary SQLite databases, model artifacts, and token files. The operator
+Local files are model artifacts and token files. The operator
 of the host can edit them. Header and origin checks do not make those files tamper-evident.
 Hosted account data stays in MongoDB Atlas. The model token is not in browser JavaScript.
 
