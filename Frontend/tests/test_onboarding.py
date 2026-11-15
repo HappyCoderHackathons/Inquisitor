@@ -15,6 +15,20 @@ ENV = {name: "test-value" for name in hosted.ENV} | {
 }
 
 
+def window(device_id, session_id, sequence, key_count=40):
+    started = datetime.now(timezone.utc) - timedelta(minutes=1)
+    return {
+        "schema_version": 1, "device_id": device_id, "session_id": session_id, "sequence": sequence,
+        "mode": "enrollment", "started_at": started.isoformat(), "duration_ms": 10_000,
+        "features": {
+            "key_count": key_count, "presses_per_second": key_count / 10, "hold_mean_ms": 100.0, "hold_std_ms": 20.0,
+            "press_interval_mean_ms": 250.0, "press_interval_std_ms": 50.0, "press_interval_p90_ms": 300.0,
+            "pause_count": 0, "pause_fraction": 0.0, "burst_count": 1 if key_count else 0,
+            "press_overlap_fraction": 0.2,
+        },
+    }
+
+
 class OnboardingTests(unittest.TestCase):
     def setUp(self):
         self.clock = datetime.now(timezone.utc)
@@ -24,7 +38,7 @@ class OnboardingTests(unittest.TestCase):
         self.database = mongomock.MongoClient(tz_aware=True).db
         app = Flask(__name__, template_folder=str(Path(server.__file__).parent / "templates"))
         with patch.dict(os.environ, ENV):
-            hosted.register(app, self.database)
+            hosted.register(app, self.database, server.onboarding_window_error)
         self.client = app.test_client()
 
     def sign_in(self, user_id="user-a"):
@@ -57,6 +71,46 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(device["user_id"], "user-a")
         self.assertEqual(device["token_hash"], hosted.digest(token))
         self.assertNotIn(token, str(list(self.database.devices.find())))
+
+    def play(self, game, windows, device_id, agent):
+        session_id = self.client.post("/api/onboarding/rounds", json={"game": game}).get_json()["session_id"]
+        self.assertEqual(self.client.get("/api/agent/onboarding", headers=agent).get_json()["session_id"], session_id)
+        for sequence, key_count in enumerate(windows):
+            upload = self.client.post("/api/agent/windows", headers=agent,
+                                      json=window(device_id, session_id, sequence, key_count))
+            self.assertEqual(upload.status_code, 201, upload.get_json())
+        self.clock += timedelta(seconds=61)
+        return session_id, self.client.post("/api/onboarding/rounds/current/finish", json={}).get_json()
+
+    def test_agent_windows_are_scoped_to_device_and_active_round(self):
+        device_id, agent = self.pair()
+        self.assertEqual(self.client.get("/api/agent/onboarding", headers={"Authorization": "Bearer nope"}).status_code,
+                         401)
+        orphan = window(device_id, "no-round", 0)
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=orphan).status_code, 409)
+        session_id = self.client.post("/api/onboarding/rounds", json={"game": "typing"}).get_json()["session_id"]
+        other_device = window("other-device", session_id, 0)
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=other_device).status_code, 422)
+        forged = window(device_id, session_id, 0) | {"key": "a"}
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=forged).status_code, 422)
+        valid = window(device_id, session_id, 0)
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=valid).status_code, 201)
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=valid).status_code, 409)
+        self.sign_in("user-b")
+        self.assertEqual(self.client.get("/api/onboarding").status_code, 404)
+
+    def test_rounds_credit_server_time_and_pick_latest_round_per_game_for_calibration(self):
+        device_id, agent = self.pair()
+        first, _ = self.play("typing", [40] * 4, device_id, agent)
+        latest, status = self.play("typing", [40] * 4, device_id, agent)
+        self.assertEqual(status["seconds"]["typing"], 120)
+        self.assertEqual(status["validation_sessions"], [latest])
+        self.assertEqual((status["training_windows"], status["validation_windows"]), (4, 4))
+        self.client.post("/api/onboarding/rounds", json={"game": "aim"})
+        self.clock += timedelta(seconds=30)
+        cancelled = self.client.post("/api/onboarding/rounds/current/cancel", json={}).get_json()
+        self.assertEqual(cancelled["seconds"]["aim"], 0)
+        self.assertFalse(cancelled["ready_to_train"])
 
     def test_partial_configuration_fails_loudly(self):
         with patch.dict(os.environ, {"SSOJET_AUTHORITY": "https://sso.example.test"}, clear=True):

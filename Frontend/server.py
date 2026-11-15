@@ -192,10 +192,18 @@ def delete_local_data():
     return jsonify(ok=True)
 
 
+def onboarding_window_error(window: dict[str, object]) -> str | None:
+    return feature_window_error(window) or started_at_error(window, datetime.now(timezone.utc))
+
+
 if hosted.configured():
     from pymongo import MongoClient
 
-    hosted.register(app, MongoClient(os.environ["MONGODB_URI"], tz_aware=True)[os.environ["MONGODB_DB"]])
+    hosted.register(
+        app,
+        MongoClient(os.environ["MONGODB_URI"], tz_aware=True)[os.environ["MONGODB_DB"]],
+        onboarding_window_error,
+    )
 
 
 if __name__ == "__main__":

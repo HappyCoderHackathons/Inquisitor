@@ -1,16 +1,24 @@
-"""Hosted onboarding: SSOJet sign-in, agent pairing, and account storage in Atlas."""
+"""Hosted onboarding: SSOJet sign-in, agent pairing, and game-round collection in Atlas."""
 from __future__ import annotations
 
 import hashlib
 import os
 import secrets
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from flask import Blueprint, Flask, abort, jsonify, redirect, render_template, request, session, url_for
+from pymongo import ASCENDING
 from pymongo.database import Database
+from pymongo.errors import DuplicateKeyError
 
+GAMES = ("aim", "tetris", "typing", "arena")
+GAME_SECONDS = 150
+ROUND_MS = 60_000
+MIN_TRAINING_WINDOWS = 20
+MIN_VALIDATION_WINDOWS = 10
 SESSION_LIFETIME = timedelta(hours=12)
 PAIRING_TTL = timedelta(minutes=10)
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -38,7 +46,29 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def register(app: Flask, database: Database) -> None:
+def progress(database: Database, onboarding: Document) -> Document:
+    rounds = list(database.rounds.find({"onboarding_id": onboarding["_id"], "credited_ms": {"$gt": 0}}))
+    seconds = {game: sum(r["credited_ms"] for r in rounds if r["game"] == game) // 1000 for game in GAMES}
+    # The latest keyboard-active round of each game calibrates the threshold; earlier rounds train.
+    latest = {}
+    for item in sorted(rounds, key=lambda r: r["started_at"]):
+        if item["usable_windows"]:
+            latest[item["game"]] = item["_id"]
+    usable = {item["_id"]: item["usable_windows"] for item in rounds}
+    validation = sum(usable[session_id] for session_id in latest.values())
+    training = sum(usable.values()) - validation
+    return {
+        "state": onboarding["state"], "error": onboarding.get("error"), "model_id": onboarding.get("model_id"),
+        "seconds": seconds, "required_seconds": GAME_SECONDS,
+        "sessions": sorted(usable), "validation_sessions": sorted(latest.values()),
+        "training_windows": training, "validation_windows": validation,
+        "required_training_windows": MIN_TRAINING_WINDOWS, "required_validation_windows": MIN_VALIDATION_WINDOWS,
+        "ready_to_train": all(seconds[game] >= GAME_SECONDS for game in GAMES)
+        and training >= MIN_TRAINING_WINDOWS and validation >= MIN_VALIDATION_WINDOWS,
+    }
+
+
+def register(app: Flask, database: Database, window_error: Callable[[Document], str | None]) -> None:
     from authlib.integrations.flask_client import OAuth
 
     app.secret_key = os.environ["SESSION_SECRET"]
@@ -54,6 +84,10 @@ def register(app: Flask, database: Database) -> None:
     database.pairing_codes.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("code_hash", unique=True)
     database.devices.create_index("token_hash", unique=True)
+    database.onboarding.create_index([("user_id", ASCENDING), ("device_id", ASCENDING)], unique=True)
+    database.windows.create_index(
+        [("device_id", ASCENDING), ("session_id", ASCENDING), ("sequence", ASCENDING)], unique=True
+    )
     blueprint = Blueprint("hosted", __name__)
 
     def current_user() -> str:
@@ -68,6 +102,20 @@ def register(app: Flask, database: Database) -> None:
         if not isinstance(value, dict):
             abort(415)
         return value
+
+    def user_onboarding(user_id: str) -> Document:
+        onboarding = database.onboarding.find_one({"user_id": user_id}, sort=[("created_at", -1)])
+        if onboarding is None:
+            abort(404)
+        return onboarding
+
+    def device_auth() -> Document:
+        header = request.headers.get("Authorization", "")
+        device = database.devices.find_one({"token_hash": digest(header.removeprefix("Bearer "))}) \
+            if header.startswith("Bearer ") else None
+        if device is None or device.get("revoked_at") is not None:
+            abort(401)
+        return device
 
     @blueprint.get("/login")
     def login():
@@ -115,6 +163,38 @@ def register(app: Flask, database: Database) -> None:
                                            "used_at": None})
         return jsonify(code=code, expires_at=expires.isoformat()), 201
 
+    @blueprint.get("/api/onboarding")
+    def onboarding_status():
+        return jsonify(progress(database, user_onboarding(current_user())))
+
+    @blueprint.post("/api/onboarding/rounds")
+    def start_round():
+        onboarding = user_onboarding(current_user())
+        game = json_body().get("game")
+        if game not in GAMES or onboarding["state"] != "collecting":
+            abort(409 if game in GAMES else 422)
+        database.rounds.update_many({"onboarding_id": onboarding["_id"], "ended_at": None},
+                                    {"$set": {"ended_at": now(), "credited_ms": 0}})
+        session_id = uuid4().hex
+        database.rounds.insert_one({"_id": session_id, "onboarding_id": onboarding["_id"], "game": game,
+                                    "started_at": now(), "ended_at": None, "credited_ms": 0, "usable_windows": 0})
+        return jsonify(session_id=session_id), 201
+
+    @blueprint.post("/api/onboarding/rounds/current/<outcome>")
+    def end_round(outcome: str):
+        onboarding = user_onboarding(current_user())
+        json_body()
+        if outcome not in ("finish", "cancel"):
+            abort(404)
+        active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "ended_at": None})
+        if active is None:
+            abort(409)
+        ended = now()
+        started = cast(datetime, active["started_at"]).replace(tzinfo=timezone.utc)
+        credited = min(int((ended - started).total_seconds() * 1000), ROUND_MS) if outcome == "finish" else 0
+        database.rounds.update_one({"_id": active["_id"]}, {"$set": {"ended_at": ended, "credited_ms": credited}})
+        return jsonify(progress(database, onboarding))
+
     @blueprint.post("/api/agent/pair")
     def pair():
         code = json_body().get("code")
@@ -129,6 +209,44 @@ def register(app: Flask, database: Database) -> None:
         device_id, token = uuid4().hex, secrets.token_urlsafe(32)
         database.devices.insert_one({"_id": device_id, "user_id": pairing["user_id"], "token_hash": digest(token),
                                      "created_at": now(), "revoked_at": None})
+        database.onboarding.insert_one({"_id": uuid4().hex, "user_id": pairing["user_id"], "device_id": device_id,
+                                        "state": "collecting", "created_at": now()})
         return jsonify(device_id=device_id, token=token), 201
+
+    @blueprint.get("/api/agent/onboarding")
+    def agent_onboarding():
+        device = device_auth()
+        onboarding = database.onboarding.find_one({"device_id": device["_id"]})
+        if onboarding is None:
+            abort(404)
+        active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "ended_at": None})
+        return jsonify(state=onboarding["state"], session_id=active["_id"] if active else None)
+
+    @blueprint.post("/api/agent/windows")
+    def upload_window():
+        device = device_auth()
+        window = json_body()
+        error = window_error(window)
+        if error:
+            return jsonify(error=error), 422
+        if window["device_id"] != device["_id"] or window["mode"] != "enrollment":
+            return jsonify(error="onboarding windows must be enrollment windows from this device"), 422
+        onboarding = database.onboarding.find_one({"device_id": device["_id"], "state": "collecting"})
+        active = onboarding and database.rounds.find_one(
+            {"_id": window["session_id"], "onboarding_id": onboarding["_id"], "ended_at": None}
+        )
+        if not active:
+            return jsonify(error="no active game round for this session"), 409
+        usable = cast(dict[str, int], window["features"])["key_count"] >= 30
+        try:
+            database.windows.insert_one({"onboarding_id": onboarding["_id"], "user_id": device["user_id"],
+                                         "device_id": device["_id"], "session_id": window["session_id"],
+                                         "sequence": window["sequence"], "game": active["game"],
+                                         "usable": usable, "window": window, "created_at": now()})
+        except DuplicateKeyError:
+            return jsonify(error="This device/session/sequence window already exists"), 409
+        if usable:
+            database.rounds.update_one({"_id": active["_id"]}, {"$inc": {"usable_windows": 1}})
+        return jsonify(ok=True, usable=usable), 201
 
     app.register_blueprint(blueprint)
