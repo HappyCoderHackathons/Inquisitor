@@ -5,7 +5,7 @@ import json
 import math
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -14,9 +14,13 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 ROOT = Path(__file__).parent
 DB_PATH = Path(os.environ.get("INPUTPRINT_DB", ROOT / "inputprint.sqlite3"))
-FEATURE_SCHEMA_PATH = ROOT.parent / "shared" / "feature-window-v1.schema.json"
-FEATURE_SCHEMA = json.loads(FEATURE_SCHEMA_PATH.read_text(encoding="utf-8"))
-FEATURE_VALIDATOR = Draft202012Validator(FEATURE_SCHEMA, format_checker=FormatChecker())
+FEATURE_VALIDATORS = {
+    version: Draft202012Validator(
+        json.loads((ROOT.parent / "shared" / f"feature-window-v{version}.schema.json").read_text(encoding="utf-8")),
+        format_checker=FormatChecker(),
+    )
+    for version in (1, 2)
+}
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
 
@@ -43,19 +47,36 @@ def initialize():
 
 
 def feature_window_error(value: object) -> str | None:
-    error = next(FEATURE_VALIDATOR.iter_errors(value), None)
+    version = value.get("schema_version") if isinstance(value, dict) else None
+    validator = FEATURE_VALIDATORS.get(version) if isinstance(version, int) else None
+    if validator is None:
+        return "Feature window schema_version must be 1 or 2"
+    error = next(validator.iter_errors(value), None)
     if error:
-        return f"Feature window does not match schema v1: {error.message}"
+        return f"Feature window does not match schema v{version}: {error.message}"
     window = cast(dict[str, object], value)
     features = cast(dict[str, int | float], window["features"])
+    mouse = cast(dict[str, int | float], window.get("mouse_features", {}))
     try:
-        if not all(math.isfinite(number) for number in features.values()):
+        if not all(math.isfinite(number) for number in [*features.values(), *mouse.values()]):
             return "Feature values must be finite numbers"
         duration = cast(int, window["duration_ms"])
-        if any(number > duration for name, number in features.items() if name.endswith("_ms")):
+        if duration > 600_000:
+            return "Window duration cannot exceed 10 minutes"
+        if any(number > duration for name, number in [*features.items(), *mouse.items()] if name.endswith("_ms")):
             return "Timing features cannot exceed window duration"
+        if features["presses_per_second"] > 50:
+            return "Press rate is implausible"
     except OverflowError:
         return "Feature values must be finite numbers"
+    return None
+
+
+def started_at_error(window: dict[str, object], now: datetime) -> str | None:
+    # The schema's RFC 3339 format check guarantees a UTC offset here.
+    ended = datetime.fromisoformat(cast(str, window["started_at"])) +timedelta(milliseconds=cast(int, window["duration_ms"]))
+    if ended > now + timedelta(minutes=5) or ended < now - timedelta(days=1):
+        return "started_at is outside the accepted ingestion window"
     return None
 
 
@@ -108,7 +129,7 @@ def save_feature_window():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify(error="Expected one feature-window JSON object"), 400
-    error = feature_window_error(data)
+    error = feature_window_error(data) or started_at_error(data, datetime.now(timezone.utc))
     if error:
         return jsonify(error=error), 422
     with db() as conn:

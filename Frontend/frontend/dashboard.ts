@@ -1,6 +1,17 @@
 type CollectionMode = "enrollment" | "monitoring";
+type MouseFeatures = {
+  move_count: number;
+  speed_mean_px_s: number;
+  speed_std_px_s: number;
+  acceleration_mean_px_s2: number;
+  acceleration_std_px_s2: number;
+  turn_angle_mean_rad: number;
+  click_count: number;
+  click_interval_mean_ms: number;
+  click_interval_std_ms: number;
+};
 type FeatureWindow = {
-  schema_version: 1;
+  schema_version: 1 | 2;
   device_id: string;
   session_id: string;
   sequence: number;
@@ -20,6 +31,7 @@ type FeatureWindow = {
     burst_count: number;
     press_overlap_fraction: number;
   };
+  mouse_features?: MouseFeatures;
 };
 type CollectionSummary = { windows: number; sessions: number; modes: Record<string, number> };
 
@@ -27,6 +39,7 @@ const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>
 const collectionSurface = $("#collectorSurface");
 const collectionMode = $("#collectionMode") as HTMLSelectElement | null;
 const collectionConsent = $("#collectionConsent") as HTMLInputElement | null;
+const mouseConsent = $("#mouseConsent") as HTMLInputElement | null;
 const startButton = $("#startCollection") as HTMLButtonElement | null;
 const pauseButton = $("#pauseCollection") as HTMLButtonElement | null;
 const stopButton = $("#stopCollection") as HTMLButtonElement | null;
@@ -41,6 +54,8 @@ const deleteLocalDataButton = $("#deleteLocalData") as HTMLButtonElement | null;
 const dataActionStatus = $("#dataActionStatus");
 
 const collectionWindowMs = 30_000;
+const mouseSegmentMs = 20;
+const mouseStrokeGapMs = 250;
 let deviceId = "";
 let sessionId = "";
 let mode: CollectionMode = "enrollment";
@@ -57,6 +72,20 @@ let overlaps = 0;
 let intervals: number[] = [];
 let holds: number[] = [];
 let heldKeys = new Map<string, number>();
+let trackMouse = false;
+let lastPointer: { x: number; y: number } | null = null;
+let lastMoveAt: number | null = null;
+let segmentStart = 0;
+let segmentDx = 0;
+let segmentDy = 0;
+let previousSpeed: number | null = null;
+let previousAngle: number | null = null;
+let lastClickAt: number | null = null;
+let clickCount = 0;
+let speeds: number[] = [];
+let accelerations: number[] = [];
+let turns: number[] = [];
+let clickIntervals: number[] = [];
 let pendingWindow: FeatureWindow | null = null;
 let resumeAfterRetry = false;
 
@@ -77,6 +106,7 @@ function updateControls() {
   if (deleteLocalDataButton) deleteLocalDataButton.disabled = collectionActive || pendingWindow !== null;
   if (collectionMode) collectionMode.disabled = collectionActive;
   if (collectionConsent) collectionConsent.disabled = collectionActive;
+  if (mouseConsent) mouseConsent.disabled = collectionActive;
 }
 
 function resetWindow() {
@@ -89,13 +119,75 @@ function resetWindow() {
   intervals = [];
   holds = [];
   heldKeys.clear();
+  lastPointer = null;
+  lastMoveAt = null;
+  previousSpeed = null;
+  previousAngle = null;
+  lastClickAt = null;
+  clickCount = 0;
+  speeds = [];
+  accelerations = [];
+  turns = [];
+  clickIntervals = [];
   if (progress) progress.value = 0;
   if (progressLabel) progressLabel.textContent = "Waiting for keyboard input";
 }
 
+function average(values: number[]) {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
 function standardDeviation(values: number[]) {
+  if (values.length === 0) return 0;
   const average = values.reduce((sum, value) => sum + value, 0) / values.length;
   return Math.sqrt(values.reduce((sum, value) => sum + (value - average) ** 2, 0) / values.length);
+}
+
+function recordMove(dx: number, dy: number, now: number) {
+  if (lastMoveAt === null || now - lastMoveAt > mouseStrokeGapMs) {
+    segmentStart = now;
+    segmentDx = 0;
+    segmentDy = 0;
+    previousSpeed = null;
+    previousAngle = null;
+    lastMoveAt = now;
+    return;
+  }
+  lastMoveAt = now;
+  segmentDx += dx;
+  segmentDy += dy;
+  const elapsed = now - segmentStart;
+  if (elapsed < mouseSegmentMs) return;
+  const distance = Math.hypot(segmentDx, segmentDy);
+  const speed = (distance * 1000) / elapsed;
+  speeds.push(speed);
+  if (previousSpeed !== null) accelerations.push((Math.abs(speed - previousSpeed) * 1000) / elapsed);
+  if (distance > 0) {
+    const angle = Math.atan2(segmentDy, segmentDx);
+    if (previousAngle !== null) {
+      const wrapped = (((angle - previousAngle + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+      turns.push(Math.abs(wrapped - Math.PI));
+    }
+    previousAngle = angle;
+  }
+  previousSpeed = speed;
+  segmentStart = now;
+  segmentDx = 0;
+  segmentDy = 0;
+}
+
+function mouseFeatures(): MouseFeatures {
+  return {
+    move_count: speeds.length,
+    speed_mean_px_s: average(speeds),
+    speed_std_px_s: standardDeviation(speeds),
+    acceleration_mean_px_s2: average(accelerations),
+    acceleration_std_px_s2: standardDeviation(accelerations),
+    turn_angle_mean_rad: average(turns),
+    click_count: clickCount,
+    click_interval_mean_ms: average(clickIntervals),
+    click_interval_std_ms: standardDeviation(clickIntervals),
+  };
 }
 
 function makeWindow(now: number): FeatureWindow | null {
@@ -105,7 +197,7 @@ function makeWindow(now: number): FeatureWindow | null {
   const pauseMs = pauses.reduce((sum, gap) => sum + gap, 0);
   const activeMs = Math.max(1, durationMs - pauseMs);
   const sortedIntervals = [...intervals].sort((a, b) => a - b);
-  return {
+  const value: FeatureWindow = {
     schema_version: 1,
     device_id: deviceId,
     session_id: sessionId,
@@ -127,6 +219,11 @@ function makeWindow(now: number): FeatureWindow | null {
       press_overlap_fraction: overlaps / intervals.length,
     },
   };
+  if (trackMouse) {
+    value.schema_version = 2;
+    value.mouse_features = mouseFeatures();
+  }
+  return value;
 }
 
 function startTimer() {
@@ -218,6 +315,7 @@ function startCollection() {
   }
   sessionId = window.crypto.randomUUID();
   mode = collectionMode.value === "monitoring" ? "monitoring" : "enrollment";
+  trackMouse = mouseConsent?.checked === true;
   sequence = 0;
   collectionActive = true;
   collectionPaused = false;
@@ -286,7 +384,28 @@ collectionSurface?.addEventListener("keyup", (event) => {
   heldKeys.delete(event.code);
 });
 
-window.addEventListener("blur", () => heldKeys.clear());
+collectionSurface?.addEventListener("pointermove", (event) => {
+  if (!trackMouse || !collectionActive || collectionPaused || pendingWindow || event.pointerType !== "mouse") return;
+  // The previous position stays in memory only to compute the next delta.
+  if (lastPointer !== null) recordMove(event.clientX - lastPointer.x, event.clientY - lastPointer.y, event.timeStamp);
+  lastPointer = { x: event.clientX, y: event.clientY };
+});
+
+collectionSurface?.addEventListener("pointerleave", () => {
+  lastPointer = null;
+});
+
+collectionSurface?.addEventListener("pointerdown", (event) => {
+  if (!trackMouse || !collectionActive || collectionPaused || pendingWindow || event.pointerType !== "mouse") return;
+  if (lastClickAt !== null) clickIntervals.push(event.timeStamp - lastClickAt);
+  lastClickAt = event.timeStamp;
+  clickCount++;
+});
+
+window.addEventListener("blur", () => {
+  heldKeys.clear();
+  lastPointer = null;
+});
 collectionConsent?.addEventListener("change", updateControls);
 startButton?.addEventListener("click", startCollection);
 pauseButton?.addEventListener("click", pauseCollection);

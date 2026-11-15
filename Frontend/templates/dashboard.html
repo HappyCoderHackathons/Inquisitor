@@ -53,7 +53,7 @@
             </div>
             <span class="status-label local-label">BROWSER ONLY</span>
           </div>
-          <p class="dashboard-panel-copy">With your consent, this page measures keyboard timing while the capture area is focused. Typed content and key identities stay in temporary browser memory; only aggregate windows matching the shared v1 contract are saved to this machine's SQLite database. Nothing is sent to a model service.</p>
+          <p class="dashboard-panel-copy">With your consent, this page measures keyboard timing while the capture area is focused. Typed content, key identities, and pointer positions stay in temporary browser memory; only aggregate windows matching the shared v1 contract (v2 when mouse timing is on) are saved to this machine's SQLite database. Nothing is sent to a model service.</p>
           <div class="collection-controls">
             <label class="mode-label" for="collectionMode">Collection mode
               <select id="collectionMode">
@@ -62,6 +62,7 @@
               </select>
             </label>
             <label class="consent-label"><input id="collectionConsent" type="checkbox"> I consent to collect keyboard timing for this local session.</label>
+            <label class="consent-label"><input id="mouseConsent" type="checkbox"> Optional: also collect mouse movement and click timing over the capture area.</label>
           </div>
           <div class="collector-surface-wrap">
             <div id="collectorSurface" class="collector-surface" tabindex="0" role="group" aria-describedby="collectorInstructions">Focus here, then type naturally while collection is active.</div>

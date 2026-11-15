@@ -1,0 +1,229 @@
+{
+  "description": "Synthetic contract fixtures for feature-window v2 (keyboard plus mouse). Not real input data.",
+  "valid": {
+    "enrollment": {
+      "schema_version": 2,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      },
+      "mouse_features": {
+        "move_count": 120,
+        "speed_mean_px_s": 640.5,
+        "speed_std_px_s": 310.2,
+        "acceleration_mean_px_s2": 9800.0,
+        "acceleration_std_px_s2": 7200.0,
+        "turn_angle_mean_rad": 0.42,
+        "click_count": 6,
+        "click_interval_mean_ms": 2400.0,
+        "click_interval_std_ms": 900.0
+      }
+    },
+    "no_mouse_activity": {
+      "schema_version": 2,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 1,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      },
+      "mouse_features": {
+        "move_count": 0,
+        "speed_mean_px_s": 0,
+        "speed_std_px_s": 0,
+        "acceleration_mean_px_s2": 0,
+        "acceleration_std_px_s2": 0,
+        "turn_angle_mean_rad": 0,
+        "click_count": 0,
+        "click_interval_mean_ms": 0,
+        "click_interval_std_ms": 0
+      }
+    }
+  },
+  "invalid": {
+    "missing_mouse_features": {
+      "schema_version": 2,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      }
+    },
+    "absolute_coordinates": {
+      "schema_version": 2,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      },
+      "mouse_features": {
+        "move_count": 120,
+        "speed_mean_px_s": 640.5,
+        "speed_std_px_s": 310.2,
+        "acceleration_mean_px_s2": 9800.0,
+        "acceleration_std_px_s2": 7200.0,
+        "turn_angle_mean_rad": 0.42,
+        "click_count": 6,
+        "click_interval_mean_ms": 2400.0,
+        "click_interval_std_ms": 900.0,
+        "x": 512
+      }
+    },
+    "click_target": {
+      "schema_version": 2,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      },
+      "mouse_features": {
+        "move_count": 120,
+        "speed_mean_px_s": 640.5,
+        "speed_std_px_s": 310.2,
+        "acceleration_mean_px_s2": 9800.0,
+        "acceleration_std_px_s2": 7200.0,
+        "turn_angle_mean_rad": 0.42,
+        "click_count": 6,
+        "click_interval_mean_ms": 2400.0,
+        "click_interval_std_ms": 900.0
+      },
+      "click_target": "button"
+    },
+    "turn_angle_out_of_range": {
+      "schema_version": 2,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      },
+      "mouse_features": {
+        "move_count": 120,
+        "speed_mean_px_s": 640.5,
+        "speed_std_px_s": 310.2,
+        "acceleration_mean_px_s2": 9800.0,
+        "acceleration_std_px_s2": 7200.0,
+        "turn_angle_mean_rad": 4,
+        "click_count": 6,
+        "click_interval_mean_ms": 2400.0,
+        "click_interval_std_ms": 900.0
+      }
+    },
+    "mouse_on_v1": {
+      "schema_version": 1,
+      "device_id": "fixture-device",
+      "session_id": "fixture-session",
+      "sequence": 0,
+      "mode": "enrollment",
+      "started_at": "2000-01-01T00:00:00Z",
+      "duration_ms": 30000,
+      "features": {
+        "key_count": 44,
+        "presses_per_second": 1.6,
+        "hold_mean_ms": 118.0,
+        "hold_std_ms": 40.7,
+        "press_interval_mean_ms": 251.7,
+        "press_interval_std_ms": 238.8,
+        "press_interval_p90_ms": 323,
+        "pause_count": 2,
+        "pause_fraction": 0.08,
+        "burst_count": 3,
+        "press_overlap_fraction": 0.12
+      },
+      "mouse_features": {
+        "move_count": 120,
+        "speed_mean_px_s": 640.5,
+        "speed_std_px_s": 310.2,
+        "acceleration_mean_px_s2": 9800.0,
+        "acceleration_std_px_s2": 7200.0,
+        "turn_angle_mean_rad": 0.42,
+        "click_count": 6,
+        "click_interval_mean_ms": 2400.0,
+        "click_interval_std_ms": 900.0
+      }
+    }
+  }
+}

@@ -27,23 +27,46 @@ SCHEMA_HASH = hashlib.sha256(SCHEMA_BYTES).hexdigest()
 SCHEMA = json.loads(SCHEMA_BYTES)
 VALIDATOR = Draft202012Validator(SCHEMA, format_checker=FormatChecker())
 FEATURE_NAMES = tuple(SCHEMA["properties"]["features"]["required"])
+# v2 adds mouse_features; models use keyboard features only, so they stay pinned to the v1 hash.
+VALIDATORS = {1: VALIDATOR, 2: Draft202012Validator(
+    json.loads((SCHEMA_PATH.parent / "feature-window-v2.schema.json").read_bytes()), format_checker=FormatChecker()
+)}
+MAX_DURATION_MS = 600_000
+MAX_PRESSES_PER_SECOND = 50
 
 
 def validate_window(value: object) -> dict[str, object]:
-    if not VALIDATOR.is_valid(value):
-        raise ValueError("window does not match feature-window schema v1")
+    version = value.get("schema_version") if isinstance(value, dict) else None
+    validator = VALIDATORS.get(version) if isinstance(version, int) else None
+    if validator is None or not validator.is_valid(value):
+        raise ValueError("window does not match feature-window schema v1 or v2")
     window = cast(dict[str, object], value)
     features = cast(dict[str, int | float], window["features"])
+    mouse = cast(dict[str, int | float], window.get("mouse_features", {}))
     try:
-        finite = all(math.isfinite(number) for number in features.values())
+        finite = all(math.isfinite(number) for number in [*features.values(), *mouse.values()])
     except OverflowError:
         finite = False
     if not finite:
         raise ValueError("features must contain finite numbers")
     duration = cast(int, window["duration_ms"])
-    if any(features[name] > duration for name in FEATURE_NAMES if name.endswith("_ms")):
+    if duration > MAX_DURATION_MS:
+        raise ValueError("window duration exceeds 10 minutes")
+    if any(number > duration for name, number in [*features.items(), *mouse.items()] if name.endswith("_ms")):
         raise ValueError("timing features cannot exceed window duration")
+    if features["presses_per_second"] > MAX_PRESSES_PER_SECOND:
+        raise ValueError("press rate is implausible")
     return window
+
+
+def valid_windows(values: list[object]) -> tuple[list[dict[str, object]], int]:
+    windows = []
+    for value in values:
+        try:
+            windows.append(validate_window(value))
+        except ValueError:
+            pass
+    return windows, len(values) - len(windows)
 
 
 def feature_row(window: dict[str, object]) -> list[float]:
@@ -169,7 +192,7 @@ class ModelStore:
             raise ValueError("validation sessions must be nonempty session IDs")
         if len(set(validation_sessions)) != len(validation_sessions):
             raise ValueError("validation session IDs must be unique")
-        windows = [validate_window(value) for value in values]
+        windows, rejected = valid_windows(values)
         if any(window["device_id"] != device_id or window["mode"] != "enrollment" for window in windows):
             raise ValueError("training requires enrollment windows for the authorized device")
         if any(cast(dict[str, int | float], window["features"])["key_count"] < 30 for window in windows):
@@ -219,6 +242,7 @@ class ModelStore:
             "selected_features": [name for name, keep in zip(FEATURE_NAMES, mask) if keep],
             "dropped_features": [name for name, keep in zip(FEATURE_NAMES, mask) if not keep],
             "training_window_count": len(training),
+            "rejected_window_count": rejected,
             "validation_window_count": len(validation),
             "training_sessions": sorted({cast(str, window["session_id"]) for window in training}),
             "validation_session": validation_sessions[0] if len(validation_sessions) == 1 else None,
@@ -242,8 +266,8 @@ class ModelStore:
         return metadata
 
     def _train_labeled(self, values: list[object], impostor_values: list[object], user_id: str, device_id: str) -> dict[str, object]:
-        genuine = [validate_window(value) for value in values]
-        impostor = [validate_window(value) for value in impostor_values]
+        genuine, rejected_genuine = valid_windows(values)
+        impostor, rejected_impostor = valid_windows(impostor_values)
         windows = genuine + impostor
         if len(genuine) < 20 or len(impostor) < 20:
             raise ValueError("labeled training needs at least 20 genuine and 20 impostor windows")
@@ -277,6 +301,7 @@ class ModelStore:
             "transform": "log1p then StandardScaler fitted on training data",
             "training_window_count": len(windows), "genuine_training_window_count": len(genuine),
             "impostor_training_window_count": len(impostor), "validation_window_count": 0,
+            "rejected_window_count": rejected_genuine + rejected_impostor,
             "training_sessions": sorted(genuine_sessions | impostor_sessions),
             "genuine_training_sessions": sorted(genuine_sessions), "impostor_training_sessions": sorted(impostor_sessions),
             "validation_sessions": [], "validation_session": None,
