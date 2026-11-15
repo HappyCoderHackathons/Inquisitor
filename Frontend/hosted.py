@@ -7,11 +7,13 @@ import logging
 import os
 import queue
 import secrets
+import socket
 import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -1474,6 +1476,46 @@ def register(
         finally:
             link.closed()
             publish_device_monitoring(g.agent_device["_id"])
+
+    if os.environ.get("ML_TUNNEL_HOST_KEY"):
+        # The private ML host cannot be reached from here, so it dials in: SSH over this WebSocket to the
+        # loopback sshd, which only lets its key open the 127.0.0.1:18765 forward. The ML token gates it.
+        @blueprint.before_request
+        def authorize_ml_tunnel():
+            if request.path != "/api/ml-tunnel":
+                return None
+            if request.headers.get("Origin") is not None:
+                abort(403)
+            token = Path(os.environ["ML_TOKEN_FILE"]).read_text().strip()
+            supplied = request.headers.get("Authorization", "").removeprefix("Bearer ")
+            if not token or not secrets.compare_digest(supplied.encode(), token.encode()):
+                abort(401)
+            return None
+
+        @sock.route("/api/ml-tunnel", bp=blueprint)
+        def ml_tunnel(ws):
+            try:
+                upstream = socket.create_connection(("127.0.0.1", 2222), timeout=10)
+            except OSError:
+                logger.warning(json.dumps({"component": "ml_tunnel", "outcome": "endpoint_unavailable"}))
+                return
+            with upstream:
+                upstream.settimeout(None)
+
+                def pump() -> None:
+                    try:
+                        while data := upstream.recv(65536):
+                            ws.send(data)
+                    except OSError:
+                        pass
+                    ws.close()
+
+                threading.Thread(target=pump, daemon=True).start()
+                try:
+                    while (data := ws.receive()) is not None:
+                        upstream.sendall(data if isinstance(data, bytes) else data.encode())
+                except (OSError, ConnectionError):
+                    pass
 
     @blueprint.post("/api/agent/windows")
     def upload_window():

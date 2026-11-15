@@ -12,18 +12,41 @@ elif [ -z "${ML_TOKEN_FILE:-}" ] && [ -n "${ML_SERVICE_TOKEN:-}" ]; then
     export ML_TOKEN_FILE=/tmp/ml_token
 fi
 
-# Optional SSH tunnel to the private ML service. The key should be a dedicated, forwarding-only key.
-if [ -n "${ML_SSH_DESTINATION:-}" ] && [ -n "${ML_SSH_KEY:-}" ] && [ -n "${ML_SSH_KNOWN_HOSTS:-}" ]; then
-    mkdir -p /tmp/ssh && chmod 700 /tmp/ssh
-    printf '%s
-' "$ML_SSH_KEY" > /tmp/ssh/id && chmod 600 /tmp/ssh/id
-    printf '%s
-' "$ML_SSH_KNOWN_HOSTS" > /tmp/ssh/known_hosts
-    ML_SSH_FORWARD="${ML_SSH_FORWARD:-127.0.0.1:18765:127.0.0.1:8765}"
-    echo "Starting ML SSH tunnel..."
+# Optional reverse-tunnel endpoint for the private ML service. The model host connects out to this
+# loopback sshd over the /api/ml-tunnel WebSocket and forwards 127.0.0.1:18765 here to its local ML service. The key can only open that forward.
+if [ -n "${ML_TUNNEL_HOST_KEY:-}" ] && [ -n "${ML_TUNNEL_AUTHORIZED_KEY:-}" ]; then
+    mkdir -p /tmp/sshd && chmod 700 /tmp/sshd
+    # Base64 of the private host key file, so the multi-line key survives secret storage intact.
+    printf '%s' "$ML_TUNNEL_HOST_KEY" | base64 -d > /tmp/sshd/host_key && chmod 600 /tmp/sshd/host_key
+    printf 'restrict,port-forwarding,permitlisten="127.0.0.1:18765",command="/bin/false" %s\n' \
+        "$ML_TUNNEL_AUTHORIZED_KEY" > /tmp/sshd/authorized_keys
+    cat > /tmp/sshd/sshd_config <<EOF
+Port 2222
+ListenAddress 127.0.0.1
+HostKey /tmp/sshd/host_key
+PidFile /tmp/sshd/sshd.pid
+AuthorizedKeysFile /tmp/sshd/authorized_keys
+AllowUsers $(id -un)
+StrictModes no
+UsePAM no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+AllowTcpForwarding remote
+PermitListen 127.0.0.1:18765
+GatewayPorts no
+AllowAgentForwarding no
+AllowStreamLocalForwarding no
+X11Forwarding no
+PermitTTY no
+PermitTunnel no
+ClientAliveInterval 15
+ClientAliveCountMax 2
+EOF
+    echo "Starting ML tunnel endpoint on 127.0.0.1:2222..."
     (while true; do
-        ssh -N -i /tmp/ssh/id -o IdentitiesOnly=yes -o UserKnownHostsFile=/tmp/ssh/known_hosts             -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30             -o ServerAliveCountMax=3 -L "$ML_SSH_FORWARD" "$ML_SSH_DESTINATION" || true
-        echo "ML SSH tunnel exited; retrying in 5s"
+        /usr/sbin/sshd -D -e -f /tmp/sshd/sshd_config || true
+        echo "ML tunnel endpoint exited; restarting in 5s"
         sleep 5
     done) &
 fi
