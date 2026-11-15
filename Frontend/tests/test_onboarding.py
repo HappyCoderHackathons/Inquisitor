@@ -52,6 +52,9 @@ class OnboardingTests(unittest.TestCase):
         self.score_error = None
         self.deleted = []
         self.delete_error = None
+        self.activated = []
+        self.activate_error = None
+        self.compared = []
         self.auth_sessions = {}
         patcher = patch("hosted.requests.request", side_effect=self.auth_request)
         patcher.start()
@@ -61,7 +64,7 @@ class OnboardingTests(unittest.TestCase):
             self.trained.append((user_id, device_id, windows, validation_sessions))
             if self.training_error:
                 raise self.training_error
-            return "model-1"
+            return f"model-{len(self.trained)}"
 
         def deleter(user_id, device_id):
             if self.delete_error:
@@ -72,8 +75,18 @@ class OnboardingTests(unittest.TestCase):
         self.deleter = deleter
         app = Flask(__name__, template_folder=str(Path(server.__file__).parent / "templates"))
         with patch.dict(os.environ, ENV):
-            hosted.register(app, self.database, self.trainer, self.score, server.onboarding_window_error, self.deleter)
+            hosted.register(app, self.database, self.trainer, self.score, server.onboarding_window_error, self.deleter,
+                            self.activate, self.compare)
         self.client = app.test_client()
+
+    def activate(self, user_id, device_id, model_id):
+        if self.activate_error:
+            raise self.activate_error
+        self.activated.append(model_id)
+
+    def compare(self, user_id, device_id, model_id, windows):
+        self.compared.append((model_id, windows))
+        return {"candidate": {"model_id": model_id}, "active": {"model_id": self.activated[-1]}}
 
     def score(self, user_id, device_id, value):
         if self.score_error:
@@ -160,6 +173,56 @@ class OnboardingTests(unittest.TestCase):
         self.clock += timedelta(seconds=61)
         return session_id, self.client.post("/api/onboarding/rounds/current/finish", json={}).get_json()
 
+    def enroll(self, device_id, agent):
+        for index in range(3):
+            if index < 2:
+                self.play("aim", [0], device_id, agent)
+            for game in ("tetris", "typing", "arena"):
+                last, _ = self.play(game, [40] * 4, device_id, agent)
+        self.play("aim", [0], device_id, agent)
+        return last
+
+    def test_retrain_needs_approval_compares_on_a_holdout_and_rolls_back(self):
+        device_id, agent = self.pair()
+        self.enroll(device_id, agent)
+        self.assertEqual(self.client.post("/api/onboarding/train", json={}).get_json()["model_id"], "model-1")
+        self.assertEqual(self.activated, ["model-1"])
+        self.assertEqual(self.client.post("/api/onboarding/retrain", json={}).status_code, 422)
+        status = self.client.post("/api/onboarding/retrain", json={"approve": True}).get_json()
+        self.assertEqual((status["state"], status["retraining"], status["model_id"]), ("collecting", True, "model-1"))
+        self.assertFalse(status["ready_to_train"], "earlier rounds do not count toward a retrain")
+        monitoring = window(device_id, "monitor-1", 0) | {"mode": "monitoring"}
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=monitoring).status_code, 201)
+        enrolled = self.database.windows.count_documents({})
+        self.play("typing", [40] * 4, device_id, agent)
+        self.client.post("/api/onboarding/discard", json={})
+        self.assertEqual(self.database.windows.count_documents({}), enrolled, "discard keeps the active model's data")
+
+        holdout = self.enroll(device_id, agent)
+        status = self.client.post("/api/onboarding/train", json={}).get_json()
+        self.assertEqual((status["state"], status["candidate_model_id"]), ("review", "model-2"))
+        self.assertEqual(self.activated, ["model-1"], "a retrained model is not activated automatically")
+        first_sessions = {item["session_id"] for item in self.trained[0][2]}
+        retrained_sessions = {item["session_id"] for item in self.trained[1][2]} | set(self.trained[1][3])
+        self.assertFalse(retrained_sessions & (first_sessions | {holdout}))
+        compared_model, compared_windows = self.compared[0]
+        self.assertEqual((compared_model, {item["session_id"] for item in compared_windows}), ("model-2", {holdout}))
+        self.assertEqual(status["comparison"]["active"]["model_id"], "model-1")
+
+        status = self.client.post("/api/onboarding/candidate/activate", json={}).get_json()
+        self.assertEqual((status["state"], status["model_id"], status["previous_model_id"]),
+                         ("ready", "model-2", "model-1"))
+        active = [item["_id"] for item in self.database.model_versions.find({"active": True})]
+        self.assertEqual(active, ["model-2"])
+        self.activate_error = RuntimeError("model service returned 503")
+        self.assertEqual(self.client.post("/api/onboarding/rollback", json={}).status_code, 502)
+        self.assertEqual(self.client.get("/api/onboarding").get_json()["model_id"], "model-2")
+        self.activate_error = None
+        status = self.client.post("/api/onboarding/rollback", json={}).get_json()
+        self.assertEqual((status["model_id"], status["previous_model_id"]), ("model-1", "model-2"))
+        self.assertEqual(self.activated, ["model-1", "model-2", "model-1"])
+        self.assertEqual(self.client.post("/api/onboarding/candidate/activate", json={}).status_code, 409)
+
     def test_agent_windows_are_scoped_to_device_and_active_round(self):
         device_id, agent = self.pair()
         self.assertEqual(self.client.get("/api/agent/onboarding", headers={"Authorization": "Bearer nope"}).status_code,
@@ -197,6 +260,7 @@ class OnboardingTests(unittest.TestCase):
         with patch.dict(os.environ, ENV):
             hosted.register(
                 Flask(__name__), self.database, self.trainer, self.score, server.onboarding_window_error, self.deleter,
+                self.activate, self.compare,
             )
 
         session = self.database.rounds.find_one({"_id": "legacy-session"})
