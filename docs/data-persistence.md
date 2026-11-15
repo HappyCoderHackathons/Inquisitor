@@ -12,6 +12,12 @@ Each trained artifact is tracked as a model version with job state, algorithm na
 full training metadata. Active selection is per user and device. Deleting a device removes
 its model versions and artifact directories.
 
+Each device enrolls and trains its own baseline by default. A second device on the same
+account cannot read, score with, or activate the first device's model, and activating or
+deleting one device's model leaves the other device's active model in place. The only
+cross-device model is the opt-in `tray-multimodal` profile, which is trained with an
+explicit `device_ids` allowlist (see [multimodal-model.md](multimodal-model.md)).
+
 ## Inference results and alerts
 
 Monitoring windows produce an inference result with model ID, score, threshold, and
