@@ -218,14 +218,14 @@ impl Capture {
         if !filter(&path) {
             return;
         }
-        self.process_raw(raw);
+        self.dispatch_raw(raw);
     }
 
-    /// Dispatch one decoded raw-input packet. `process_wm_input` calls this after
+    /// Dispatch one decoded raw-input packet. `process_raw` calls this after
     /// the device filter accepts the event, so keyboard, mouse, CSV, and the
     /// feature windower stay on one path. A synthetic `RAWINPUT` can be passed
     /// here when there is no live `WM_INPUT`.
-    pub fn process_raw(&mut self, raw: &RAWINPUT) {
+    pub fn dispatch_raw(&mut self, raw: &RAWINPUT) {
         let dev = raw.header.hDevice;
         match raw.header.dwType {
             0 => {
@@ -1331,7 +1331,7 @@ mod tests {
     fn time_raw(cap: &mut Capture, raw: &RAWINPUT, samples: &mut Vec<u64>) {
         let raw = std::hint::black_box(raw);
         let start = Instant::now();
-        cap.process_raw(raw);
+        cap.dispatch_raw(raw);
         let ns = std::hint::black_box(start.elapsed()).as_nanos();
         samples.push(u64::try_from(ns).unwrap_or(u64::MAX));
     }
