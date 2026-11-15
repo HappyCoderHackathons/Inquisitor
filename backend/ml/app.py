@@ -87,28 +87,71 @@ def create_app() -> Flask:
         model = published_model()
         return jsonify(remember(model.score(body({"window"})["window"], g.device_id)))
 
-    @app.post("/models/train")
-    def train():
-        value = body({"windows"}, {"validation_session_id", "validation_session_ids", "profile", "impostor_windows"})
+    def validate_training_request(value: dict[str, object]) -> tuple[bool, object]:
         labeled = value.get("profile") == "labeled-overlap"
         if labeled:
             if any(field in value for field in ("validation_session_id", "validation_session_ids")):
                 raise ValueError("labeled-overlap uses all supplied data; omit validation session fields")
             if not isinstance(value.get("impostor_windows"), list):
                 raise ValueError("labeled-overlap requires an impostor_windows list")
-        elif ("validation_session_id" in value) == ("validation_session_ids" in value):
-            raise ValueError("provide exactly one of validation_session_id or validation_session_ids")
-        sessions = value.get("validation_session_id", value.get("validation_session_ids"))
-        if not isinstance(value["windows"], list) or (not labeled and not isinstance(sessions, (str, list))):
-            raise ValueError("windows must be a list and validation sessions must be session IDs")
+            sessions = None
+        else:
+            if ("validation_session_id" in value) == ("validation_session_ids" in value):
+                raise ValueError("provide exactly one of validation_session_id or validation_session_ids")
+            sessions = value.get("validation_session_id", value.get("validation_session_ids"))
+            if not isinstance(sessions, (str, list)):
+                raise ValueError("validation sessions must be session IDs")
+        if not isinstance(value["windows"], list):
+            raise TypeError("windows must be a list")
+        return labeled, sessions
+
+    def execute_training(
+        value: dict[str, object], sessions: object, user_id: str, device_id: str, model_id: str | None = None,
+    ) -> dict[str, object]:
+        try:
+            metadata = store.train(
+                value["windows"], user_id, device_id, sessions,
+                profile=value.get("profile", "all"),
+                impostor_values=value.get("impostor_windows"),
+                model_id=model_id,
+            )
+        except Exception:
+            if model_id is not None:
+                account.set_model_job_state(user_id, device_id, model_id, "failed")
+            raise
+        account.register_model_version(user_id, device_id, metadata, active=False)
+        return metadata
+
+    @app.post("/models/train")
+    def train():
+        value = body({"windows"}, {"validation_session_id", "validation_session_ids", "profile", "impostor_windows"})
+        _, sessions = validate_training_request(value)
         if not training_lock.acquire(blocking=False):
             return jsonify(error="training is busy; retry later"), 503
+        if os.environ.get("ML_TRAIN_ASYNC") != "1":
+            try:
+                return jsonify(execute_training(value, sessions, g.user_id, g.device_id)), 201
+            finally:
+                training_lock.release()
+        user_id, device_id = g.user_id, g.device_id
         try:
-            metadata = store.train(value["windows"], g.user_id, g.device_id, sessions,
-                                   profile=value.get("profile", "all"), impostor_values=value.get("impostor_windows"))
-            return jsonify(metadata), 201
-        finally:
+            model_id = store.reserve_training_job(user_id, device_id)
+            account.register_model_version(user_id, device_id, {"model_id": model_id, "state": "queued"}, active=False)
+        except BaseException:
             training_lock.release()
+            raise
+
+        def run_job() -> None:
+            try:
+                execute_training(value, sessions, user_id, device_id, model_id)
+            except Exception:
+                app.logger.exception("training job %s failed", model_id)
+            finally:
+                training_lock.release()
+
+        queued = store.metadata(model_id, user_id, device_id)
+        threading.Thread(target=run_job, daemon=True).start()
+        return jsonify(queued), 202
 
     @app.get("/models/active")
     def active_metadata():
@@ -119,9 +162,22 @@ def create_app() -> Flask:
         window = validate_window(body({"window"})["window"])
         if window["device_id"] != g.device_id:
             raise PermissionError("window belongs to another device")
+        result = None
+        if window["mode"] == "monitoring":
+            try:
+                model_id = store.active_model_id(g.user_id, g.device_id)
+            except FileNotFoundError:
+                return jsonify(error="monitoring requires an active model for this account and device"), 409
+            # Score before saving so a scoring failure leaves nothing stored and the window can be retried.
+            try:
+                result = store.score(model_id, window, g.user_id, g.device_id)
+            except (EOFError, KeyError, OSError, RuntimeError, ValueError) as error:
+                return jsonify(error=f"scoring failed: {error}"), 502
         if not account.save_window(g.user_id, g.device_id, window):
             return jsonify(error="This device/session/sequence window already exists"), 409
-        return jsonify(ok=True), 201
+        if result is None:
+            return jsonify(ok=True), 201
+        return jsonify(remember(result)), 201
 
     @app.post("/models/active/score")
     def active_score():
@@ -130,7 +186,9 @@ def create_app() -> Flask:
 
     @app.put("/models/<model_id>/active")
     def activate(model_id: str):
-        return jsonify(store.activate(model_id, g.user_id, g.device_id))
+        metadata = store.activate(model_id, g.user_id, g.device_id)
+        account.register_model_version(g.user_id, g.device_id, metadata, active=True)
+        return jsonify(metadata)
 
     @app.get("/models/<model_id>")
     def metadata(model_id: str):

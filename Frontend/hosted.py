@@ -9,17 +9,32 @@ import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import uuid4
 
-from flask import Blueprint, Flask, abort, g, jsonify, redirect, render_template, request, url_for
 import requests
+from atlas_persistence import (
+    delete_device_records,
+    ensure_indexes,
+    record_inference,
+    record_model_version,
+)
+from flask import (
+    Blueprint,
+    Flask,
+    abort,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
+from models import DEFAULT_PRIVACY_PREFERENCES, DevicePairingState
 from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
-
-from models import DEFAULT_PRIVACY_PREFERENCES, DevicePairingState
 
 GAMES = ("aim", "tetris", "typing", "arena")
 GAME_SECONDS = 150
@@ -39,6 +54,7 @@ ENV = (
 Document = dict[str, Any]
 Trainer = Callable[[str, str, list[Document], list[str]], str]
 Scorer = Callable[[str, str, Document], Document]
+Deleter = Callable[[str, str], None]
 
 
 def configured() -> bool:
@@ -54,10 +70,10 @@ def digest(value: str) -> str:
 
 
 def now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer]:
+def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer, Deleter]:
     def call(method: str, path: str, user_id: str, device_id: str, body: object | None = None) -> Document:
         request_ = urllib.request.Request(
             base_url.rstrip("/") + path, method=method,
@@ -73,16 +89,42 @@ def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer]:
             raise RuntimeError(f"model service returned {error.code}: {message}") from None
 
     def train(user_id: str, device_id: str, windows: list[Document], validation_sessions: list[str]) -> str:
-        metadata = call("POST", "/models/train", user_id, device_id,
-                        {"windows": windows, "validation_session_ids": validation_sessions})
+        payload = {"windows": windows, "validation_session_ids": validation_sessions}
+        request_ = urllib.request.Request(
+            base_url.rstrip("/") + "/models/train", method="POST",
+            data=json.dumps(payload, allow_nan=False).encode(),
+            headers={"Authorization": f"Bearer {token}", "X-User-ID": user_id, "X-Device-ID": device_id,
+                     "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request_, timeout=120) as response:
+                metadata = cast(Document, json.load(response))
+                status = response.status
+        except urllib.error.HTTPError as error:
+            message = json.loads(error.read() or b"{}").get("error", "model service error")
+            raise RuntimeError(f"model service returned {error.code}: {message}") from None
         model_id = cast(str, metadata["model_id"])
+        if status == 202:
+            for _ in range(120):
+                metadata = call("GET", f"/models/{model_id}", user_id, device_id)
+                state = metadata.get("state")
+                if state == "ready":
+                    break
+                if state == "failed":
+                    raise RuntimeError(cast(str, metadata.get("error", "training failed")))
+                threading.Event().wait(0.5)
+            else:
+                raise RuntimeError("training did not finish before the polling deadline")
         call("PUT", f"/models/{model_id}/active", user_id, device_id)
         return model_id
 
     def score(user_id: str, device_id: str, window: Document) -> Document:
         return call("POST", "/models/active/score", user_id, device_id, {"window": window})
 
-    return train, score
+    def delete(user_id: str, device_id: str) -> None:
+        call("DELETE", "/me/data", user_id, device_id)
+
+    return train, score, delete
 
 
 def progress(database: Database, onboarding: Document) -> Document:
@@ -109,9 +151,15 @@ def progress(database: Database, onboarding: Document) -> Document:
 
 
 def register(
-    app: Flask, database: Database, trainer: Trainer, scorer: Scorer, window_error: Callable[[Document], str | None],
+    app: Flask,
+    database: Database,
+    trainer: Trainer,
+    scorer: Scorer,
+    window_error: Callable[[Document], str | None],
+    deleter: Deleter,
 ) -> None:
     public_origin = os.environ["BETTER_AUTH_URL"].rstrip("/")
+    ensure_indexes(database)
     database.rate_limits.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("code_hash", unique=True)
@@ -163,6 +211,10 @@ def register(
                 model_id = trainer(onboarding["user_id"], onboarding["device_id"], windows,
                                    status["validation_sessions"])
                 update = {"state": "ready", "model_id": model_id, "completed_at": now()}
+                record_model_version(
+                    database, user_id=onboarding["user_id"], device_id=onboarding["device_id"],
+                    metadata={"model_id": model_id, "state": "ready"}, active=True, created_at=update["completed_at"],
+                )
             except (RuntimeError, OSError, KeyError, ValueError) as error:
                 update = {"state": "failed", "error": str(error)}
             database.onboarding.update_one({"_id": onboarding["_id"]}, {"$set": update})
@@ -327,7 +379,7 @@ def register(
         if active is None:
             abort(409)
         ended = now()
-        started = cast(datetime, active["started_at"]).replace(tzinfo=timezone.utc)
+        started = cast(datetime, active["started_at"]).replace(tzinfo=UTC)
         credited = min(int((ended - started).total_seconds() * 1000), ROUND_MS) if outcome == "finish" else 0
         database.rounds.update_one({"_id": active["_id"]}, {"$set": {"ended_at": ended, "credited_ms": credited}})
         return jsonify(progress(database, onboarding))
@@ -341,6 +393,38 @@ def register(
             return jsonify(status), 409
         start_training(onboarding, status)
         return jsonify(progress(database, user_onboarding(onboarding["user_id"]))), 202
+
+    @blueprint.post("/api/devices/<device_id>/revoke")
+    def revoke_device(device_id: str):
+        user_id = current_user()
+        json_body()
+        revoked = database.devices.update_one(
+            {"_id": device_id, "user_id": user_id, "revoked_at": None},
+            {"$set": {"revoked_at": now(), "pairing_state": "revoked"}},
+        )
+        if revoked.matched_count == 0:
+            abort(404)
+        return jsonify(ok=True)
+
+    @blueprint.delete("/api/me/data")
+    def delete_my_data():
+        user_id = current_user()
+        json_body()
+        device_ids = [device["_id"] for device in database.devices.find({"user_id": user_id}, {"_id": 1})]
+        if device_ids:
+            try:
+                deleter(user_id, device_ids[0])
+            except (RuntimeError, OSError):
+                return jsonify(error="model service is unavailable; nothing was deleted"), 502
+        onboarding_ids = [item["_id"] for item in database.onboarding.find({"user_id": user_id}, {"_id": 1})]
+        database.rounds.delete_many({"onboarding_id": {"$in": onboarding_ids}})
+        database.onboarding.delete_many({"user_id": user_id})
+        for device_id in device_ids:
+            delete_device_records(database, user_id, device_id)
+        database.devices.update_many(
+            {"user_id": user_id, "revoked_at": None}, {"$set": {"revoked_at": now(), "pairing_state": "revoked"}}
+        )
+        return jsonify(ok=True, devices=len(device_ids))
 
     @blueprint.post("/api/agent/pair")
     def pair():
@@ -431,9 +515,14 @@ def register(
             return jsonify(error="This device/session/sequence window already exists"), 409
         try:
             result = scorer(device["user_id"], device["_id"], window)
-        except (RuntimeError, OSError) as error:
-            database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"error": str(error)}})
+        except (RuntimeError, OSError):
+            # Remove the unscored window so the agent can retry the same sequence.
+            database.monitoring_windows.delete_one({"_id": record.inserted_id})
             return jsonify(error="scoring is unavailable; retry later"), 502
+        stamp = now()
+        record_inference(
+            database, user_id=device["user_id"], device_id=device["_id"], window=window, result=result, created_at=stamp,
+        )
         database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"result": result}})
         return jsonify(result), 201
 

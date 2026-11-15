@@ -5,7 +5,6 @@ import json
 import math
 import os
 import shutil
-import tempfile
 import threading
 from datetime import UTC, datetime
 from importlib.metadata import version
@@ -150,13 +149,59 @@ class ModelStore:
                 raise PermissionError("model belongs to another account or device")
             return metadata
 
+    def _write_metadata(self, model_path: Path, metadata: dict[str, object]) -> None:
+        staging = model_path / "metadata.json.tmp"
+        staging.write_text(json.dumps(metadata, allow_nan=False), encoding="utf-8")
+        os.replace(staging, model_path / "metadata.json")
+
+    def reserve_training_job(self, user_id: str, device_id: str) -> str:
+        if os.environ.get("ML_ALLOW_TRAINING") != "1":
+            raise RuntimeError("training is disabled; enable it only on the designated training host")
+        model_id = uuid4().hex
+        path = self.directory / model_id
+        path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        metadata = {
+            "model_id": model_id,
+            "user_id": user_id,
+            "device_id": device_id,
+            "state": "queued",
+            "trained_at": None,
+        }
+        with self._lock:
+            self._write_metadata(path, metadata)
+        return model_id
+
+    def set_job_state(
+        self, model_id: str, user_id: str, device_id: str, state: str, **extra: object,
+    ) -> dict[str, object]:
+        if state not in {"queued", "running", "ready", "failed"}:
+            raise ValueError("job state must be queued, running, ready, or failed")
+        with self._lock:
+            path = self._path(model_id)
+            metadata = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
+            if metadata["user_id"] != user_id or metadata["device_id"] != device_id:
+                raise PermissionError("model belongs to another account or device")
+            metadata["state"] = state
+            metadata.update(extra)
+            self._write_metadata(path, metadata)
+            return metadata
+
+    def fail_job(self, model_id: str, user_id: str, device_id: str, error: str) -> dict[str, object]:
+        return self.set_job_state(model_id, user_id, device_id, "failed", error=error)
+
     def _active_path(self, user_id: str, device_id: str) -> Path:
         owner = hashlib.sha256(json.dumps([user_id, device_id]).encode()).hexdigest()
         return self.directory / "active" / f"{owner}.json"
 
+    def ready_metadata(self, model_id: str, user_id: str, device_id: str) -> dict[str, object]:
+        metadata = self.metadata(model_id, user_id, device_id)
+        if metadata.get("state", "ready") != "ready":
+            raise ValueError(f"model is {metadata['state']}, not ready")
+        return metadata
+
     def activate(self, model_id: str, user_id: str, device_id: str) -> dict[str, object]:
         with self._lock:
-            metadata = self.metadata(model_id, user_id, device_id)
+            metadata = self.ready_metadata(model_id, user_id, device_id)
             path = self._active_path(user_id, device_id)
             path.parent.mkdir(exist_ok=True, mode=0o700)
             staging = path.with_suffix(".tmp")
@@ -181,98 +226,111 @@ class ModelStore:
         min_validation_windows: int = 10,
         profile: str = "all",
         impostor_values: list[object] | None = None,
+        model_id: str | None = None,
     ) -> dict[str, object]:
         if os.environ.get("ML_ALLOW_TRAINING") != "1":
             raise RuntimeError("training is disabled; enable it only on the designated training host")
-        if profile == "labeled-overlap":
-            if validation_session_id is not None:
-                raise ValueError("labeled-overlap fits all supplied data; omit validation session fields")
-            return self._train_labeled(values, impostor_values or [], user_id, device_id)
-        if impostor_values is not None:
-            raise ValueError("impostor windows require the labeled-overlap profile")
-        if profile not in ("all", "cadence-overlap"):
-            raise ValueError("unknown feature profile")
-        if validation_session_id is None:
-            raise ValueError("validation sessions are required")
-        validation_sessions = [validation_session_id] if isinstance(validation_session_id, str) else validation_session_id
-        if not validation_sessions or any(not isinstance(session, str) or not session for session in validation_sessions):
-            raise ValueError("validation sessions must be nonempty session IDs")
-        if len(set(validation_sessions)) != len(validation_sessions):
-            raise ValueError("validation session IDs must be unique")
-        windows, rejected = valid_windows(values)
-        if any(window["device_id"] != device_id or window["mode"] != "enrollment" for window in windows):
-            raise ValueError("training requires enrollment windows for the authorized device")
-        if any(cast(dict[str, int | float], window["features"])["key_count"] < 30 for window in windows):
-            raise ValueError("training windows require at least 30 presses")
-        identities = [(window["session_id"], window["sequence"]) for window in windows]
-        if len(set(identities)) != len(identities):
-            raise ValueError("duplicate session/sequence in enrollment")
-        if not set(validation_sessions).issubset({window["session_id"] for window in windows}):
-            raise ValueError("each validation session must have windows")
-        training = [window for window in windows if window["session_id"] not in validation_sessions]
-        validation = [window for window in windows if window["session_id"] in validation_sessions]
-        if len(training) < min_train_windows or len(validation) < min_validation_windows:
-            raise ValueError(
-                f"need {min_train_windows} training windows and {min_validation_windows} windows "
-                "from a separate validation session"
+        reserved = model_id is not None
+        model_id = model_id or uuid4().hex
+        try:
+            if reserved:
+                self.set_job_state(model_id, user_id, device_id, "running")
+            if profile == "labeled-overlap":
+                if validation_session_id is not None:
+                    raise ValueError("labeled-overlap fits all supplied data; omit validation session fields")
+                return self._train_labeled(values, impostor_values or [], user_id, device_id, model_id)
+            if impostor_values is not None:
+                raise ValueError("impostor windows require the labeled-overlap profile")
+            if profile not in ("all", "cadence-overlap"):
+                raise ValueError("unknown feature profile")
+            if validation_session_id is None:
+                raise ValueError("validation sessions are required")
+            validation_sessions = (
+                [validation_session_id] if isinstance(validation_session_id, str) else validation_session_id
             )
-        selected = ("presses_per_second", "press_overlap_fraction") if profile == "cadence-overlap" else FEATURE_NAMES
-        transform = "log1p" if profile == "cadence-overlap" else "identity"
-        matrix = np.asarray([feature_row(window) for window in training])
-        if transform == "log1p":
-            matrix = np.log1p(matrix)
-        mask = (np.std(matrix, axis=0) > 1e-8) & np.asarray([name in selected for name in FEATURE_NAMES])
-        if not mask.any():
-            raise ValueError("all training features are constant")
-        parameters = {"n_estimators": 200 if profile == "cadence-overlap" else 100,
-                      "max_samples": 16 if profile == "cadence-overlap" else "auto",
-                      "random_state": 49, "n_jobs": 1}
-        model = IsolationForest(**parameters)
-        model.fit(matrix[:, mask])
-        validation_matrix = np.asarray([feature_row(window) for window in validation])
-        if transform == "log1p":
-            validation_matrix = np.log1p(validation_matrix)
-        calibration_scores = -model.score_samples(validation_matrix[:, mask])
-        threshold = float(np.sort(calibration_scores)[math.ceil(0.95 * len(calibration_scores)) - 1])
-        model_id = uuid4().hex
-        metadata = {
-            "model_id": model_id,
-            "state": "ready",
-            "user_id": user_id,
-            "device_id": device_id,
-            "algorithm": "IsolationForest",
-            "schema_version": 1,
-            "schema_sha256": SCHEMA_HASH,
-            "feature_names": list(FEATURE_NAMES),
-            "feature_profile": profile,
-            "transform": transform,
-            "selected_features": [name for name, keep in zip(FEATURE_NAMES, mask) if keep],
-            "dropped_features": [name for name, keep in zip(FEATURE_NAMES, mask) if not keep],
-            "training_window_count": len(training),
-            "rejected_window_count": rejected,
-            "validation_window_count": len(validation),
-            "training_sessions": sorted({cast(str, window["session_id"]) for window in training}),
-            "validation_session": validation_sessions[0] if len(validation_sessions) == 1 else None,
-            "validation_sessions": sorted(validation_sessions),
-            "threshold": threshold,
-            "threshold_percentile": 95,
-            "threshold_rule": "empirical 95% genuine order statistic; alert strictly above threshold",
-            "calibration_false_rejection_rate": float(np.mean(calibration_scores > threshold)),
-            "parameters": parameters,
-            "trained_at": datetime.now(UTC).isoformat(),
-            "versions": {name: version(name) for name in ("scikit-learn", "numpy", "joblib")},
-        }
-        return self._publish({"model": model, "mask": mask, "transform": transform}, metadata)
+            if not validation_sessions or any(not isinstance(session, str) or not session for session in validation_sessions):
+                raise ValueError("validation sessions must be nonempty session IDs")
+            if len(set(validation_sessions)) != len(validation_sessions):
+                raise ValueError("validation session IDs must be unique")
+            windows, rejected = valid_windows(values)
+            if any(window["device_id"] != device_id or window["mode"] != "enrollment" for window in windows):
+                raise ValueError("training requires enrollment windows for the authorized device")
+            if any(cast(dict[str, int | float], window["features"])["key_count"] < 30 for window in windows):
+                raise ValueError("training windows require at least 30 presses")
+            identities = [(window["session_id"], window["sequence"]) for window in windows]
+            if len(set(identities)) != len(identities):
+                raise ValueError("duplicate session/sequence in enrollment")
+            if not set(validation_sessions).issubset({window["session_id"] for window in windows}):
+                raise ValueError("each validation session must have windows")
+            training = [window for window in windows if window["session_id"] not in validation_sessions]
+            validation = [window for window in windows if window["session_id"] in validation_sessions]
+            if len(training) < min_train_windows or len(validation) < min_validation_windows:
+                raise ValueError(
+                    f"need {min_train_windows} training windows and {min_validation_windows} windows "
+                    "from a separate validation session"
+                )
+            selected = ("presses_per_second", "press_overlap_fraction") if profile == "cadence-overlap" else FEATURE_NAMES
+            transform = "log1p" if profile == "cadence-overlap" else "identity"
+            matrix = np.asarray([feature_row(window) for window in training])
+            if transform == "log1p":
+                matrix = np.log1p(matrix)
+            mask = (np.std(matrix, axis=0) > 1e-8) & np.asarray([name in selected for name in FEATURE_NAMES])
+            if not mask.any():
+                raise ValueError("all training features are constant")
+            parameters = {"n_estimators": 200 if profile == "cadence-overlap" else 100,
+                          "max_samples": 16 if profile == "cadence-overlap" else "auto",
+                          "random_state": 49, "n_jobs": 1}
+            model = IsolationForest(**parameters)
+            model.fit(matrix[:, mask])
+            validation_matrix = np.asarray([feature_row(window) for window in validation])
+            if transform == "log1p":
+                validation_matrix = np.log1p(validation_matrix)
+            calibration_scores = -model.score_samples(validation_matrix[:, mask])
+            threshold = float(np.sort(calibration_scores)[math.ceil(0.95 * len(calibration_scores)) - 1])
+            metadata = {
+                "model_id": model_id,
+                "state": "ready",
+                "user_id": user_id,
+                "device_id": device_id,
+                "algorithm": "IsolationForest",
+                "schema_version": 1,
+                "schema_sha256": SCHEMA_HASH,
+                "feature_names": list(FEATURE_NAMES),
+                "feature_profile": profile,
+                "transform": transform,
+                "selected_features": [name for name, keep in zip(FEATURE_NAMES, mask) if keep],
+                "dropped_features": [name for name, keep in zip(FEATURE_NAMES, mask) if not keep],
+                "training_window_count": len(training),
+                "rejected_window_count": rejected,
+                "validation_window_count": len(validation),
+                "training_sessions": sorted({cast(str, window["session_id"]) for window in training}),
+                "validation_session": validation_sessions[0] if len(validation_sessions) == 1 else None,
+                "validation_sessions": sorted(validation_sessions),
+                "threshold": threshold,
+                "threshold_percentile": 95,
+                "threshold_rule": "empirical 95% genuine order statistic; alert strictly above threshold",
+                "calibration_false_rejection_rate": float(np.mean(calibration_scores > threshold)),
+                "parameters": parameters,
+                "trained_at": datetime.now(UTC).isoformat(),
+                "versions": {name: version(name) for name in ("scikit-learn", "numpy", "joblib")},
+            }
+            return self._publish({"model": model, "mask": mask, "transform": transform}, metadata)
+        except Exception as error:
+            if reserved:
+                self.fail_job(model_id, user_id, device_id, str(error))
+            raise
 
     def _publish(self, bundle: dict[str, object], metadata: dict[str, object]) -> dict[str, object]:
-        with tempfile.TemporaryDirectory(prefix=".training-", dir=self.directory) as temporary:
-            staging = Path(temporary)
-            joblib.dump(bundle, staging / "model.joblib")
-            (staging / "metadata.json").write_text(json.dumps(metadata, allow_nan=False), encoding="utf-8")
-            staging.rename(self.directory / cast(str, metadata["model_id"]))
+        target = self.directory / cast(str, metadata["model_id"])
+        target.mkdir(parents=True, exist_ok=True, mode=0o700)
+        joblib.dump(bundle, target / "model.joblib.tmp")
+        os.replace(target / "model.joblib.tmp", target / "model.joblib")
+        self._write_metadata(target, metadata)
         return metadata
 
-    def _train_labeled(self, values: list[object], impostor_values: list[object], user_id: str, device_id: str) -> dict[str, object]:
+    def _train_labeled(
+        self, values: list[object], impostor_values: list[object], user_id: str, device_id: str, model_id: str,
+    ) -> dict[str, object]:
         genuine, rejected_genuine = valid_windows(values)
         impostor, rejected_impostor = valid_windows(impostor_values)
         windows = genuine + impostor
@@ -301,7 +359,7 @@ class ModelStore:
         genuine_scores = model.decision_function(genuine_matrix)
         threshold = float(np.sort(genuine_scores)[math.ceil(.98 * len(genuine_scores)) - 1])
         metadata = {
-            "model_id": uuid4().hex, "state": "ready", "user_id": user_id, "device_id": device_id,
+            "model_id": model_id, "state": "ready", "user_id": user_id, "device_id": device_id,
             "algorithm": "LogisticRegression", "schema_version": 1, "schema_sha256": SCHEMA_HASH,
             "feature_profile": "labeled-overlap", "feature_names": ["hold_cv", "press_overlap_fraction"],
             "selected_features": ["hold_cv", "press_overlap_fraction"], "dropped_features": [],
@@ -328,7 +386,7 @@ class ModelStore:
         if window["device_id"] != device_id:
             raise PermissionError("window belongs to another device")
         with self._lock:
-            metadata = self.metadata(model_id, user_id, device_id)
+            metadata = self.ready_metadata(model_id, user_id, device_id)
             if metadata["schema_sha256"] != SCHEMA_HASH:
                 raise ValueError("model schema differs from the running service")
             if metadata["versions"] != {name: version(name) for name in ("scikit-learn", "numpy", "joblib")}:

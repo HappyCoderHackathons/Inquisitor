@@ -71,6 +71,16 @@
           <a id="playGames" class="button primary" href="/arcade" hidden>Open the games</a>
           <button id="trainModel" class="button primary" type="button" disabled>Train my model</button>
         </section>
+
+        <section class="dashboard-panel" aria-labelledby="dataTitle">
+          <h2 id="dataTitle">Your data</h2>
+          <p class="dashboard-panel-copy">Disconnecting stops the agent's credential from working. Deleting removes your calibration and monitoring data and trained models, and disconnects every agent. Your account stays.</p>
+          <div class="auth-actions">
+            <button id="revokeDevice" class="button secondary-button" type="button" hidden>Disconnect this agent</button>
+            <button id="deleteData" class="button secondary-button" type="button">Delete my data</button>
+          </div>
+          <p id="dataStatus" class="action-status" role="status" aria-live="polite"></p>
+        </section>
         {% endif %}
       </main>
     </div>

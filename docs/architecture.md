@@ -97,6 +97,9 @@ application-level verification; it must not lock Windows. Enrollment and evaluat
 must preserve session boundaries, and synthetic fixtures must not be presented as
 evidence of model accuracy.
 
+Security scenarios and residual risk are summarized in [threat-model.md](threat-model.md).
+Aggregate-only privacy boundaries are in [privacy.md](privacy.md).
+
 ## Implementation verification still required
 
 - Prove Rust background input capture and timing quality on the target Windows PC.
