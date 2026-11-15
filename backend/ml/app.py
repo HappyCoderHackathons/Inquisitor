@@ -105,63 +105,53 @@ def create_app() -> Flask:
             raise TypeError("windows must be a list")
         return labeled, sessions
 
-    def execute_training(value: dict[str, object], labeled: bool, sessions: object) -> dict[str, object]:
-        model_id = store.reserve_training_job(g.user_id, g.device_id)
-        account.register_model_version(
-            g.user_id, g.device_id, {"model_id": model_id, "state": "queued"}, active=False,
-        )
+    def execute_training(
+        value: dict[str, object], sessions: object, user_id: str, device_id: str, model_id: str | None = None,
+    ) -> dict[str, object]:
         try:
             metadata = store.train(
-                value["windows"], g.user_id, g.device_id, sessions,
+                value["windows"], user_id, device_id, sessions,
                 profile=value.get("profile", "all"),
                 impostor_values=value.get("impostor_windows"),
                 model_id=model_id,
             )
         except Exception:
-            account.set_model_job_state(g.user_id, g.device_id, model_id, "failed")
+            if model_id is not None:
+                account.set_model_job_state(user_id, device_id, model_id, "failed")
             raise
-        account.register_model_version(g.user_id, g.device_id, metadata, active=False)
+        account.register_model_version(user_id, device_id, metadata, active=False)
         return metadata
 
     @app.post("/models/train")
     def train():
         value = body({"windows"}, {"validation_session_id", "validation_session_ids", "profile", "impostor_windows"})
-        labeled, sessions = validate_training_request(value)
+        _, sessions = validate_training_request(value)
         if not training_lock.acquire(blocking=False):
             return jsonify(error="training is busy; retry later"), 503
-
-        def finish(metadata: dict[str, object], status: int):
-            training_lock.release()
-            return jsonify(metadata), status
-
-        if os.environ.get("ML_TRAIN_ASYNC") == "1":
-            model_id = store.reserve_training_job(g.user_id, g.device_id)
-            account.register_model_version(
-                g.user_id, g.device_id, {"model_id": model_id, "state": "queued"}, active=False,
-            )
-            request_value = dict(value)
-
-            def run_job() -> None:
-                try:
-                    metadata = store.train(
-                        request_value["windows"], g.user_id, g.device_id, sessions,
-                        profile=request_value.get("profile", "all"),
-                        impostor_values=request_value.get("impostor_windows"),
-                        model_id=model_id,
-                    )
-                    account.register_model_version(g.user_id, g.device_id, metadata, active=False)
-                except (OSError, RuntimeError, ValueError):
-                    account.set_model_job_state(g.user_id, g.device_id, model_id, "failed")
-                finally:
-                    training_lock.release()
-
-            threading.Thread(target=run_job, daemon=True).start()
-            return jsonify(store.metadata(model_id, g.user_id, g.device_id)), 202
+        if os.environ.get("ML_TRAIN_ASYNC") != "1":
+            try:
+                return jsonify(execute_training(value, sessions, g.user_id, g.device_id)), 201
+            finally:
+                training_lock.release()
+        user_id, device_id = g.user_id, g.device_id
         try:
-            return finish(execute_training(value, labeled, sessions), 201)
-        except Exception:
+            model_id = store.reserve_training_job(user_id, device_id)
+            account.register_model_version(user_id, device_id, {"model_id": model_id, "state": "queued"}, active=False)
+        except BaseException:
             training_lock.release()
             raise
+
+        def run_job() -> None:
+            try:
+                execute_training(value, sessions, user_id, device_id, model_id)
+            except Exception:
+                app.logger.exception("training job %s failed", model_id)
+            finally:
+                training_lock.release()
+
+        queued = store.metadata(model_id, user_id, device_id)
+        threading.Thread(target=run_job, daemon=True).start()
+        return jsonify(queued), 202
 
     @app.get("/models/active")
     def active_metadata():
@@ -172,14 +162,16 @@ def create_app() -> Flask:
         window = validate_window(body({"window"})["window"])
         if window["device_id"] != g.device_id:
             raise PermissionError("window belongs to another device")
+        model_id = None
+        if window["mode"] == "monitoring":
+            try:
+                model_id = store.active_model_id(g.user_id, g.device_id)
+            except FileNotFoundError:
+                return jsonify(error="monitoring requires an active model for this account and device"), 409
         if not account.save_window(g.user_id, g.device_id, window):
             return jsonify(error="This device/session/sequence window already exists"), 409
-        if window["mode"] != "monitoring":
+        if model_id is None:
             return jsonify(ok=True), 201
-        try:
-            model_id = store.active_model_id(g.user_id, g.device_id)
-        except FileNotFoundError:
-            return jsonify(error="monitoring requires an active model for this account and device"), 409
         try:
             return jsonify(remember(store.score(model_id, window, g.user_id, g.device_id))), 201
         except (EOFError, KeyError, OSError, RuntimeError, ValueError) as error:

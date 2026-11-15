@@ -19,7 +19,7 @@ from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 
-from atlas_persistence import delete_device_records, ensure_indexes, record_inference, record_model_version
+from atlas_persistence import ensure_indexes, record_inference, record_model_version
 from models import DEFAULT_PRIVACY_PREFERENCES, DevicePairingState
 
 GAMES = ("aim", "tetris", "typing", "arena")
@@ -188,6 +188,10 @@ def register(
                 model_id = trainer(onboarding["user_id"], onboarding["device_id"], windows,
                                    status["validation_sessions"])
                 update = {"state": "ready", "model_id": model_id, "completed_at": now()}
+                record_model_version(
+                    database, user_id=onboarding["user_id"], device_id=onboarding["device_id"],
+                    metadata={"model_id": model_id, "state": "ready"}, active=True, created_at=update["completed_at"],
+                )
             except (RuntimeError, OSError, KeyError, ValueError) as error:
                 update = {"state": "failed", "error": str(error)}
             database.onboarding.update_one({"_id": onboarding["_id"]}, {"$set": update})
@@ -463,16 +467,6 @@ def register(
         record_inference(
             database, user_id=device["user_id"], device_id=device["_id"], window=window, result=result, created_at=stamp,
         )
-        onboarding = database.onboarding.find_one({"device_id": device["_id"], "state": "ready"})
-        if onboarding and onboarding.get("model_id"):
-            record_model_version(
-                database,
-                user_id=device["user_id"],
-                device_id=device["_id"],
-                metadata={"model_id": onboarding["model_id"], "state": "ready", "classification": result.get("state")},
-                active=True,
-                created_at=stamp,
-            )
         database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"result": result}})
         return jsonify(result), 201
 

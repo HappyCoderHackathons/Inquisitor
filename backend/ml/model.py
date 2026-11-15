@@ -155,6 +155,8 @@ class ModelStore:
         os.replace(staging, model_path / "metadata.json")
 
     def reserve_training_job(self, user_id: str, device_id: str) -> str:
+        if os.environ.get("ML_ALLOW_TRAINING") != "1":
+            raise RuntimeError("training is disabled; enable it only on the designated training host")
         model_id = uuid4().hex
         path = self.directory / model_id
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -191,9 +193,15 @@ class ModelStore:
         owner = hashlib.sha256(json.dumps([user_id, device_id]).encode()).hexdigest()
         return self.directory / "active" / f"{owner}.json"
 
+    def ready_metadata(self, model_id: str, user_id: str, device_id: str) -> dict[str, object]:
+        metadata = self.metadata(model_id, user_id, device_id)
+        if metadata.get("state", "ready") != "ready":
+            raise ValueError(f"model is {metadata['state']}, not ready")
+        return metadata
+
     def activate(self, model_id: str, user_id: str, device_id: str) -> dict[str, object]:
         with self._lock:
-            metadata = self.metadata(model_id, user_id, device_id)
+            metadata = self.ready_metadata(model_id, user_id, device_id)
             path = self._active_path(user_id, device_id)
             path.parent.mkdir(exist_ok=True, mode=0o700)
             staging = path.with_suffix(".tmp")
@@ -222,10 +230,11 @@ class ModelStore:
     ) -> dict[str, object]:
         if os.environ.get("ML_ALLOW_TRAINING") != "1":
             raise RuntimeError("training is disabled; enable it only on the designated training host")
-        if model_id is None:
-            model_id = self.reserve_training_job(user_id, device_id)
-        self.set_job_state(model_id, user_id, device_id, "running")
+        reserved = model_id is not None
+        model_id = model_id or uuid4().hex
         try:
+            if reserved:
+                self.set_job_state(model_id, user_id, device_id, "running")
             if profile == "labeled-overlap":
                 if validation_session_id is not None:
                     raise ValueError("labeled-overlap fits all supplied data; omit validation session fields")
@@ -307,13 +316,15 @@ class ModelStore:
             }
             return self._publish({"model": model, "mask": mask, "transform": transform}, metadata)
         except Exception as error:
-            self.fail_job(model_id, user_id, device_id, str(error))
+            if reserved:
+                self.fail_job(model_id, user_id, device_id, str(error))
             raise
 
     def _publish(self, bundle: dict[str, object], metadata: dict[str, object]) -> dict[str, object]:
         target = self.directory / cast(str, metadata["model_id"])
         target.mkdir(parents=True, exist_ok=True, mode=0o700)
-        joblib.dump(bundle, target / "model.joblib")
+        joblib.dump(bundle, target / "model.joblib.tmp")
+        os.replace(target / "model.joblib.tmp", target / "model.joblib")
         self._write_metadata(target, metadata)
         return metadata
 
@@ -375,7 +386,7 @@ class ModelStore:
         if window["device_id"] != device_id:
             raise PermissionError("window belongs to another device")
         with self._lock:
-            metadata = self.metadata(model_id, user_id, device_id)
+            metadata = self.ready_metadata(model_id, user_id, device_id)
             if metadata["schema_sha256"] != SCHEMA_HASH:
                 raise ValueError("model schema differs from the running service")
             if metadata["versions"] != {name: version(name) for name in ("scikit-learn", "numpy", "joblib")}:
