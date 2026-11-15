@@ -266,6 +266,61 @@ This client follows the rules in [`../AGENTS.md`](../AGENTS.md):
   The raw CSV in `%APPDATA%\inquisitor\` is development data. Any
   component that ships data off the PC must aggregate it first.
 
+## Footprint
+
+Release exe from `cargo build --release`: `target/release/Inquisitor.exe`
+is 940032 bytes.
+
+`Inquisitor --help` and `Inquisitor list` do not capture input. Both exit
+as soon as they finish, and no other mode stays running without the
+raw-input message loop (`tray` and `capture` register for input). Resident
+idle memory of the tray was not measured. While `--help` was still alive,
+two working-set reads were 5820416 bytes and 9216000 bytes. That is process
+startup, not a sitting tray.
+
+Processing cost was measured on a 12th Gen Intel(R) Core(TM) i7-12700H
+with rustc 1.98.1, by:
+
+```sh
+cargo test --release -- --ignored footprint_sustained_synthetic_input --nocapture
+```
+
+The test is ignored in the default suite. Real typing on the tray was not
+measured, `capture` was not run, and no keystrokes were injected. Input lag
+is inferred from per-event processing time versus the typing interval.
+
+`Capture::process_raw`, with a feature `Windower` attached, is the dispatch
+`process_wm_input` uses after the device filter accepts a packet. That is
+the path the tray runs on `WM_INPUT`. The test feeds synthetic `RAWINPUT`
+packets only: 20 key press/release pairs per second and 250 mouse moves per
+second, for 10 simulated minutes (174000 events), processed as fast as the
+CPU allows. `Instant` times each `process_raw` call. CSV text is formatted
+and discarded, so the time includes row formatting and the windower and does
+not include a disk write. `GetRawInputData`, the message loop, the device
+filter, and the tray UI are not included. Memory is `GetProcessMemoryInfo`
+on the test process.
+
+That run reported:
+
+- Wall time 131058200 ns for 174000 events (1327654 events/s, the floor of
+  `events * 1e9 / wall_ns`).
+- Mean time 722 ns per event, the floor of `125655700 / 174000`.
+- p99 1000 ns, nearest rank `ceil(0.99 * 174000) = 172260`.
+- If those events were spread across the 600 simulated seconds, the average
+  gap would be 3448275 ns (`1e9 * 600 / 174000`, floored). Key events alone
+  are 40 per simulated second, one every 25000000 ns.
+- Working set before the loop 8224768 bytes, after the loop 10031104 bytes.
+  Peak working set 10031104 bytes. The 1392000 byte timing-sample buffer was
+  allocated before the first reading, so both figures include it. No feature
+  window closed (`windows_ready=0`): the windower's clock is wall time, and
+  the run finished in under 30 seconds, so all 10 simulated minutes stayed in
+  the one open window. A live session closes a window every 30 seconds.
+
+The inference from those times: p99 processing (1000 ns) is shorter than
+both the 25000000 ns key interval and the 3448275 ns combined interval, so
+one event's processing finishes before the next event in that schedule
+would be due. That does not measure end-to-end lag while someone types.
+
 ## Known limits
 
 - Default output is `%APPDATA%\inquisitor\`. Falls back to the current

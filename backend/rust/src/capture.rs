@@ -218,7 +218,15 @@ impl Capture {
         if !filter(&path) {
             return;
         }
+        self.dispatch_raw(raw);
+    }
 
+    /// Dispatch one decoded raw-input packet. `process_raw` calls this after
+    /// the device filter accepts the event, so keyboard, mouse, CSV, and the
+    /// feature windower stay on one path. A synthetic `RAWINPUT` can be passed
+    /// here when there is no live `WM_INPUT`.
+    pub fn dispatch_raw(&mut self, raw: &RAWINPUT) {
+        let dev = raw.header.hDevice;
         match raw.header.dwType {
             0 => {
                 // RIM_TYPEMOUSE
@@ -976,7 +984,7 @@ extern "system" fn cli_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     use windows::Win32::UI::Input::{RAWMOUSE_0, RAWMOUSE_0_0};
 
@@ -1259,5 +1267,163 @@ mod tests {
             "{name}"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Counts newlines and drops the bytes. Used so the footprint run still
+    /// formats every CSV row without writing a capture file.
+    #[derive(Clone)]
+    struct CountingSink(Rc<Cell<u64>>);
+
+    impl Write for CountingSink {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let extra = buf.iter().filter(|b| **b == b'\n').count() as u64;
+            self.0.set(self.0.get() + extra);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn raw_keyboard(kb: RAWKEYBOARD) -> RAWINPUT {
+        let mut raw = RAWINPUT::default();
+        raw.header.dwType = 1;
+        raw.header.hDevice = KBD;
+        raw.data.keyboard = kb;
+        raw
+    }
+
+    fn raw_mouse(dx: i32, dy: i32) -> RAWINPUT {
+        let mut raw = RAWINPUT::default();
+        raw.header.dwType = 0;
+        raw.header.hDevice = MOUSE;
+        raw.data.mouse = mouse(dx, dy, 0, 0);
+        raw
+    }
+
+    struct ProcessMemory {
+        working_set: usize,
+        peak_working_set: usize,
+    }
+
+    fn process_memory() -> windows::core::Result<ProcessMemory> {
+        use windows::Win32::System::ProcessStatus::{
+            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+        };
+        use windows::Win32::System::Threading::GetCurrentProcess;
+        unsafe {
+            let mut counters = PROCESS_MEMORY_COUNTERS {
+                cb: size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+                ..PROCESS_MEMORY_COUNTERS::default()
+            };
+            GetProcessMemoryInfo(
+                GetCurrentProcess(),
+                &mut counters,
+                size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+            )?;
+            Ok(ProcessMemory {
+                working_set: counters.WorkingSetSize,
+                peak_working_set: counters.PeakWorkingSetSize,
+            })
+        }
+    }
+
+    fn time_raw(cap: &mut Capture, raw: &RAWINPUT, samples: &mut Vec<u64>) {
+        let raw = std::hint::black_box(raw);
+        let start = Instant::now();
+        cap.dispatch_raw(raw);
+        let ns = std::hint::black_box(start.elapsed()).as_nanos();
+        samples.push(u64::try_from(ns).unwrap_or(u64::MAX));
+    }
+
+    /// Release-mode footprint of the tray's input path under a compressed
+    /// 10-minute load: 20 key press/release pairs and 250 mouse moves per
+    /// simulated second, processed as fast as possible. Not real typing.
+    #[test]
+    #[ignore = "synthetic footprint benchmark; cargo test --release -- --ignored footprint_sustained_synthetic_input --nocapture"]
+    fn footprint_sustained_synthetic_input() {
+        const SIM_SECONDS: u64 = 10 * 60;
+        const KEY_PAIRS_PER_S: u64 = 20;
+        const MOVES_PER_S: u64 = 250;
+        let key_events = KEY_PAIRS_PER_S * 2 * SIM_SECONDS;
+        let move_events = MOVES_PER_S * SIM_SECONDS;
+        let total = key_events + move_events;
+
+        let newlines = Rc::new(Cell::new(0u64));
+        let mut cap = Capture::new(Box::new(CountingSink(Rc::clone(&newlines))));
+        cap.set_windower(Some(crate::features::Windower::new()));
+
+        let down = raw_keyboard(key(0x1E, false));
+        let up = raw_keyboard(key(0x1E, true));
+        let mut samples = Vec::with_capacity(total as usize);
+        let before = process_memory().expect("GetProcessMemoryInfo");
+        let started = Instant::now();
+        let mut windows_ready = 0usize;
+
+        for _ in 0..SIM_SECONDS {
+            let mut keys_left = KEY_PAIRS_PER_S * 2;
+            let mut moves_left = MOVES_PER_S;
+            while keys_left > 0 || moves_left > 0 {
+                let key_turn = keys_left > 0
+                    && (moves_left == 0
+                        || keys_left * MOVES_PER_S >= moves_left * KEY_PAIRS_PER_S * 2);
+                if key_turn {
+                    let packet = if (KEY_PAIRS_PER_S * 2 - keys_left).is_multiple_of(2) {
+                        &down
+                    } else {
+                        &up
+                    };
+                    time_raw(&mut cap, packet, &mut samples);
+                    keys_left -= 1;
+                } else {
+                    let step = i32::try_from(MOVES_PER_S - moves_left).unwrap_or(0);
+                    let mut dx = (step % 5) - 2;
+                    let dy = ((step / 5) % 5) - 2;
+                    if dx == 0 && dy == 0 {
+                        dx = 1;
+                    }
+                    let packet = raw_mouse(dx, dy);
+                    time_raw(&mut cap, &packet, &mut samples);
+                    moves_left -= 1;
+                }
+            }
+            if let Some(windower) = cap.windower_mut() {
+                windows_ready += windower.take_ready().len();
+            }
+        }
+
+        let wall = started.elapsed();
+        let after = process_memory().expect("GetProcessMemoryInfo");
+        assert_eq!(samples.len() as u64, total);
+        // Header plus one row per accepted event.
+        assert_eq!(newlines.get(), total + 1);
+
+        samples.sort_unstable();
+        let sum: u128 = samples.iter().map(|n| u128::from(*n)).sum();
+        let mean_floor = sum / u128::from(total);
+        let rank = samples.len().saturating_mul(99).div_ceil(100);
+        let p99 = samples[rank - 1];
+        let spacing_ns = 1_000_000_000u128 * u128::from(SIM_SECONDS) / u128::from(total);
+        let wall_ns = wall.as_nanos().max(1);
+        let throughput = u128::from(total) * 1_000_000_000 / wall_ns;
+
+        println!("footprint method=Capture::process_raw+Windower");
+        println!("footprint sink=counting_discard disk_io=false timer=Instant_around_process_raw");
+        println!("footprint memory=GetProcessMemoryInfo");
+        println!("footprint events={total} simulated_s={SIM_SECONDS} wall_ns={wall_ns}");
+        println!(
+            "footprint mean_ns_floor={mean_floor} mean_sum_ns={sum} p99_ns={p99} p99_nearest_rank={rank}"
+        );
+        println!(
+            "footprint simulated_spacing_ns={spacing_ns} throughput_events_per_s_floor={throughput}"
+        );
+        println!(
+            "footprint ws_before_bytes={} ws_after_bytes={} peak_working_set_bytes={}",
+            before.working_set, after.working_set, after.peak_working_set
+        );
+        println!(
+            "footprint timing_samples_bytes={} windows_ready={windows_ready}",
+            samples.len() * size_of::<u64>()
+        );
     }
 }
