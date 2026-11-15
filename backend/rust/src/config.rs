@@ -9,6 +9,10 @@ use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
+/// Version of the terms shown in setup. Raise it when what is recorded changes,
+/// so everyone is asked to accept again before collection resumes.
+pub const TERMS_VERSION: u32 = 1;
+
 /// Everything the tray needs to remember across restarts.
 pub struct Config {
     /// Directory where capture CSVs land.
@@ -17,6 +21,9 @@ pub struct Config {
     /// rows; everything else is dropped. Starts empty on first run so no device
     /// captures until the user ticks it (or Allow all) from the tray.
     pub allowed_devices: HashSet<String>,
+    /// Terms version the user accepted, or 0. Nothing is collected until this
+    /// reaches TERMS_VERSION.
+    pub terms_accepted: u32,
 }
 
 impl Config {
@@ -37,7 +44,13 @@ impl Config {
         Self {
             data_dir: default_app_dir(),
             allowed_devices: HashSet::new(),
+            terms_accepted: 0,
         }
+    }
+
+    /// The current terms have been accepted, so collection may run.
+    pub fn terms_accepted(&self) -> bool {
+        self.terms_accepted >= TERMS_VERSION
     }
 
     pub fn load(path: &Path) -> io::Result<Self> {
@@ -58,6 +71,7 @@ impl Config {
                 "allowed_device" => {
                     cfg.allowed_devices.insert(val.to_string());
                 }
+                "terms_accepted" => cfg.terms_accepted = val.parse().unwrap_or(0),
                 // `allow_new_connections` and `ignored_device` from older configs
                 // are silently dropped: the menu now models everything through
                 // `allowed_devices` only.
@@ -82,6 +96,7 @@ impl Config {
         let mut f = fs::File::create(path)?;
         writeln!(f, "# Inquisitor config")?;
         writeln!(f, "data_dir={}", self.data_dir.display())?;
+        writeln!(f, "terms_accepted={}", self.terms_accepted)?;
         for d in &self.allowed_devices {
             writeln!(f, "allowed_device={d}")?;
         }
@@ -126,8 +141,19 @@ mod tests {
     const PATH_B: &str = r"\\?\Microsoft HID RID\000D_0002\0";
 
     #[test]
-    fn defaults_start_with_an_empty_whitelist() {
+    fn defaults_start_with_an_empty_whitelist_and_no_consent() {
         assert!(Config::defaults().allowed_devices.is_empty());
+        assert!(!Config::defaults().terms_accepted());
+    }
+
+    #[test]
+    fn older_terms_versions_do_not_count_as_accepted() {
+        let tmp = TempDir::new("terms");
+        let path = tmp.0.join("config.ini");
+        fs::write(&path, format!("terms_accepted={}\n", TERMS_VERSION - 1)).unwrap();
+        assert!(!Config::load(&path).unwrap().terms_accepted());
+        fs::write(&path, "terms_accepted=yes\n").unwrap();
+        assert!(!Config::load(&path).unwrap().terms_accepted());
     }
 
     #[test]
@@ -137,12 +163,14 @@ mod tests {
         let cfg = Config {
             data_dir: PathBuf::from(r"C:\Users\Some One\Capture Data"),
             allowed_devices: [PATH_A, PATH_B].iter().map(|s| s.to_string()).collect(),
+            terms_accepted: TERMS_VERSION,
         };
         cfg.save_to(&path).unwrap();
 
         let loaded = Config::load(&path).unwrap();
         assert_eq!(loaded.data_dir, cfg.data_dir);
         assert_eq!(loaded.allowed_devices, cfg.allowed_devices);
+        assert!(loaded.terms_accepted());
     }
 
     #[test]

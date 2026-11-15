@@ -1,6 +1,8 @@
 //! Install, update, repair, and remove wizard.
 //!
-//! A small fixed-size window with two pages:
+//! A small fixed-size window. Until the current terms are accepted it opens on a
+//! terms page listing what is recorded and what is never collected; accepting
+//! is saved in config.ini, and nothing is collected before it. Then two pages:
 //!
 //! ```text
 //!  Install Inquisitor                     Remove Inquisitor
@@ -22,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     COLOR_GRAYTEXT, COLOR_WINDOW, DeleteObject, FW_NORMAL, FW_SEMIBOLD, GetSysColor,
-    GetSysColorBrush, HDC, HFONT, SetBkMode, SetTextColor, TRANSPARENT,
+    GetSysColorBrush, HDC, HFONT, SetBkColor, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
@@ -38,12 +40,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     RegisterClassExW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER, SetCursor,
     SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
     TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CTLCOLORBTN,
-    WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_SETFONT, WNDCLASSEXW, WS_CAPTION, WS_CHILD,
-    WS_CLIPCHILDREN, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_SETFONT, WNDCLASSEXW, WS_BORDER, WS_CAPTION,
+    WS_CHILD, WS_CLIPCHILDREN, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    WS_VSCROLL,
 };
 use windows::core::{PCWSTR, w};
 
-use crate::config::Config;
+use crate::config::{Config, TERMS_VERSION};
 use crate::install::{self, Mode, Options, VERSION};
 use crate::ui::{self, scale, to_wide};
 use crate::{icon, startup};
@@ -59,15 +62,64 @@ const ID_START_MENU: u16 = 10;
 const ID_STARTUP: u16 = 11;
 const ID_LAUNCH: u16 = 12;
 const ID_DELETE_DATA: u16 = 13;
+const ID_TERMS: u16 = 14;
 
 // Static-control style from <winuser.h>.
 const SS_NOPREFIX: u32 = 0x0080;
+// Edit-control styles from <winuser.h>.
+const ES_MULTILINE: u32 = 0x0004;
+const ES_AUTOVSCROLL: u32 = 0x0040;
+const ES_READONLY: u32 = 0x0800;
 // Checkbox state from <winuser.h>.
 const BST_CHECKED: usize = 1;
 
 // Client area in 96-DPI layout units.
 const WIDTH: i32 = 500;
 const HEIGHT: i32 = 300;
+// The terms page is taller so most of the list fits without scrolling.
+const TERMS_HEIGHT: i32 = 560;
+
+/// Shown on the terms page. Keep it in step with what `capture` writes, and
+/// raise `TERMS_VERSION` whenever what is recorded changes. The edit control
+/// needs CRLF line breaks.
+const TERMS: &str = "\
+WHAT INQUISITOR RECORDS\r\n\
+Only from devices you tick in Allow connections. Until you allow a device, \
+nothing is recorded from it.\r\n\r\n\
+- Keyboard: when each key goes down and comes up, and the time between keys. \
+Not which key.\r\n\
+- Mouse: how far it moved, button presses, and scrolling. Pens and remote \
+desktop sessions that drive the pointer report a position instead of a \
+distance.\r\n\
+- Controllers: button presses and stick, trigger, and d-pad values.\r\n\
+- Touch pads, touch screens, pens, and media keys: button presses and the \
+values the device reports, which can include where a finger or pen touches \
+the device.\r\n\
+- For every event: the time, the kind of device, and a short device number \
+that changes each session.\r\n\r\n\
+WHAT IS NEVER COLLECTED\r\n\
+- Which keys you press, or any text you type, including passwords\r\n\
+- What you click on, or which window or app you are using\r\n\
+- Window titles, websites, or anything shown on screen\r\n\
+- Clipboard contents, files, microphone, camera, or location\r\n\r\n\
+WHERE IT GOES\r\n\
+- Records are saved as CSV files on this PC, in the data folder \
+(%APPDATA%\\inquisitor unless you change it).\r\n\
+- This version does not upload anything.\r\n\
+- Pause or quit at any time from the tray icon, and choose which devices are \
+recorded.\r\n\
+- Remove in setup can delete the recorded data.";
+
+/// Which page the wizard opens on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Start {
+    /// Install, update, or repair, after the terms if they are not accepted yet.
+    Main,
+    /// Remove, as Apps & features does through `Inquisitor.exe uninstall`.
+    Remove,
+    /// Only the terms, before the tray starts. Accepting returns `RunTray`.
+    Terms,
+}
 
 /// What `main` should do after the wizard closes.
 #[derive(Debug, PartialEq, Eq)]
@@ -83,18 +135,23 @@ static SELF_DELETE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
+    Terms,
     Main,
     Remove,
 }
 
 struct WizardState {
+    hwnd: HWND,
     mode: Mode,
     page: Page,
+    /// Opened with `Start::Terms`: accepting closes the window and starts the tray.
+    terms_only: bool,
     dpi: u32,
     font: HFONT,
     title_font: HFONT,
     title: HWND,
     body: HWND,
+    terms: HWND,
     start_menu: HWND,
     startup: HWND,
     launch: HWND,
@@ -111,9 +168,8 @@ impl WizardState {
     }
 }
 
-/// Show the wizard and block until it closes. `remove` opens it on the remove
-/// page, as Apps & features does through `Inquisitor.exe uninstall`.
-pub fn run(remove: bool) -> windows::core::Result<Outcome> {
+/// Show the wizard and block until it closes.
+pub fn run(start: Start) -> windows::core::Result<Outcome> {
     let mode = install::mode();
     let icc = INITCOMMONCONTROLSEX {
         dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32,
@@ -177,17 +233,25 @@ pub fn run(remove: bool) -> windows::core::Result<Outcome> {
     let button = BS_PUSHBUTTON as u32 | WS_TABSTOP.0;
 
     let st = Box::new(WizardState {
-        page: if remove && mode != Mode::Install {
-            Page::Remove
-        } else {
-            Page::Main
+        hwnd,
+        page: match start {
+            // Removal collects nothing, so it does not need the terms.
+            Start::Remove if mode != Mode::Install => Page::Remove,
+            Start::Terms => Page::Terms,
+            _ => main_or_terms(),
         },
+        terms_only: start == Start::Terms,
         mode,
         dpi: unsafe { GetDpiForWindow(hwnd) }.max(96),
         font: HFONT::default(),
         title_font: HFONT::default(),
         title: child(w!("STATIC"), SS_NOPREFIX, 0),
         body: child(w!("STATIC"), SS_NOPREFIX, 0),
+        terms: child(
+            w!("EDIT"),
+            ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL.0 | WS_BORDER.0 | WS_TABSTOP.0,
+            ID_TERMS,
+        ),
         start_menu: child(w!("BUTTON"), check, ID_START_MENU),
         startup: child(w!("BUTTON"), check, ID_STARTUP),
         launch: child(w!("BUTTON"), check, ID_LAUNCH),
@@ -209,7 +273,7 @@ pub fn run(remove: bool) -> windows::core::Result<Outcome> {
     set_text(st.startup, "Start with Windows");
     set_text(st.launch, "Launch Inquisitor when done");
     set_text(st.delete_data, "Also delete captured data and settings");
-    set_text(st.cancel, "Cancel");
+    set_text(st.terms, TERMS);
     set_text(st.run_once, "Run once");
     // Fresh installs get a shortcut; otherwise keep what is there now.
     set_checked(
@@ -221,7 +285,7 @@ pub fn run(remove: bool) -> windows::core::Result<Outcome> {
 
     apply_fonts(st);
     show_page(st);
-    let (w, h) = window_size(st.dpi);
+    let (w, h) = window_size(st.dpi, st.page);
     ui::place_centered(hwnd, w, h);
     layout(st);
 
@@ -257,13 +321,30 @@ fn style() -> WINDOW_STYLE {
     WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN
 }
 
-/// Outer window size that gives the layout's client area at `dpi`.
-fn window_size(dpi: u32) -> (i32, i32) {
+/// The terms page until the current terms are accepted, then the main page.
+fn main_or_terms() -> Page {
+    if Config::load_or_default().terms_accepted() {
+        Page::Main
+    } else {
+        Page::Terms
+    }
+}
+
+fn client_height(page: Page) -> i32 {
+    if page == Page::Terms {
+        TERMS_HEIGHT
+    } else {
+        HEIGHT
+    }
+}
+
+/// Outer window size that gives the page's client area at `dpi`.
+fn window_size(dpi: u32, page: Page) -> (i32, i32) {
     let mut rc = RECT {
         left: 0,
         top: 0,
         right: scale(WIDTH, dpi),
-        bottom: scale(HEIGHT, dpi),
+        bottom: scale(client_height(page), dpi),
     };
     unsafe {
         let _ = AdjustWindowRectExForDpi(&mut rc, style(), false, WINDOW_EX_STYLE(0), dpi);
@@ -346,35 +427,67 @@ fn main_page_text(mode: &Mode, dir: &str) -> (String, String, &'static str) {
     }
 }
 
+/// Switch the visible controls and texts to `st.page`, resizing the window when
+/// the page height changes.
 fn show_page(st: &mut WizardState) {
     let dir = install::install_dir().display().to_string();
-    let main = st.page == Page::Main;
-    let (title, body, primary) = if main {
-        main_page_text(&st.mode, &dir)
-    } else {
-        (
+    let (main, remove, terms) = (
+        st.page == Page::Main,
+        st.page == Page::Remove,
+        st.page == Page::Terms,
+    );
+    let (title, body, primary) = match st.page {
+        Page::Main => main_page_text(&st.mode, &dir),
+        Page::Remove => (
             "Remove Inquisitor".into(),
             format!(
                 "Removes the app from {dir}, its Start menu shortcut, and its startup entry. \
                  Captured data and settings are kept unless you tick the box below."
             ),
             "Remove",
-        )
+        ),
+        Page::Terms => (
+            "Before you start".into(),
+            "Inquisitor learns your typing and pointer rhythm from how you use your input \
+             devices. Read what it records and what it never collects. Nothing is collected \
+             until you accept."
+                .into(),
+            "Accept",
+        ),
     };
     set_text(st.title, &title);
     set_text(st.body, &body);
     set_text(st.primary, primary);
+    set_text(st.cancel, if terms { "Decline" } else { "Cancel" });
     set_text(st.left, if main { "Remove..." } else { "Back" });
 
+    set_visible(st.terms, terms);
     for h in [st.start_menu, st.startup, st.launch] {
         set_visible(h, main);
     }
-    set_visible(st.delete_data, !main);
+    set_visible(st.delete_data, remove);
     // Back is always available on the remove page, and Remove only once there
     // is something installed to remove.
-    set_visible(st.left, !main || st.mode != Mode::Install);
+    set_visible(st.left, remove || (main && st.mode != Mode::Install));
     // The installed exe has nothing to run "once"; it is already installed.
     set_visible(st.run_once, main && st.mode != Mode::Installed);
+
+    // Keep the top-left corner where it is and resize for the page.
+    let mut rc = RECT::default();
+    let (w, h) = window_size(st.dpi, st.page);
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(st.hwnd, &mut rc);
+        let _ = SetWindowPos(
+            st.hwnd,
+            None,
+            rc.left,
+            rc.top,
+            w,
+            h,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+    layout(st);
 }
 
 fn apply_fonts(st: &mut WizardState) {
@@ -399,6 +512,7 @@ fn apply_fonts(st: &mut WizardState) {
     set(st.title, st.title_font);
     for h in [
         st.body,
+        st.terms,
         st.start_menu,
         st.startup,
         st.launch,
@@ -413,7 +527,7 @@ fn apply_fonts(st: &mut WizardState) {
 }
 
 fn layout(st: &WizardState) {
-    let (w, h) = (st.scale(WIDTH), st.scale(HEIGHT));
+    let (w, h) = (st.scale(WIDTH), st.scale(client_height(st.page)));
     let m = st.scale(24);
     let (bh, gap) = (st.scale(32), st.scale(8));
     let title_h = st.scale(32);
@@ -438,6 +552,15 @@ fn layout(st: &WizardState) {
             );
         }
         let _ = MoveWindow(st.delete_data, m, check_top, w - 2 * m, check_h, true);
+        let terms_top = body_top + body_h + st.scale(8);
+        let _ = MoveWindow(
+            st.terms,
+            m,
+            terms_top,
+            w - 2 * m,
+            (by - st.scale(16) - terms_top).max(0),
+            true,
+        );
         let cancel_x = w - m - cancel_w;
         let primary_x = cancel_x - gap - primary_w;
         let _ = MoveWindow(st.cancel, cancel_x, by, cancel_w, bh, true);
@@ -462,6 +585,10 @@ fn message(hwnd: HWND, text: &str, style: MESSAGEBOX_STYLE) {
 /// Run the page's main action. The window is disabled while it runs, since
 /// closing a running tray can take a few seconds.
 fn primary(hwnd: HWND, st: &mut WizardState) {
+    if st.page == Page::Terms {
+        accept_terms(hwnd, st);
+        return;
+    }
     unsafe {
         let _ = EnableWindow(hwnd, false);
         SetCursor(LoadCursorW(None, IDC_WAIT).ok());
@@ -514,6 +641,33 @@ fn primary(hwnd: HWND, st: &mut WizardState) {
     }
 }
 
+/// Record acceptance in config.ini, then continue to the main page, or straight
+/// to the tray when only the terms were asked for.
+fn accept_terms(hwnd: HWND, st: &mut WizardState) {
+    let mut config = Config::load_or_default();
+    config.terms_accepted = TERMS_VERSION;
+    if let Err(e) = config.save() {
+        message(
+            hwnd,
+            &format!("Could not save your choice: {e}"),
+            MB_ICONERROR,
+        );
+        return;
+    }
+    if st.terms_only {
+        RUN_TRAY.store(true, Ordering::SeqCst);
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+        }
+        return;
+    }
+    st.page = Page::Main;
+    show_page(st);
+    unsafe {
+        let _ = SetFocus(Some(st.primary));
+    }
+}
+
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe {
         let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WizardState;
@@ -535,7 +689,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         st.page = if st.page == Page::Main {
                             Page::Remove
                         } else {
-                            Page::Main
+                            main_or_terms()
                         };
                         show_page(st);
                         let _ = SetFocus(Some(st.primary));
@@ -548,6 +702,12 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 // Paint labels, checkboxes, and button corners on the window
                 // colour instead of the default grey dialog face.
                 let hdc = HDC(wparam.0 as *mut _);
+                if HWND(lparam.0 as *mut _) == st.terms {
+                    // The read-only terms box scrolls, so it needs an opaque
+                    // background or old lines smear while scrolling.
+                    let _ = SetBkColor(hdc, COLORREF(GetSysColor(COLOR_WINDOW)));
+                    return LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize);
+                }
                 let _ = SetBkMode(hdc, TRANSPARENT);
                 if HWND(lparam.0 as *mut _) == st.body {
                     let _ = SetTextColor(hdc, COLORREF(GetSysColor(COLOR_GRAYTEXT)));

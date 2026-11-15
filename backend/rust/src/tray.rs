@@ -92,7 +92,9 @@ impl AppState {
             self.paused = false;
             self.pause_until = None;
         }
-        if self.paused {
+        // Startup asks for the terms before the tray runs; this keeps the rule
+        // even if the tray is ever started another way.
+        if self.paused || !self.config.terms_accepted() {
             return true;
         }
         !self.config.allowed_devices.contains(path)
@@ -433,6 +435,7 @@ mod tests {
         let config = Config {
             data_dir: std::env::temp_dir(),
             allowed_devices: [ALLOWED.to_string()].into_iter().collect(),
+            terms_accepted: crate::config::TERMS_VERSION,
         };
         AppState::new(
             config,
@@ -475,6 +478,13 @@ mod tests {
         assert!(!s.drop_event(ALLOWED));
         assert!(!s.paused);
         assert!(s.pause_until.is_none());
+    }
+
+    #[test]
+    fn nothing_is_captured_before_the_terms_are_accepted() {
+        let mut s = state();
+        s.config.terms_accepted = 0;
+        assert!(s.drop_event(ALLOWED));
     }
 
     #[test]

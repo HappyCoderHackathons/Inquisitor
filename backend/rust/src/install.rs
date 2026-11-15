@@ -73,19 +73,74 @@ fn mode_for(installed: Option<String>, running_installed: bool) -> Mode {
     }
 }
 
-/// Options picked on the wizard's install page.
+/// Options picked in the wizard.
 pub struct Options {
+    /// Install folder, already passed through `normalize_install_dir`.
+    pub dir: PathBuf,
     pub start_menu: bool,
     pub start_with_windows: bool,
     pub launch: bool,
 }
 
 /// `%LOCALAPPDATA%\Programs\Inquisitor`, the usual place for per-user apps.
-pub fn install_dir() -> PathBuf {
+pub fn default_install_dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(default_app_dir);
     base.join("Programs").join("Inquisitor")
+}
+
+/// Where Inquisitor is installed: the folder recorded in Apps & features, or
+/// the default for a fresh install.
+pub fn install_dir() -> PathBuf {
+    read_string(UNINSTALL_KEY, w!("InstallLocation"))
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(default_install_dir)
+}
+
+/// Turn a folder the user typed or picked into the install folder. The path
+/// must be absolute. An `Inquisitor` folder is added unless the path already
+/// ends in one, so the app never shares a folder with other files and removal
+/// can never touch a folder like Documents.
+pub fn normalize_install_dir(input: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(input.trim().trim_matches('"'));
+    if !path.is_absolute() {
+        return None;
+    }
+    let named_ours = path
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("Inquisitor"));
+    Some(if named_ours {
+        path
+    } else {
+        path.join("Inquisitor")
+    })
+}
+
+/// Free space for the current user on the drive holding `dir`, in bytes. Walks
+/// up to the nearest folder that exists, since the install folder may not yet.
+pub fn free_space(dir: &Path) -> Option<u64> {
+    let existing = dir.ancestors().find(|p| p.exists())?;
+    let mut free = 0u64;
+    unsafe {
+        GetDiskFreeSpaceExW(
+            &HSTRING::from(existing.as_os_str()),
+            Some(&mut free),
+            None,
+            None,
+        )
+        .ok()?;
+    }
+    Some(free)
+}
+
+/// Size of this exe, which is everything the install copies.
+pub fn required_space() -> u64 {
+    std::env::current_exe()
+        .and_then(fs::metadata)
+        .map(|m| m.len())
+        .unwrap_or(0)
 }
 
 pub fn installed_exe() -> PathBuf {

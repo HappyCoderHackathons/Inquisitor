@@ -37,7 +37,13 @@ fn main() -> windows::core::Result<()> {
     }
 
     match args.get(1).map(String::as_str) {
-        Some("capture") => capture::run(parse_capture_output(&args[2..])),
+        Some("capture") => {
+            if !config::Config::load_or_default().terms_accepted() {
+                eprintln!("Accept the terms first: run `Inquisitor setup`.");
+                std::process::exit(2);
+            }
+            capture::run(parse_capture_output(&args[2..]))
+        }
         Some("list") => {
             let devices = devices::list_input_devices()?;
             eprintln!("{} connected input devices", devices.len());
@@ -50,9 +56,9 @@ fn main() -> windows::core::Result<()> {
             print_help();
             Ok(())
         }
-        Some("tray") => tray::run(),
-        Some("setup") => run_wizard(false),
-        Some("uninstall") => run_wizard(true),
+        Some("tray") => run_tray(),
+        Some("setup") => run_wizard(wizard::Start::Main),
+        Some("uninstall") => run_wizard(wizard::Start::Remove),
         Some(other) => {
             eprintln!("unknown subcommand: {other}");
             print_help();
@@ -60,13 +66,22 @@ fn main() -> windows::core::Result<()> {
         }
         // Double-clicking the installed exe starts the tray. Any other copy (a
         // download or a dev build) opens the wizard, which can also run it once.
-        None if install::mode() == install::Mode::Installed => tray::run(),
-        None => run_wizard(false),
+        None if install::mode() == install::Mode::Installed => run_tray(),
+        None => run_wizard(wizard::Start::Main),
     }
 }
 
-fn run_wizard(remove: bool) -> windows::core::Result<()> {
-    match wizard::run(remove)? {
+/// Start the tray, asking for the terms first if they are not accepted yet
+/// (for example after an update raised the terms version). Declining exits.
+fn run_tray() -> windows::core::Result<()> {
+    if !config::Config::load_or_default().terms_accepted() {
+        return run_wizard(wizard::Start::Terms);
+    }
+    tray::run()
+}
+
+fn run_wizard(start: wizard::Start) -> windows::core::Result<()> {
+    match wizard::run(start)? {
         wizard::Outcome::RunTray => tray::run(),
         wizard::Outcome::Exit => Ok(()),
     }
