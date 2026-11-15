@@ -19,7 +19,9 @@ Inquisitor collects aggregate timing features, not typed content or pointer targ
 Enrollment windows support model training. Monitoring windows, inference results, and
 alerts follow the configured retention period on the ML service. `DELETE /me/data` on the
 ML service and the local arcade removes an account's windows, results, alerts, and models.
-The hosted dashboard does not expose deletion yet.
+On the hosted service, "Delete my data" on the setup page calls `DELETE /api/me/data`, which
+removes the same data from the ML service and Atlas and revokes every paired agent. Hosted
+Atlas monitoring rows have no automatic retention purge yet.
 
 ## Remote processing
 
