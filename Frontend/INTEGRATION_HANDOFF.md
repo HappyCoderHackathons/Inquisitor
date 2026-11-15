@@ -52,7 +52,7 @@ The follow-up implementer should:
    server-side credential. The website already deletes its own rows and local
    artifact files after a typed phrase. The model service deletes that account's
    stored windows, scores, alerts, and model artifacts at `DELETE /me/data`.
-   Those two stores are not yet linked, and neither one deletes an SSOJet account.
+   Those two stores are not yet linked, and neither one deletes a Better Auth account.
 6. Add tests for authorization, account/device isolation, message validation,
    disconnect/revocation, stale status, and deletion before presenting the
    integration as complete.
