@@ -49,3 +49,45 @@ Atlas monitoring rows have no automatic retention purge yet.
 Training and inference run on the designated remote ML host. Enrollment windows leave the
 user's device only after explicit onboarding. Credentials for that host never ship in the
 client binary.
+
+## Automated privacy scanning
+
+[`scripts/scan_privacy_payloads.py`](../scripts/scan_privacy_payloads.py) scans JSON, JSONL, and
+JSON audit log lines for prohibited content. It fails closed on:
+
+- Forbidden field names (key codes, typed text fields, absolute pointer coordinates, window
+  titles, URL fields, ordered raw event lists)
+- Feature windows whose fields fall outside the shared `feature-window-v1` through v4 schema
+  allowlists
+- Audit records that include fields beyond the metadata emitted by `hosted.audit_event`
+- String values that contain `http://` or `https://`
+
+The Backend GitHub Actions workflow runs this scanner on
+[`shared/fixtures/tray-capture.v4.json`](../shared/fixtures/tray-capture.v4.json) and
+[`sample-data/windows.jsonl`](../sample-data/windows.jsonl). Unit tests in
+[`tests/test_privacy_scan.py`](../tests/test_privacy_scan.py) cover additional cases.
+
+## Verified agent link capture (local, not production HTTPS)
+
+To inspect what the hosted agent routes accept and persist without a deployed site, use the
+in-process capture helper against [`scripts/agent_link_test_server.py`](../scripts/agent_link_test_server.py):
+
+```text
+uv run --no-project --python 3.13 --with-requirements Frontend/requirements.txt ^
+  --with "mongomock>=4.3,<5" python scripts/capture_agent_link_artifacts.py
+uv run --project backend python scripts/scan_privacy_payloads.py scripts/fixtures/agent-link-captured.json
+```
+
+What this verifies:
+
+- Pairing with the test-only code, posting a schema v4 monitoring window, and reading persisted
+  documents through the `GET /__test/artifacts` helper route added for privacy checks
+- Running the privacy scanner on the captured upload request, persisted `window` payloads, and
+  INFO audit lines collected during the flow
+
+Limits (not verified by this path):
+
+- No TLS termination or production MongoDB Atlas persistence
+- No live Rust tray binary or WSS session; this replays the HTTP upload path only
+- Ignored Rust `live_*` tests still require a manual test server and real agent for full transport
+  coverage

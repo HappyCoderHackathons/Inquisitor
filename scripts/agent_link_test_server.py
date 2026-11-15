@@ -105,6 +105,28 @@ def create_app() -> Flask:
             monitoring=database.monitoring_windows.count_documents({"device_id": device_id}),
         )
 
+    @app.get("/__test/artifacts")
+    def artifacts() -> Response:
+        """Return persisted upload payloads for local privacy verification (test server only)."""
+        windows = [
+            item.get("window")
+            for item in database.windows.find({}, {"window": 1})
+            if isinstance(item.get("window"), dict)
+        ]
+        monitoring = [
+            item.get("window")
+            for item in database.monitoring_windows.find({}, {"window": 1})
+            if isinstance(item.get("window"), dict)
+        ]
+        return jsonify(
+            enrollment_uploads=windows,
+            monitoring_uploads=monitoring,
+            persisted_documents={
+                "windows": list(database.windows.find({}, {"_id": 0})),
+                "monitoring_windows": list(database.monitoring_windows.find({}, {"_id": 0})),
+            },
+        )
+
     return app
 
 
