@@ -44,7 +44,6 @@ class Device(TypedDict):
 
 EnrollmentSessionStatus = Literal["active", "completed", "cancelled"]
 
-
 class EnrollmentSession(TypedDict):
     _id: str
     onboarding_id: str
