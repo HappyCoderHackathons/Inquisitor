@@ -1,0 +1,50 @@
+# Dependencies and package caches
+**/node_modules/
+**/.venv/
+**/venv/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local databases and SQLite files
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+
+# Model artifacts and local data
+account-artifacts/
+**/account-artifacts/
+archive_models/
+sample-data/
+*.joblib
+*.pkl
+*.model
+
+# Secrets and environment files
+*.env
+*.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.token
+service.env
+.private/
+/.private/
+
+# Git and IDE metadata
+.git
+.github
+.agents
+.gemini
+.vscode
+.idea
+
+# Rust agent build artifacts
+agent/
+target/

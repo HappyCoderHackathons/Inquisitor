@@ -117,3 +117,62 @@ the in-memory adapter; live Atlas connectivity still needs a deployment check.
 - Arcade rounds still store only local aggregate samples in SQLite. The feature-window contract used by the agent and the model is the one on `/privacy`. Sign-in and pairing stay at `/onboarding` when hosted auth is configured. `/onboarding?mode=signup` opens account creation.
 
 The aim trainer uses mouse clicks or the A button. Block Stack uses arrows/WASD or the gamepad face buttons and D-pad. Arena Rush uses WASD or the arrow keys to move, the mouse to aim, and left-click to fire. Word Sprint shuffles its word list each round and highlights correct letters as you type.
+
+## Deploy
+
+The hosted website runs as a containerized service on a WebSocket-capable host such as Render. Vercel and similar serverless platforms are not suitable because Flask maintains a persistent WebSocket (`flask-sock` at `/api/agent/ws`) for the desktop agent and Better Auth runs as a loopback Node service on `127.0.0.1:3001` within the same host.
+
+### Environment variables
+
+#### Required variables
+
+| Variable | Description |
+| --- | --- |
+| `BETTER_AUTH_SECRET` | Random secret of at least 32 characters used to sign auth tokens and cookies |
+| `BETTER_AUTH_URL` | Public origin of the Flask application (for example `https://inquisitor-web.onrender.com`) |
+| `MONGODB_URI` | MongoDB Atlas connection string |
+| `MONGODB_DB` | MongoDB database name |
+| `ML_SERVICE_URL` | URL of the private ML service |
+| `ML_TOKEN_FILE` | Absolute path to the file containing the ML bearer token (can also pass `ML_TOKEN` or `ML_SERVICE_TOKEN` as an env var) |
+
+#### Optional tuning variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PORT` | `5000` | Port for the Gunicorn web server (injected automatically by Render) |
+| `ALERT_WINDOW` | `4` | Number of recent feature windows evaluated for alert triggering |
+| `ALERT_UNUSUAL_COUNT` | `3` | Unusual windows required within the alert window to trigger an alert |
+| `ALERT_NORMAL_COUNT` | `3` | Normal windows required within the alert window to close an alert |
+| `INQUISITOR_MONITORING_RETENTION_SECONDS` | `604800` | Retention duration for monitoring data in seconds (7 days) |
+| `GUNICORN_WORKERS` | `1` | Number of Gunicorn worker processes (keep at 1 for in-process stream dispatch) |
+| `GUNICORN_THREADS` | `16` | Number of threads per worker to maintain open WebSocket connections |
+
+### Deploy on Render
+
+1. Push this repository to GitHub or GitLab.
+2. In Render Dashboard, click **New** > **Blueprint**.
+3. Connect your repository. Render detects [`render.yaml`](../render.yaml) automatically.
+4. When prompted, fill in the values for the required environment variables. Set `ML_TOKEN` to the token itself; the entrypoint writes it to a file. If using a Render Secret File for `ML_TOKEN_FILE`, specify the file path (such as `/etc/secrets/ml-token`).
+   `ML_SERVICE_URL` must be reachable from Render over authenticated HTTPS. An SSH tunnel to the private model host does not work from a Render service.
+5. Click **Apply** to build the Docker image and deploy the web service.
+
+### Run with Docker locally
+
+1. Build the Docker container from the repository root:
+   ```sh
+   docker build -t inquisitor-web .
+   ```
+2. Create an environment file `.env.docker` with the required variables:
+   ```sh
+   BETTER_AUTH_SECRET=a_very_long_random_secret_at_least_32_chars
+   BETTER_AUTH_URL=http://localhost:5000
+   MONGODB_URI=mongodb+srv://...
+   MONGODB_DB=inquisitor
+   ML_SERVICE_URL=https://ml.example.com
+   ML_TOKEN=your_ml_service_token
+   ```
+3. Run the container:
+   ```sh
+   docker run --rm -p 5000:5000 --env-file .env.docker inquisitor-web
+   ```
+4. Access the service at [http://localhost:5000](http://localhost:5000).
