@@ -19,6 +19,7 @@ from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 
+from atlas_persistence import delete_device_records, ensure_indexes, record_inference, record_model_version
 from models import DEFAULT_PRIVACY_PREFERENCES, DevicePairingState
 
 GAMES = ("aim", "tetris", "typing", "arena")
@@ -73,9 +74,32 @@ def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer]:
             raise RuntimeError(f"model service returned {error.code}: {message}") from None
 
     def train(user_id: str, device_id: str, windows: list[Document], validation_sessions: list[str]) -> str:
-        metadata = call("POST", "/models/train", user_id, device_id,
-                        {"windows": windows, "validation_session_ids": validation_sessions})
+        payload = {"windows": windows, "validation_session_ids": validation_sessions}
+        request_ = urllib.request.Request(
+            base_url.rstrip("/") + "/models/train", method="POST",
+            data=json.dumps(payload, allow_nan=False).encode(),
+            headers={"Authorization": f"Bearer {token}", "X-User-ID": user_id, "X-Device-ID": device_id,
+                     "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request_, timeout=120) as response:
+                metadata = cast(Document, json.load(response))
+                status = response.status
+        except urllib.error.HTTPError as error:
+            message = json.loads(error.read() or b"{}").get("error", "model service error")
+            raise RuntimeError(f"model service returned {error.code}: {message}") from None
         model_id = cast(str, metadata["model_id"])
+        if status == 202:
+            for _ in range(120):
+                metadata = call("GET", f"/models/{model_id}", user_id, device_id)
+                state = metadata.get("state")
+                if state == "ready":
+                    break
+                if state == "failed":
+                    raise RuntimeError(cast(str, metadata.get("error", "training failed")))
+                threading.Event().wait(0.5)
+            else:
+                raise RuntimeError("training did not finish before the polling deadline")
         call("PUT", f"/models/{model_id}/active", user_id, device_id)
         return model_id
 
@@ -112,6 +136,7 @@ def register(
     app: Flask, database: Database, trainer: Trainer, scorer: Scorer, window_error: Callable[[Document], str | None],
 ) -> None:
     public_origin = os.environ["BETTER_AUTH_URL"].rstrip("/")
+    ensure_indexes(database)
     database.rate_limits.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("code_hash", unique=True)
@@ -434,6 +459,20 @@ def register(
         except (RuntimeError, OSError) as error:
             database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"error": str(error)}})
             return jsonify(error="scoring is unavailable; retry later"), 502
+        stamp = now()
+        record_inference(
+            database, user_id=device["user_id"], device_id=device["_id"], window=window, result=result, created_at=stamp,
+        )
+        onboarding = database.onboarding.find_one({"device_id": device["_id"], "state": "ready"})
+        if onboarding and onboarding.get("model_id"):
+            record_model_version(
+                database,
+                user_id=device["user_id"],
+                device_id=device["_id"],
+                metadata={"model_id": onboarding["model_id"], "state": "ready", "classification": result.get("state")},
+                active=True,
+                created_at=stamp,
+            )
         database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"result": result}})
         return jsonify(result), 201
 

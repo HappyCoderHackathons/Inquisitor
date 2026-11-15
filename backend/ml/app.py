@@ -87,28 +87,81 @@ def create_app() -> Flask:
         model = published_model()
         return jsonify(remember(model.score(body({"window"})["window"], g.device_id)))
 
-    @app.post("/models/train")
-    def train():
-        value = body({"windows"}, {"validation_session_id", "validation_session_ids", "profile", "impostor_windows"})
+    def validate_training_request(value: dict[str, object]) -> tuple[bool, object]:
         labeled = value.get("profile") == "labeled-overlap"
         if labeled:
             if any(field in value for field in ("validation_session_id", "validation_session_ids")):
                 raise ValueError("labeled-overlap uses all supplied data; omit validation session fields")
             if not isinstance(value.get("impostor_windows"), list):
                 raise ValueError("labeled-overlap requires an impostor_windows list")
-        elif ("validation_session_id" in value) == ("validation_session_ids" in value):
-            raise ValueError("provide exactly one of validation_session_id or validation_session_ids")
-        sessions = value.get("validation_session_id", value.get("validation_session_ids"))
-        if not isinstance(value["windows"], list) or (not labeled and not isinstance(sessions, (str, list))):
-            raise ValueError("windows must be a list and validation sessions must be session IDs")
+            sessions = None
+        else:
+            if ("validation_session_id" in value) == ("validation_session_ids" in value):
+                raise ValueError("provide exactly one of validation_session_id or validation_session_ids")
+            sessions = value.get("validation_session_id", value.get("validation_session_ids"))
+            if not isinstance(sessions, (str, list)):
+                raise ValueError("validation sessions must be session IDs")
+        if not isinstance(value["windows"], list):
+            raise TypeError("windows must be a list")
+        return labeled, sessions
+
+    def execute_training(value: dict[str, object], labeled: bool, sessions: object) -> dict[str, object]:
+        model_id = store.reserve_training_job(g.user_id, g.device_id)
+        account.register_model_version(
+            g.user_id, g.device_id, {"model_id": model_id, "state": "queued"}, active=False,
+        )
+        try:
+            metadata = store.train(
+                value["windows"], g.user_id, g.device_id, sessions,
+                profile=value.get("profile", "all"),
+                impostor_values=value.get("impostor_windows"),
+                model_id=model_id,
+            )
+        except Exception:
+            account.set_model_job_state(g.user_id, g.device_id, model_id, "failed")
+            raise
+        account.register_model_version(g.user_id, g.device_id, metadata, active=False)
+        return metadata
+
+    @app.post("/models/train")
+    def train():
+        value = body({"windows"}, {"validation_session_id", "validation_session_ids", "profile", "impostor_windows"})
+        labeled, sessions = validate_training_request(value)
         if not training_lock.acquire(blocking=False):
             return jsonify(error="training is busy; retry later"), 503
-        try:
-            metadata = store.train(value["windows"], g.user_id, g.device_id, sessions,
-                                   profile=value.get("profile", "all"), impostor_values=value.get("impostor_windows"))
-            return jsonify(metadata), 201
-        finally:
+
+        def finish(metadata: dict[str, object], status: int):
             training_lock.release()
+            return jsonify(metadata), status
+
+        if os.environ.get("ML_TRAIN_ASYNC") == "1":
+            model_id = store.reserve_training_job(g.user_id, g.device_id)
+            account.register_model_version(
+                g.user_id, g.device_id, {"model_id": model_id, "state": "queued"}, active=False,
+            )
+            request_value = dict(value)
+
+            def run_job() -> None:
+                try:
+                    metadata = store.train(
+                        request_value["windows"], g.user_id, g.device_id, sessions,
+                        profile=request_value.get("profile", "all"),
+                        impostor_values=request_value.get("impostor_windows"),
+                        model_id=model_id,
+                    )
+                    account.register_model_version(g.user_id, g.device_id, metadata, active=False)
+                except (OSError, RuntimeError, ValueError):
+                    account.set_model_job_state(g.user_id, g.device_id, model_id, "failed")
+                finally:
+                    training_lock.release()
+
+            threading.Thread(target=run_job, daemon=True).start()
+            return jsonify(store.metadata(model_id, g.user_id, g.device_id)), 202
+        try:
+            return finish(execute_training(value, labeled, sessions), 201)
+        except Exception:
+            training_lock.release()
+            raise
 
     @app.get("/models/active")
     def active_metadata():
@@ -121,7 +174,16 @@ def create_app() -> Flask:
             raise PermissionError("window belongs to another device")
         if not account.save_window(g.user_id, g.device_id, window):
             return jsonify(error="This device/session/sequence window already exists"), 409
-        return jsonify(ok=True), 201
+        if window["mode"] != "monitoring":
+            return jsonify(ok=True), 201
+        try:
+            model_id = store.active_model_id(g.user_id, g.device_id)
+        except FileNotFoundError:
+            return jsonify(error="monitoring requires an active model for this account and device"), 409
+        try:
+            return jsonify(remember(store.score(model_id, window, g.user_id, g.device_id))), 201
+        except (EOFError, KeyError, OSError, RuntimeError, ValueError) as error:
+            return jsonify(error=f"scoring failed: {error}"), 502
 
     @app.post("/models/active/score")
     def active_score():
@@ -130,7 +192,9 @@ def create_app() -> Flask:
 
     @app.put("/models/<model_id>/active")
     def activate(model_id: str):
-        return jsonify(store.activate(model_id, g.user_id, g.device_id))
+        metadata = store.activate(model_id, g.user_id, g.device_id)
+        account.register_model_version(g.user_id, g.device_id, metadata, active=True)
+        return jsonify(metadata)
 
     @app.get("/models/<model_id>")
     def metadata(model_id: str):

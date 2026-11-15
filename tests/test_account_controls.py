@@ -45,7 +45,7 @@ class AccountControlTests(unittest.TestCase):
         path.mkdir()
         (path / "model.joblib").write_bytes(b"artifact")
         (path / "metadata.json").write_text(json.dumps({
-            "model_id": model_id, "user_id": user_id, "device_id": device_id,
+            "model_id": model_id, "user_id": user_id, "device_id": device_id, "state": "ready",
         }), encoding="utf-8")
         return model_id, path
 
@@ -77,7 +77,7 @@ class AccountControlTests(unittest.TestCase):
         monitoring = self.window(mode="monitoring", session_id="monitor", sequence=1)
         self.assertEqual(self.client.post(
             "/windows", headers=self.headers, json={"window": monitoring},
-        ).status_code, 201)
+        ).status_code, 502)
         self.assertEqual(self.client.post(
             "/windows", headers=other_headers,
             json={"window": self.window(session_id="other", device_id="other-device")},
@@ -113,7 +113,7 @@ class AccountControlTests(unittest.TestCase):
         self.assertEqual(self.client.post(
             "/windows", headers=self.headers,
             json={"window": self.window(mode="monitoring", session_id="monitor", sequence=2)},
-        ).status_code, 201)
+        ).status_code, 502)
         other_device = {**self.headers, "X-Device-ID": "other-device"}
         kept_id, kept_path = self.plant_model("synthetic-user", "other-device")
         self.assertEqual(self.client.put(f"/models/{kept_id}/active", headers=other_device).status_code, 200)
@@ -213,6 +213,12 @@ class AccountControlTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT job_state FROM models").fetchone()[0], "ready")
         store.delete_device("u", "d2")
         self.assertEqual((store.counts("u")["inference_results"], store.counts("u")["windows"]), (0, 1))
+
+    def test_monitoring_window_requires_an_active_model(self) -> None:
+        monitoring = self.window(mode="monitoring", session_id="monitor", sequence=3)
+        response = self.client.post("/windows", headers=self.headers, json={"window": monitoring})
+        self.assertEqual(response.status_code, 409, response.json)
+        self.assertIn("active model", response.json["error"])
 
     def test_invalid_retention_env_refuses_to_start(self) -> None:
         with (
