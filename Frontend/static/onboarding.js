@@ -10,6 +10,7 @@
   var stateText = {
     collecting: "Agent connected. Play each game until its timer is complete, then train your model.",
     training: "Collection complete. Your model is training.",
+    review: "Your retrained model is ready. Compare it below before switching.",
     ready: "Setup complete. Your model is active.",
     failed: "Training failed."
   };
@@ -189,8 +190,41 @@
     update();
     countdownId = window.setInterval(update, 1e3);
   }
-  async function post(path) {
-    return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  async function post(path, body = {}) {
+    return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  }
+  function describeModel(label, metrics) {
+    const item = document.createElement("li");
+    if (!metrics) {
+      item.textContent = `${label}: no result`;
+      return item;
+    }
+    const { usable, unusual, insufficient, frr } = metrics.genuine;
+    const rate = frr === null ? "no usable windows" : `${Math.round(frr * 100)}% flagged`;
+    item.textContent = `${label}: ${unusual} of ${usable} usable windows flagged as unusual (${rate}), ${insufficient} with too little activity`;
+    return item;
+  }
+  function renderModel(status) {
+    const panel = element("modelPanel");
+    if (panel) panel.hidden = !status.model_id;
+    const review = status.state === "review";
+    const show = (id, visible) => {
+      const button = element(id);
+      if (button) button.hidden = !visible;
+    };
+    show("retrainModel", status.state === "ready");
+    show("activateCandidate", review);
+    show("keepCurrent", review);
+    show("rollbackModel", status.state === "ready" && Boolean(status.previous_model_id));
+    const comparison = element("modelComparison");
+    if (comparison) comparison.hidden = !review || !status.comparison;
+    const list = element("comparisonList");
+    if (list && review && status.comparison) {
+      list.replaceChildren(
+        describeModel("New model", status.comparison.candidate),
+        describeModel("Current model", status.comparison.active)
+      );
+    }
   }
   async function refresh() {
     let response;
@@ -225,9 +259,11 @@
     const revoke = element("revokeDevice");
     if (revoke) revoke.hidden = false;
     if (stateLabel) {
-      stateLabel.textContent = status.error ? `${stateText[status.state]} ${status.error}` : stateText[status.state];
-      stateLabel.classList.toggle("error", status.state === "failed");
+      const text = status.retraining && status.state === "collecting" ? "Retraining. Play each game again, then train. Your current model stays active until you switch." : stateText[status.state];
+      stateLabel.textContent = status.error ? `${text} ${status.error}` : text;
+      stateLabel.classList.toggle("error", status.state === "failed" || Boolean(status.error));
     }
+    renderModel(status);
     const list = element("gameProgress");
     if (list) {
       list.replaceChildren(
@@ -424,6 +460,48 @@
       "/api/onboarding/finish",
       "Finish enrollment? The agent stops sending enrollment windows. Training can still use the windows already collected."
     );
+  });
+  async function modelAction(path, confirmText, body = {}) {
+    if (!window.confirm(confirmText)) return;
+    const status = element("modelStatus");
+    if (status) {
+      status.classList.remove("error");
+      status.textContent = "Please wait.";
+    }
+    try {
+      const response = await post(path, body);
+      if (!response.ok && status) {
+        status.classList.add("error");
+        status.textContent = response.status === 502 ? "The model service is unavailable, so your active model did not change. Try again later." : `Could not update your model (${response.status}). Refresh and try again.`;
+        return;
+      }
+      await refresh();
+      if (status) status.textContent = "";
+    } catch (error) {
+      if (status) {
+        status.classList.add("error");
+        status.textContent = error instanceof Error ? error.message : "Could not update your model. Try again.";
+      }
+    }
+  }
+  element("retrainModel")?.addEventListener("click", () => {
+    void modelAction(
+      "/api/onboarding/retrain",
+      "Retrain your model? You will play a new set of game rounds. Monitoring keeps your current model until you choose to switch.",
+      { approve: true }
+    );
+  });
+  element("activateCandidate")?.addEventListener("click", () => {
+    void modelAction(
+      "/api/onboarding/candidate/activate",
+      "Switch monitoring to the new model? You can go back to the current one afterwards."
+    );
+  });
+  element("keepCurrent")?.addEventListener("click", () => {
+    void modelAction("/api/onboarding/candidate/keep", "Keep the current model and set the new one aside?");
+  });
+  element("rollbackModel")?.addEventListener("click", () => {
+    void modelAction("/api/onboarding/rollback", "Go back to the previous model for monitoring?");
   });
   document.querySelectorAll("[data-step-tab]").forEach((tab) => {
     tab.addEventListener("click", () => {
