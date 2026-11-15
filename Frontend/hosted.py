@@ -111,6 +111,7 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
         server_metadata_url=os.environ["SSOJET_AUTHORITY"].rstrip("/") + "/.well-known/openid-configuration",
         client_kwargs={"scope": "openid profile email", "code_challenge_method": "S256"},
     )
+    database.sessions.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("code_hash", unique=True)
     database.devices.create_index("token_hash", unique=True)
@@ -143,9 +144,16 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
         # shortcut: in-process thread loses the job on restart; move to a job queue if training gets slow.
         threading.Thread(target=run, daemon=True).start()
 
+    def signed_in_user() -> str | None:
+        # The cookie holds only a random session ID; the record in Atlas is what logout and expiry revoke.
+        sid = session.get("sid")
+        record = database.sessions.find_one({"_id": digest(sid), "expires_at": {"$gt": now()}}) \
+            if isinstance(sid, str) else None
+        return record["user_id"] if record else None
+
     def current_user() -> str:
-        user_id = session.get("user_id")
-        if not isinstance(user_id, str):
+        user_id = signed_in_user()
+        if user_id is None:
             abort(401)
         return user_id
 
@@ -185,19 +193,24 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
             "$set": {"email": claims.get("email"), "last_login_at": now()},
             "$setOnInsert": {"created_at": now()},
         }, upsert=True)
+        sid = secrets.token_urlsafe(32)
+        database.sessions.insert_one({"_id": digest(sid), "user_id": subject, "expires_at": now() + SESSION_LIFETIME})
         session.clear()
         session.permanent = True
-        session["user_id"] = subject
+        session["sid"] = sid
         return redirect(url_for("hosted.onboarding_page"))
 
     @blueprint.post("/logout")
     def logout():
+        sid = session.get("sid")
+        if isinstance(sid, str):
+            database.sessions.delete_one({"_id": digest(sid)})
         session.clear()
-        return {"ok": True}
+        return redirect(url_for("hosted.onboarding_page"))
 
     @blueprint.get("/onboarding")
     def onboarding_page():
-        return render_template("onboarding.html", signed_in=isinstance(session.get("user_id"), str))
+        return render_template("onboarding.html", signed_in=signed_in_user() is not None)
 
     @blueprint.get("/api/me")
     def me():

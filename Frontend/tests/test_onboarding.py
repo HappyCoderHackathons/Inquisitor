@@ -61,8 +61,11 @@ class OnboardingTests(unittest.TestCase):
 
     def sign_in(self, user_id="user-a"):
         self.database.users.insert_one({"_id": user_id, "email": f"{user_id}@example.test"})
+        sid = f"session-{user_id}"
+        self.database.sessions.insert_one({"_id": hosted.digest(sid), "user_id": user_id,
+                                           "expires_at": self.clock + hosted.SESSION_LIFETIME})
         with self.client.session_transaction() as session:
-            session["user_id"] = user_id
+            session["sid"] = sid
 
     def pair(self):
         self.sign_in()
@@ -176,7 +179,13 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/me").status_code, 401)
         self.sign_in()
         self.assertEqual(self.client.get("/api/me").get_json()["email"], "user-a@example.test")
-        self.client.post("/logout")
+        cookie = self.client.get_cookie("session").value
+        self.assertEqual(self.client.post("/logout").status_code, 302)
+        self.assertEqual(self.client.get("/api/me").status_code, 401)
+        self.client.set_cookie("session", cookie)
+        self.assertEqual(self.client.get("/api/me").status_code, 401, "logout must revoke the server-side session")
+        self.sign_in("user-b")
+        self.clock += hosted.SESSION_LIFETIME
         self.assertEqual(self.client.get("/api/me").status_code, 401)
 
 
