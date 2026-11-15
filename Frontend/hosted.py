@@ -65,11 +65,27 @@ ENV = (
 )
 
 Document = dict[str, Any]
-Trainer = Callable[[str, str, list[Document], list[str]], str]
+Trainer = Callable[[str, str, list[Document], list[str]], str | Document]
 Scorer = Callable[[str, str, Document], Document]
 Deleter = Callable[[str, str], None]
 Activator = Callable[[str, str, str], None]
 Comparer = Callable[[str, str, str, list[Document]], Document]
+MODEL_LIMITATIONS = (
+    "These figures describe this device's model only. A holdout rate counts alerts on sessions "
+    "that were not used to fit the model. An impostor result counts alerts on someone else's sessions "
+    "when that evaluation was stored. These figures are not proof of identity. A small sample makes the rate "
+    "unstable, and a missing figure means that evaluation was not stored with the model."
+)
+ALGORITHM_LABELS = {
+    "IsolationForest": (
+        "Isolation Forest. It flags a window whose timing sits apart from this device's enrollment. "
+        "The score is an anomaly signal, not an identity."
+    ),
+    "LogisticRegression": (
+        "Logistic regression. It compares a window with this device's enrollment. "
+        "The score is an anomaly signal, not an identity."
+    ),
+}
 logger = logging.getLogger(__name__)
 
 
@@ -107,7 +123,132 @@ def now() -> datetime:
     return datetime.now(UTC)
 
 
-def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer, Deleter, Activator, Comparer]:
+def whole_count(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number
+
+
+def text_list(value: object) -> list[str] | None:
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        return None
+    return value
+
+
+def timestamp_text(value: object) -> str | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def empty_model_summary(device_id: str | None = None, device_name: str | None = None) -> Document:
+    return {
+        "available": False,
+        "device_id": device_id,
+        "device_name": device_name,
+        "model_id": None,
+        "trained_at": None,
+        "training_windows": None,
+        "validation_windows": None,
+        "window_count": None,
+        "session_count": None,
+        "algorithm": None,
+        "algorithm_label": None,
+        "threshold": None,
+        "threshold_label": None,
+        "holdout_alerts": None,
+        "holdout_windows": None,
+        "impostor_alerts": None,
+        "impostor_windows": None,
+        "limitations": MODEL_LIMITATIONS,
+    }
+
+
+def paired_count(metadata: Document, alerts_key: str, windows_key: str) -> tuple[int | None, int | None]:
+    alerts = whole_count(metadata.get(alerts_key))
+    windows = whole_count(metadata.get(windows_key))
+    if alerts is None or windows is None:
+        return None, None
+    return alerts, windows
+
+
+def model_summary(database: Database, user_id: str) -> Document:
+    onboarding = database.onboarding.find_one({"user_id": user_id}, sort=[("created_at", -1)])
+    if onboarding is None:
+        return empty_model_summary()
+    device = database.devices.find_one({"_id": onboarding["device_id"], "user_id": user_id})
+    device_name = device.get("name") if device and isinstance(device.get("name"), str) else None
+    version = database.model_versions.find_one(
+        {"user_id": user_id, "device_id": onboarding["device_id"], "active": True},
+        sort=[("created_at", -1)],
+    )
+    if version is None:
+        return empty_model_summary(onboarding["device_id"], device_name)
+    metadata = version.get("metadata") if isinstance(version.get("metadata"), dict) else {}
+    training_windows = whole_count(metadata.get("training_window_count"))
+    validation_windows = whole_count(metadata.get("validation_window_count"))
+    if training_windows is None or validation_windows is None:
+        window_count = database.windows.count_documents({"onboarding_id": onboarding["_id"], "usable": True})
+        training_windows = None
+        validation_windows = None
+    else:
+        window_count = training_windows + validation_windows
+    training_sessions = text_list(metadata.get("training_sessions"))
+    validation_sessions = text_list(metadata.get("validation_sessions")) or []
+    if training_sessions is None:
+        session_count = len(database.windows.distinct(
+            "session_id", {"onboarding_id": onboarding["_id"], "usable": True},
+        ))
+    else:
+        session_count = len(set(training_sessions) | set(validation_sessions))
+    algorithm = metadata.get("algorithm")
+    algorithm = algorithm if isinstance(algorithm, str) and algorithm else None
+    threshold = finite_number(metadata.get("threshold"))
+    rule = metadata.get("threshold_rule")
+    threshold_label = None
+    if threshold is not None:
+        threshold_label = f"Alert when a window's score is above {threshold}."
+        if isinstance(rule, str) and rule:
+            threshold_label = f"{threshold_label} {rule}"
+    holdout_alerts, holdout_windows = paired_count(metadata, "holdout_alert_count", "holdout_window_count")
+    impostor_alerts, impostor_windows = paired_count(
+        metadata, "impostor_evaluation_alert_count", "impostor_evaluation_window_count",
+    )
+    summary = empty_model_summary(onboarding["device_id"], device_name)
+    summary.update({
+        "available": True,
+        "model_id": version["_id"],
+        "trained_at": timestamp_text(metadata.get("trained_at")) or timestamp_text(version.get("created_at")),
+        "training_windows": training_windows,
+        "validation_windows": validation_windows,
+        "window_count": window_count,
+        "session_count": session_count,
+        "algorithm": algorithm,
+        "algorithm_label": ALGORITHM_LABELS.get(algorithm) if algorithm else None,
+        "threshold": threshold,
+        "threshold_label": threshold_label,
+        "holdout_alerts": holdout_alerts,
+        "holdout_windows": holdout_windows,
+        "impostor_alerts": impostor_alerts,
+        "impostor_windows": impostor_windows,
+    })
+    return summary
+
+
+def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer, Deleter, Activator, Comparer, Deleter, Deleter]:
     def call(method: str, path: str, user_id: str, device_id: str, body: object | None = None) -> Document:
         request_ = urllib.request.Request(
             base_url.rstrip("/") + path, method=method,
@@ -122,7 +263,7 @@ def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer, Deleter, Acti
             message = json.loads(error.read() or b"{}").get("error", "model service error")
             raise RuntimeError(f"model service returned {error.code}: {message}") from None
 
-    def train(user_id: str, device_id: str, windows: list[Document], validation_sessions: list[str]) -> str:
+    def train(user_id: str, device_id: str, windows: list[Document], validation_sessions: list[str]) -> Document:
         payload = {"windows": windows, "validation_session_ids": validation_sessions}
         request_ = urllib.request.Request(
             base_url.rstrip("/") + "/models/train", method="POST",
@@ -149,7 +290,7 @@ def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer, Deleter, Acti
                 threading.Event().wait(0.5)
             else:
                 raise RuntimeError("training did not finish before the polling deadline")
-        return model_id
+        return metadata
 
     def score(user_id: str, device_id: str, window: Document) -> Document:
         return call("POST", "/models/active/score", user_id, device_id, {"window": window})
@@ -163,7 +304,13 @@ def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer, Deleter, Acti
     def compare(user_id: str, device_id: str, model_id: str, windows: list[Document]) -> Document:
         return call("POST", f"/models/{model_id}/compare", user_id, device_id, {"windows": windows})
 
-    return train, score, delete, activate, compare
+    def reset(user_id: str, device_id: str) -> None:
+        call("POST", "/enrollment/reset", user_id, device_id)
+
+    def deactivate(user_id: str, device_id: str) -> None:
+        call("POST", "/models/active/deactivate", user_id, device_id)
+
+    return train, score, delete, activate, compare, reset, deactivate
 
 
 def collection_state(onboarding: Document) -> str:
@@ -238,6 +385,8 @@ def register(
     deleter: Deleter,
     activator: Activator,
     comparer: Comparer,
+    resetter: Deleter | None = None,
+    deactivator: Deleter | None = None,
 ) -> None:
     public_origin = os.environ["BETTER_AUTH_URL"].rstrip("/")
     ensure_indexes(database)
@@ -326,7 +475,12 @@ def register(
         def run() -> None:
             update: Document
             try:
-                model_id = trainer(user_id, device_id, windows, status["validation_sessions"])
+                result = trainer(user_id, device_id, windows, status["validation_sessions"])
+                metadata = result if isinstance(result, dict) else {"model_id": result, "state": "ready"}
+                model_id = metadata.get("model_id")
+                if not isinstance(model_id, str) or not model_id:
+                    raise ValueError("training did not return a model id")
+                metadata = {**metadata, "model_id": model_id, "state": metadata.get("state") or "ready"}
                 stamp = now()
                 if status["retraining"]:
                     # A retrained model waits for the user's decision; the current model keeps scoring.
@@ -337,7 +491,7 @@ def register(
                     activator(user_id, device_id, model_id)
                     update = {"state": "ready", "model_id": model_id, "completed_at": stamp}
                 record_model_version(
-                    database, user_id=user_id, device_id=device_id, metadata={"model_id": model_id, "state": "ready"},
+                    database, user_id=user_id, device_id=device_id, metadata=metadata,
                     active=not status["retraining"], created_at=stamp,
                 )
             except (RuntimeError, OSError, KeyError, ValueError) as error:
@@ -692,6 +846,82 @@ def register(
             return jsonify(status), 409
         start_training(onboarding, status)
         return jsonify(progress(database, user_onboarding(onboarding["user_id"]))), 202
+
+    def typed_confirmation(phrase: str) -> bool:
+        body = json_body()
+        return set(body) == {"confirmation"} and body.get("confirmation") == phrase
+
+    def latest_onboarding(user_id: str) -> Document | None:
+        return database.onboarding.find_one({"user_id": user_id}, sort=[("created_at", -1)])
+
+    def service_call(action: Deleter | None, user_id: str, device_id: str) -> str | None:
+        if action is None:
+            return "model service is unavailable; nothing was changed"
+        try:
+            action(user_id, device_id)
+        except (RuntimeError, OSError):
+            return "model service is unavailable; nothing was changed"
+        return None
+
+    @blueprint.get("/api/model")
+    def model_details():
+        return jsonify(model_summary(database, current_user()))
+
+    @blueprint.post("/api/models/reset")
+    def reset_model_enrollment():
+        user_id = current_user()
+        if not typed_confirmation("RESET"):
+            return jsonify(error="Type RESET to confirm this action"), 400
+        onboarding = latest_onboarding(user_id)
+        if onboarding is None:
+            abort(404)
+        if onboarding["state"] == "training":
+            return jsonify(error="training is already running"), 409
+        failure = service_call(resetter, user_id, onboarding["device_id"])
+        if failure:
+            return jsonify(error=failure), 502
+        database.windows.delete_many({"onboarding_id": onboarding["_id"]})
+        database.rounds.update_many(
+            {"onboarding_id": onboarding["_id"]},
+            {"$set": {
+                "usable_windows": 0,
+                "valid_window_count": 0,
+                "credited_ms": 0,
+                "status": "cancelled",
+                "ended_at": now(),
+                "generation": 0,
+            }},
+        )
+        database.model_versions.delete_many({
+            "user_id": user_id, "device_id": onboarding["device_id"], "active": True,
+        })
+        database.onboarding.update_one(
+            {"_id": onboarding["_id"]},
+            {"$set": {
+                "state": "collecting", "collection": "active", "model_id": None, "error": None,
+                "candidate_model_id": None, "comparison": None, "previous_model_id": None, "generation": 0,
+            }},
+        )
+        return jsonify(ok=True)
+
+    @blueprint.post("/api/models/deactivate")
+    def deactivate_hosted_model():
+        user_id = current_user()
+        if not typed_confirmation("DEACTIVATE"):
+            return jsonify(error="Type DEACTIVATE to confirm this action"), 400
+        onboarding = latest_onboarding(user_id)
+        if onboarding is None:
+            abort(404)
+        if onboarding["state"] == "training":
+            return jsonify(error="training is already running"), 409
+        failure = service_call(deactivator, user_id, onboarding["device_id"])
+        if failure:
+            return jsonify(error=failure), 502
+        database.model_versions.update_many(
+            {"user_id": user_id, "device_id": onboarding["device_id"], "active": True},
+            {"$set": {"active": False}},
+        )
+        return jsonify(ok=True, active=False)
 
     def close_open_round(onboarding: Document, *, credit: bool) -> None:
         active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "status": "active"})

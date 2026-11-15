@@ -201,6 +201,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,.arena-canvas:focus-vis
 .profile-list>div{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
 .profile-list dt{color:var(--muted);font-size:13px}
 .profile-list dd{margin:0;text-align:right;font-size:13px}
+.model-facts{margin:8px 0 0}
+.model-facts>div{display:block;padding:12px 0;border-bottom:1px solid var(--line)}
+.model-facts dt{color:var(--muted);font-size:13px}
+.model-facts dd{margin:4px 0 0;text-align:left;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
 .danger-heading{margin:2px 0 0;font:600 14px var(--sans)}
 .danger-note{margin-top:8px}
 .data-action{display:flex;flex-direction:column;padding:14px 0;border-top:1px solid var(--line)}

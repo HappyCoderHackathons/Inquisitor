@@ -17,6 +17,7 @@
   var sessionCount = $("#featureSessionCount");
   var exportLink = $("#exportFeatureWindows");
   var dataActionStatus = $("#dataActionStatus");
+  var modelSummaryStatus = $("#modelSummaryStatus");
   var dangerForms = document.querySelectorAll(".typed-confirm");
   var monitoringStatusViews = {
     normal: {
@@ -432,11 +433,82 @@
     }
     return `Request failed (${status}).`;
   }
+  function recorded(value) {
+    return value && value.length > 0 ? value : "Not recorded";
+  }
+  function windowText(summary) {
+    if (!summary.available) return "Not recorded";
+    if (summary.training_windows !== null && summary.validation_windows !== null) {
+      return `${summary.training_windows} training, ${summary.validation_windows} calibration`;
+    }
+    if (summary.window_count !== null) return String(summary.window_count);
+    return "Not recorded";
+  }
+  function rateText(alerts, total, label) {
+    if (alerts === null || total === null) return "Not available";
+    return `${alerts} of ${total} ${label} windows`;
+  }
+  function showModelSummary(summary) {
+    if (modelSummaryStatus) {
+      modelSummaryStatus.classList.remove("error");
+      modelSummaryStatus.textContent = summary.available ? "This is the active model for the signed-in account." : "No trained model is recorded for this account.";
+    }
+    const device = $("#modelDevice");
+    if (device) {
+      device.textContent = summary.available ? `${summary.device_name ?? "Unnamed device"}${summary.device_id ? ` (${summary.device_id})` : ""}` : "Not recorded";
+    }
+    const version = $("#modelVersion");
+    if (version) version.textContent = summary.available ? recorded(summary.model_id) : "Not recorded";
+    const trained = $("#modelTrained");
+    if (trained) trained.textContent = summary.available ? recorded(summary.trained_at) : "Not recorded";
+    const windows = $("#modelWindows");
+    if (windows) windows.textContent = windowText(summary);
+    const sessions = $("#modelSessions");
+    if (sessions) {
+      sessions.textContent = summary.available && summary.session_count !== null ? String(summary.session_count) : "Not recorded";
+    }
+    const algorithm = $("#modelAlgorithm");
+    if (algorithm) {
+      algorithm.textContent = summary.available ? recorded(summary.algorithm_label ?? summary.algorithm) : "Not recorded";
+    }
+    const threshold = $("#modelThreshold");
+    if (threshold) threshold.textContent = summary.available ? recorded(summary.threshold_label) : "Not recorded";
+    const holdout = $("#modelHoldout");
+    if (holdout) holdout.textContent = rateText(summary.holdout_alerts, summary.holdout_windows, "holdout");
+    const impostor = $("#modelImpostor");
+    if (impostor) impostor.textContent = rateText(summary.impostor_alerts, summary.impostor_windows, "impostor");
+  }
+  async function refreshModelSummary() {
+    let response;
+    try {
+      response = await fetch("/api/model");
+    } catch {
+      if (modelSummaryStatus) {
+        modelSummaryStatus.classList.add("error");
+        modelSummaryStatus.textContent = "Could not load the model summary. The server did not respond.";
+      }
+      return;
+    }
+    if (response.status === 404) return;
+    if (!response.ok) {
+      if (modelSummaryStatus) {
+        modelSummaryStatus.classList.add("error");
+        modelSummaryStatus.textContent = `Could not load the model summary (${response.status}).`;
+      }
+      return;
+    }
+    showModelSummary(await response.json());
+  }
+  function actionStatus(form) {
+    if (form.dataset.status) return document.getElementById(form.dataset.status);
+    return dataActionStatus;
+  }
   function wireDangerForm(form) {
     const phrase = form.dataset.phrase ?? "";
     const method = form.dataset.method ?? "POST";
     const path = form.dataset.path ?? "";
     const success = form.dataset.success ?? "Done.";
+    const status = actionStatus(form);
     const input = form.querySelector("input");
     const submit = form.querySelector('button[type="submit"]');
     const opener = document.querySelector(`[aria-controls="${form.id}"]`);
@@ -459,33 +531,34 @@
       event.preventDefault();
       if (!input || input.value !== phrase || !submit) return;
       submit.disabled = true;
-      if (dataActionStatus) {
-        dataActionStatus.classList.remove("error");
-        dataActionStatus.textContent = "Please wait.";
+      if (status) {
+        status.classList.remove("error");
+        status.textContent = "Please wait.";
       }
       void fetch(path, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmation: phrase })
+        body: JSON.stringify(form.dataset.approve === "true" ? { approve: true } : { confirmation: phrase })
       }).then(async (response) => {
         if (!response.ok) throw new Error(responseError(await response.json().catch(() => null), response.status));
         closeDangerForms();
-        if (dataActionStatus) {
-          dataActionStatus.classList.remove("error");
-          dataActionStatus.textContent = success;
+        if (status) {
+          status.classList.remove("error");
+          status.textContent = success;
         }
         try {
           await refreshCollectionSummary();
+          if (form.dataset.status) await refreshModelSummary();
         } catch (error) {
-          if (dataActionStatus) {
-            dataActionStatus.classList.add("error");
-            dataActionStatus.textContent = error instanceof Error ? error.message : "The action finished, but saved windows could not be reloaded.";
+          if (status) {
+            status.classList.add("error");
+            status.textContent = error instanceof Error ? error.message : "The action finished, but saved windows could not be reloaded.";
           }
         }
       }).catch((error) => {
-        if (dataActionStatus) {
-          dataActionStatus.classList.add("error");
-          dataActionStatus.textContent = error instanceof TypeError ? "Could not reach the server. Nothing was changed." : error instanceof Error ? error.message : "Could not complete that action.";
+        if (status) {
+          status.classList.add("error");
+          status.textContent = error instanceof TypeError ? "Could not reach the server. Nothing was changed." : error instanceof Error ? error.message : "Could not complete that action.";
         }
         if (submit) submit.disabled = !input || input.value !== phrase;
       });
@@ -493,6 +566,7 @@
   }
   dangerForms.forEach(wireDangerForm);
   updateControls();
+  void refreshModelSummary();
   renderMonitoringStatus(null);
   void (async () => {
     setCollectionStatus("Loading saved windows\u2026");
