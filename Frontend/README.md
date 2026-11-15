@@ -49,7 +49,11 @@ When all of these environment variables are set, `server.py` also serves SSOJet 
 | `SESSION_SECRET` | Random string that signs session cookies |
 | `MONGODB_URI`, `MONGODB_DB` | Atlas connection string and database name |
 
-The user signs in at `/onboarding` and gets a single-use pairing code that expires after 10 minutes. The agent redeems it at `POST /api/agent/pair` and receives a device token; only the token's SHA-256 hash is stored. Store Atlas and SSOJet credentials only in deployment configuration.
+The user signs in at `/onboarding` and gets a single-use pairing code that expires after 10 minutes. The agent redeems it at `POST /api/agent/pair` and receives a device token; only the token's SHA-256 hash is stored.
+
+Pairing opens an onboarding enrollment for that device. Each arcade round the user starts becomes a session. The agent reads the active session from `GET /api/agent/onboarding` and uploads enrollment windows to `POST /api/agent/windows`. A finished round is credited by server time, capped at 60 seconds; cancelled rounds earn no time. `GET /api/onboarding` reports seconds per game and counts the usable windows (30 or more key presses). Aim Trainer rounds count toward time but rarely produce usable windows.
+
+Store Atlas and SSOJet credentials only in deployment configuration.
 
 ## Privacy and current scope
 
