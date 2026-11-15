@@ -73,7 +73,10 @@ class AccountStore:
                     user_id TEXT NOT NULL,
                     device_id TEXT NOT NULL,
                     active INTEGER NOT NULL,
-                    created_at TEXT NOT NULL
+                    job_state TEXT NOT NULL DEFAULT 'ready',
+                    algorithm TEXT,
+                    created_at TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
                 );
                 CREATE TABLE IF NOT EXISTS retention_policy (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -85,6 +88,15 @@ class AccountStore:
                 "INSERT OR IGNORE INTO retention_policy (id, monitoring_retention_seconds) VALUES (1, ?)",
                 (retention_seconds,),
             )
+            for statement in (
+                "ALTER TABLE models ADD COLUMN job_state TEXT NOT NULL DEFAULT 'ready'",
+                "ALTER TABLE models ADD COLUMN algorithm TEXT",
+                "ALTER TABLE models ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'",
+            ):
+                try:
+                    conn.execute(statement)
+                except sqlite3.OperationalError:
+                    pass
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -157,9 +169,19 @@ class AccountStore:
                 )
             conn.commit()
 
-    def add_model(self, user_id: str, device_id: str, model_id: str, *, active: bool) -> Path:
+    def register_model_version(
+        self, user_id: str, device_id: str, metadata: dict[str, object], *, active: bool,
+    ) -> Path:
+        model_id = metadata.get("model_id")
+        if type(model_id) is not str:
+            raise ValueError("model metadata requires model_id")
+        state = metadata.get("state", "ready")
+        if type(state) is not str:
+            raise ValueError("model metadata requires a string state")
+        algorithm = metadata.get("algorithm")
         path = self._artifact_path(model_id)
         stamp = self._stamp(None)
+        payload = json.dumps(metadata, allow_nan=False, separators=(",", ":"))
         with self._lock, closing(self._connect()) as conn:
             if active:
                 conn.execute(
@@ -168,12 +190,38 @@ class AccountStore:
                 )
             path.mkdir(parents=True, exist_ok=True, mode=0o700)
             conn.execute(
-                """INSERT INTO models (model_id, user_id, device_id, active, created_at)
-                VALUES (?, ?, ?, ?, ?)""",
-                (model_id, user_id, device_id, int(active), stamp),
+                """INSERT INTO models
+                (model_id, user_id, device_id, active, job_state, algorithm, created_at, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(model_id) DO UPDATE SET
+                    job_state=excluded.job_state,
+                    algorithm=excluded.algorithm,
+                    metadata_json=excluded.metadata_json,
+                    active=excluded.active""",
+                (
+                    model_id, user_id, device_id, int(active), state,
+                    str(algorithm) if algorithm is not None else None, stamp, payload,
+                ),
             )
             conn.commit()
         return path
+
+    def add_model(self, user_id: str, device_id: str, model_id: str, *, active: bool) -> Path:
+        return self.register_model_version(
+            user_id, device_id, {"model_id": model_id, "state": "ready"}, active=active,
+        )
+
+    def set_model_job_state(self, user_id: str, device_id: str, model_id: str, state: str) -> None:
+        if state not in {"queued", "running", "ready", "failed"}:
+            raise ValueError("job state must be queued, running, ready, or failed")
+        with self._lock, closing(self._connect()) as conn:
+            updated = conn.execute(
+                "UPDATE models SET job_state = ? WHERE model_id = ? AND user_id = ? AND device_id = ?",
+                (state, model_id, user_id, device_id),
+            ).rowcount
+            conn.commit()
+            if updated != 1:
+                raise FileNotFoundError("model version not found for this account and device")
 
     def deactivate(self, user_id: str, device_id: str) -> bool:
         with self._lock, closing(self._connect()) as conn:
@@ -203,19 +251,38 @@ class AccountStore:
             conn.commit()
             return deleted
 
-    def delete_user(self, user_id: str) -> None:
+    def delete_device(self, user_id: str, device_id: str) -> None:
         with self._lock, closing(self._connect()) as conn:
             model_ids = [
                 cast(str, row["model_id"])
-                for row in conn.execute("SELECT model_id FROM models WHERE user_id = ?", (user_id,))
+                for row in conn.execute(
+                    "SELECT model_id FROM models WHERE user_id = ? AND device_id = ?",
+                    (user_id, device_id),
+                )
             ]
             for model_id in model_ids:
                 self._remove_artifact(model_id)
-            conn.execute("DELETE FROM windows WHERE user_id = ?", (user_id,))
-            conn.execute("DELETE FROM inference_results WHERE user_id = ?", (user_id,))
-            conn.execute("DELETE FROM alerts WHERE user_id = ?", (user_id,))
-            conn.execute("DELETE FROM models WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM windows WHERE user_id = ? AND device_id = ?", (user_id, device_id))
+            conn.execute(
+                "DELETE FROM inference_results WHERE user_id = ? AND device_id = ?",
+                (user_id, device_id),
+            )
+            conn.execute("DELETE FROM alerts WHERE user_id = ? AND device_id = ?", (user_id, device_id))
+            conn.execute("DELETE FROM models WHERE user_id = ? AND device_id = ?", (user_id, device_id))
             conn.commit()
+
+    def delete_user(self, user_id: str) -> None:
+        with self._lock, closing(self._connect()) as conn:
+            device_ids = {
+                cast(str, row["device_id"])
+                for row in conn.execute(
+                    "SELECT device_id FROM models WHERE user_id = ? "
+                    "UNION SELECT device_id FROM windows WHERE user_id = ?",
+                    (user_id, user_id),
+                )
+            }
+        for device_id in sorted(device_ids):
+            self.delete_device(user_id, device_id)
 
     def retention_seconds(self) -> int:
         with self._lock, closing(self._connect()) as conn:
