@@ -7,7 +7,7 @@ where residual risk remains. It complements [architecture decisions](architectur
 ## Assets
 
 - Account credentials and device pairing tokens
-- Aggregate keyboard and optional mouse timing features per user
+- Aggregate keyboard and mouse timing features per user
 - Per-user trained model artifacts and inference results
 - Hosted relay and dashboard session integrity
 
@@ -171,7 +171,7 @@ Pairing codes are single-use, hashed, and expire after 10 minutes. The model tok
 compared with `compare_digest`. Account routes take the user from the session or the
 device record.
 
-Agent window uploads require a strict shared feature-window schema (v1-v4), are capped
+Agent window uploads require the strict shared feature-window schema v4, are capped
 at 64 KiB, and are limited to 60 requests per minute per device. Replay of a captured
 window is limited by device, session, and sequence uniqueness (a duplicate is HTTP 409),
 session expiry, and sign-out revocation. Audit events record only metadata such as the

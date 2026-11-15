@@ -67,6 +67,8 @@ LOGIN_LIMIT = (30, timedelta(minutes=1))
 PAIR_LIMIT = (10, timedelta(minutes=10))
 UPLOAD_LIMIT = (60, timedelta(minutes=1))
 AGENT_WINDOW_MAX_BYTES = 64 * 1024
+# Agent windows are native keyboard and mouse aggregates; enrollment trains the matching v4 model.
+AGENT_SCHEMA_VERSION = 4
 PAIRING_TTL = timedelta(minutes=10)
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ENV = (
@@ -319,7 +321,8 @@ def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer, Deleter, Acti
             raise RuntimeError(f"model service returned {error.code}: {message}") from None
 
     def train(user_id: str, device_id: str, windows: list[Document], validation_sessions: list[str]) -> Document:
-        payload = {"windows": windows, "validation_session_ids": validation_sessions}
+        # Agents upload schema v4 only, so enrollment trains the genuine-only v4 model.
+        payload = {"windows": windows, "validation_session_ids": validation_sessions, "profile": "native-v4"}
         request_ = urllib.request.Request(
             base_url.rstrip("/") + "/models/train", method="POST",
             data=json.dumps(payload, allow_nan=False).encode(),
@@ -1311,6 +1314,9 @@ def register(
         if error:
             audit_agent_window(device["_id"], "rejected", "invalid_payload")
             return jsonify(error=error), 422
+        if window.get("schema_version") != AGENT_SCHEMA_VERSION:
+            audit_agent_window(device["_id"], "rejected", "schema_version")
+            return jsonify(error=f"agents must send schema v{AGENT_SCHEMA_VERSION} windows"), 422
         if window["device_id"] != device["_id"]:
             audit_agent_window(device["_id"], "rejected", "device_mismatch")
             return jsonify(error="window belongs to another device"), 422

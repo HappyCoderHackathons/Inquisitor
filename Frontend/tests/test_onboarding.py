@@ -17,6 +17,14 @@ ENV = {name: "test-value" for name in hosted.ENV} | {
 
 
 def window(device_id, session_id, sequence, key_count=40):
+    """An agent window: schema v4 keyboard and mouse aggregates."""
+    value = native_window(device_id, session_id, sequence)
+    value["features"].update(key_count=key_count, hold_sample_count=key_count)
+    return value
+
+
+def legacy_window(device_id, session_id, sequence, key_count=40):
+    """A schema v1 window, which agents may no longer send."""
     started = datetime.now(timezone.utc) - timedelta(minutes=1)
     return {
         "schema_version": 1, "device_id": device_id, "session_id": session_id, "sequence": sequence,
@@ -309,20 +317,21 @@ class OnboardingTests(unittest.TestCase):
         self.sign_in("user-b")
         self.assertEqual(self.client.get("/api/onboarding").status_code, 404)
 
-    def test_agent_window_accepts_current_native_schemas(self):
+    def test_agent_windows_must_be_schema_v4(self):
         device_id, agent = self.pair()
         session_id = self.client.post("/api/onboarding/rounds", json={"game": "typing"}).get_json()["session_id"]
-        for schema_version in (3, 4):
-            with self.subTest(schema_version=schema_version):
-                response = self.client.post(
-                    "/api/agent/windows",
-                    headers=agent,
-                    json=native_window(device_id, session_id, schema_version, schema_version),
-                )
-                self.assertEqual(response.status_code, 201, response.get_json())
-                stored = self.database.windows.find_one({"session_id": session_id, "sequence": schema_version})
-                self.assertEqual(stored["window"]["schema_version"], schema_version)
-                self.assertEqual((stored["device_id"], stored["session_id"]), (device_id, session_id))
+        response = self.client.post("/api/agent/windows", headers=agent, json=native_window(device_id, session_id, 4))
+        self.assertEqual(response.status_code, 201, response.get_json())
+        stored = self.database.windows.find_one({"session_id": session_id, "sequence": 4})
+        self.assertEqual(stored["window"]["schema_version"], 4)
+        self.assertEqual((stored["device_id"], stored["session_id"]), (device_id, session_id))
+        # Older schemas are valid windows elsewhere, but not from an agent.
+        for sequence, old in ((3, native_window(device_id, session_id, 3, 3)), (1, legacy_window(device_id, session_id, 1))):
+            with self.subTest(schema_version=old["schema_version"]):
+                rejected = self.client.post("/api/agent/windows", headers=agent, json=old)
+                self.assertEqual(rejected.status_code, 422)
+                self.assertIn("schema v4", rejected.get_json()["error"])
+                self.assertIsNone(self.database.windows.find_one({"session_id": session_id, "sequence": sequence}))
 
     def test_invalid_agent_window_is_not_persisted_or_logged_as_input(self):
         device_id, agent = self.pair()

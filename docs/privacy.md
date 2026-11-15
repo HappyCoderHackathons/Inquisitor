@@ -5,7 +5,8 @@ Inquisitor collects aggregate timing features, not typed content or pointer targ
 ## What is collected
 
 - Keyboard timing statistics per rolling window (press counts, hold variability, overlap)
-- Optional mouse motion and click timing aggregates when the user enables mouse collection
+- Mouse motion and click timing aggregates. The Windows agent always sends them with the keyboard
+  aggregates (schema v4); the browser arcade's mouse collection remains a separate opt-in
 - Account email and device metadata needed for pairing and authorization
 
 ## Feature window fields
@@ -16,7 +17,7 @@ only fields a window can carry.
 
 | Field | Contents |
 | --- | --- |
-| `schema_version` | 1, 2, 3, or 4 |
+| `schema_version` | 1, 2, 3, or 4. The Windows agent sends only 4 |
 | `device_id`, `session_id` | Opaque identifiers issued at pairing and per collection session |
 | `sequence` | Window counter within a session |
 | `mode` | `enrollment` or `monitoring` |

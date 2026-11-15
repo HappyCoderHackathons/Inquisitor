@@ -16,7 +16,7 @@ These are implementation decisions, not claims that the integrations already wor
 | Database | MongoDB Atlas | [#44](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/44#issuecomment-6882901927) selects Atlas. Use MongoDB collections rather than adding PostgreSQL or Drizzle. |
 | Authentication | Better Auth email/password accounts and MongoDB sessions | Replaces the original provider decision in #45 at the user's request. A loopback Node service owns passwords and sessions; Flask retains account/device authorization and pairing. |
 | Demo hosting | Hosted HTTPS application, Windows Rust client, and remote Python training/inference | Model requests use authenticated HTTPS or a protected SSH tunnel. No public model-service port is required. |
-| Input scope | Keyboard and mouse in v1 | The team added mouse as a second v1 signal. The arcade collects it during calibration games and the Windows agent collects it during monitoring, using the same aggregate feature definitions. Mouse collection has its own opt-in toggle. Controller signals are outside the v1 authentication model. |
+| Input scope | Keyboard and mouse in v1 | The team added mouse as a second v1 signal. The arcade collects it during calibration games and the Windows agent collects it during monitoring, using the same aggregate feature definitions. The Windows agent always sends keyboard and mouse together as schema-v4 aggregates, covered by its setup terms; hosted training uses the genuine-only `native-v4` profile. Controller signals are outside the v1 authentication model. |
 
 The remote ML arrangement supersedes the initial local-model interpretation of
 #42, #43, and #46. Rust owns system I/O and transport; Python owns model execution
