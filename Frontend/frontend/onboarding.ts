@@ -1,6 +1,21 @@
+type WindowMetrics = {
+  total: number;
+  usable: number;
+  insufficient: number;
+  unusual: number;
+  frr: number | null;
+};
+
+type ModelMetrics = { model_id: string; genuine: WindowMetrics };
+
 type OnboardingStatus = {
-  state: "collecting" | "training" | "ready" | "failed";
+  state: "collecting" | "training" | "review" | "ready" | "failed";
   error: string | null;
+  model_id: string | null;
+  retraining: boolean;
+  candidate_model_id: string | null;
+  previous_model_id: string | null;
+  comparison: { candidate: ModelMetrics | null; active: ModelMetrics | null } | null;
   seconds: Record<string, number>;
   required_seconds: number;
   training_windows: number;
@@ -25,6 +40,7 @@ const gameNames: Record<string, string> = {
 const stateText: Record<OnboardingStatus["state"], string> = {
   collecting: "Agent connected. Play each game until its timer is complete, then train your model.",
   training: "Collection complete. Your model is training.",
+  review: "Your retrained model is ready. Compare it below before switching.",
   ready: "Setup complete. Your model is active.",
   failed: "Training failed.",
 };
@@ -224,8 +240,43 @@ function startCountdown(expiresAt: number) {
   countdownId = window.setInterval(update, 1000);
 }
 
-async function post(path: string) {
-  return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+async function post(path: string, body: Record<string, boolean> = {}) {
+  return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
+
+function describeModel(label: string, metrics: ModelMetrics | null) {
+  const item = document.createElement("li");
+  if (!metrics) {
+    item.textContent = `${label}: no result`;
+    return item;
+  }
+  const { usable, unusual, insufficient, frr } = metrics.genuine;
+  const rate = frr === null ? "no usable windows" : `${Math.round(frr * 100)}% flagged`;
+  item.textContent = `${label}: ${unusual} of ${usable} usable windows flagged as unusual (${rate}), ${insufficient} with too little activity`;
+  return item;
+}
+
+function renderModel(status: OnboardingStatus) {
+  const panel = element("modelPanel");
+  if (panel) panel.hidden = !status.model_id;
+  const review = status.state === "review";
+  const show = (id: string, visible: boolean) => {
+    const button = element(id) as HTMLButtonElement | null;
+    if (button) button.hidden = !visible;
+  };
+  show("retrainModel", status.state === "ready");
+  show("activateCandidate", review);
+  show("keepCurrent", review);
+  show("rollbackModel", status.state === "ready" && Boolean(status.previous_model_id));
+  const comparison = element("modelComparison");
+  if (comparison) comparison.hidden = !review || !status.comparison;
+  const list = element("comparisonList");
+  if (list && review && status.comparison) {
+    list.replaceChildren(
+      describeModel("New model", status.comparison.candidate),
+      describeModel("Current model", status.comparison.active),
+    );
+  }
 }
 
 async function refresh() {
@@ -262,9 +313,14 @@ async function refresh() {
   const revoke = element("revokeDevice");
   if (revoke) revoke.hidden = false;
   if (stateLabel) {
-    stateLabel.textContent = status.error ? `${stateText[status.state]} ${status.error}` : stateText[status.state];
-    stateLabel.classList.toggle("error", status.state === "failed");
+    const text =
+      status.retraining && status.state === "collecting"
+        ? "Retraining. Play each game again, then train. Your current model stays active until you switch."
+        : stateText[status.state];
+    stateLabel.textContent = status.error ? `${text} ${status.error}` : text;
+    stateLabel.classList.toggle("error", status.state === "failed" || Boolean(status.error));
   }
+  renderModel(status);
   const list = element("gameProgress");
   if (list) {
     list.replaceChildren(
@@ -482,6 +538,52 @@ element("finishEnrollment")?.addEventListener("click", () => {
     "/api/onboarding/finish",
     "Finish enrollment? The agent stops sending enrollment windows. Training can still use the windows already collected.",
   );
+});
+async function modelAction(path: string, confirmText: string, body: Record<string, boolean> = {}) {
+  if (!window.confirm(confirmText)) return;
+  const status = element("modelStatus");
+  if (status) {
+    status.classList.remove("error");
+    status.textContent = "Please wait.";
+  }
+  try {
+    const response = await post(path, body);
+    if (!response.ok && status) {
+      status.classList.add("error");
+      status.textContent =
+        response.status === 502
+          ? "The model service is unavailable, so your active model did not change. Try again later."
+          : `Could not update your model (${response.status}). Refresh and try again.`;
+      return;
+    }
+    await refresh();
+    if (status) status.textContent = "";
+  } catch (error) {
+    if (status) {
+      status.classList.add("error");
+      status.textContent = error instanceof Error ? error.message : "Could not update your model. Try again.";
+    }
+  }
+}
+
+element("retrainModel")?.addEventListener("click", () => {
+  void modelAction(
+    "/api/onboarding/retrain",
+    "Retrain your model? You will play a new set of game rounds. Monitoring keeps your current model until you choose to switch.",
+    { approve: true },
+  );
+});
+element("activateCandidate")?.addEventListener("click", () => {
+  void modelAction(
+    "/api/onboarding/candidate/activate",
+    "Switch monitoring to the new model? You can go back to the current one afterwards.",
+  );
+});
+element("keepCurrent")?.addEventListener("click", () => {
+  void modelAction("/api/onboarding/candidate/keep", "Keep the current model and set the new one aside?");
+});
+element("rollbackModel")?.addEventListener("click", () => {
+  void modelAction("/api/onboarding/rollback", "Go back to the previous model for monitoring?");
 });
 document.querySelectorAll("[data-step-tab]").forEach((tab) => {
   tab.addEventListener("click", () => {

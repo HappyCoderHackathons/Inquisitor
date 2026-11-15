@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 import mongomock
 from flask import Flask
+from pymongo.errors import DuplicateKeyError
 
 import hosted
 import server
@@ -84,6 +85,13 @@ class OnboardingTests(unittest.TestCase):
         self.score_error = None
         self.deleted = []
         self.delete_error = None
+        self.reset_calls = []
+        self.deactivate_calls = []
+        self.model_service_error = None
+        self.training_result = None
+        self.activated = []
+        self.activate_error = None
+        self.compared = []
         self.auth_sessions = {}
         patcher = patch("hosted.requests.request", side_effect=self.auth_request)
         patcher.start()
@@ -93,19 +101,43 @@ class OnboardingTests(unittest.TestCase):
             self.trained.append((user_id, device_id, windows, validation_sessions))
             if self.training_error:
                 raise self.training_error
-            return "model-1"
+            if self.training_result is not None:
+                return self.training_result
+            return f"model-{len(self.trained)}"
 
         def deleter(user_id, device_id):
             if self.delete_error:
                 raise self.delete_error
             self.deleted.append((user_id, device_id))
 
+        def resetter(user_id, device_id):
+            if self.model_service_error:
+                raise self.model_service_error
+            self.reset_calls.append((user_id, device_id))
+
+        def deactivator(user_id, device_id):
+            if self.model_service_error:
+                raise self.model_service_error
+            self.deactivate_calls.append((user_id, device_id))
+
         self.trainer = trainer
         self.deleter = deleter
         app = Flask(__name__, template_folder=str(Path(server.__file__).parent / "templates"))
         with patch.dict(os.environ, ENV):
-            hosted.register(app, self.database, self.trainer, self.score, server.onboarding_window_error, self.deleter)
+            hosted.register(
+                app, self.database, self.trainer, self.score, server.onboarding_window_error, self.deleter,
+                self.activate, self.compare, resetter, deactivator,
+            )
         self.client = app.test_client()
+
+    def activate(self, user_id, device_id, model_id):
+        if self.activate_error:
+            raise self.activate_error
+        self.activated.append(model_id)
+
+    def compare(self, user_id, device_id, model_id, windows):
+        self.compared.append((model_id, windows))
+        return {"candidate": {"model_id": model_id}, "active": {"model_id": self.activated[-1]}}
 
     def score(self, user_id, device_id, value):
         if self.score_error:
@@ -191,6 +223,56 @@ class OnboardingTests(unittest.TestCase):
             self.assertEqual(upload.status_code, 201, upload.get_json())
         self.clock += timedelta(seconds=61)
         return session_id, self.client.post("/api/onboarding/rounds/current/finish", json={}).get_json()
+
+    def enroll(self, device_id, agent):
+        for index in range(3):
+            if index < 2:
+                self.play("aim", [0], device_id, agent)
+            for game in ("tetris", "typing", "arena"):
+                last, _ = self.play(game, [40] * 4, device_id, agent)
+        self.play("aim", [0], device_id, agent)
+        return last
+
+    def test_retrain_needs_approval_compares_on_a_holdout_and_rolls_back(self):
+        device_id, agent = self.pair()
+        self.enroll(device_id, agent)
+        self.assertEqual(self.client.post("/api/onboarding/train", json={}).get_json()["model_id"], "model-1")
+        self.assertEqual(self.activated, ["model-1"])
+        self.assertEqual(self.client.post("/api/onboarding/retrain", json={}).status_code, 422)
+        status = self.client.post("/api/onboarding/retrain", json={"approve": True}).get_json()
+        self.assertEqual((status["state"], status["retraining"], status["model_id"]), ("collecting", True, "model-1"))
+        self.assertFalse(status["ready_to_train"], "earlier rounds do not count toward a retrain")
+        monitoring = window(device_id, "monitor-1", 0) | {"mode": "monitoring"}
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=monitoring).status_code, 201)
+        enrolled = self.database.windows.count_documents({})
+        self.play("typing", [40] * 4, device_id, agent)
+        self.client.post("/api/onboarding/discard", json={})
+        self.assertEqual(self.database.windows.count_documents({}), enrolled, "discard keeps the active model's data")
+
+        holdout = self.enroll(device_id, agent)
+        status = self.client.post("/api/onboarding/train", json={}).get_json()
+        self.assertEqual((status["state"], status["candidate_model_id"]), ("review", "model-2"))
+        self.assertEqual(self.activated, ["model-1"], "a retrained model is not activated automatically")
+        first_sessions = {item["session_id"] for item in self.trained[0][2]}
+        retrained_sessions = {item["session_id"] for item in self.trained[1][2]} | set(self.trained[1][3])
+        self.assertFalse(retrained_sessions & (first_sessions | {holdout}))
+        compared_model, compared_windows = self.compared[0]
+        self.assertEqual((compared_model, {item["session_id"] for item in compared_windows}), ("model-2", {holdout}))
+        self.assertEqual(status["comparison"]["active"]["model_id"], "model-1")
+
+        status = self.client.post("/api/onboarding/candidate/activate", json={}).get_json()
+        self.assertEqual((status["state"], status["model_id"], status["previous_model_id"]),
+                         ("ready", "model-2", "model-1"))
+        active = [item["_id"] for item in self.database.model_versions.find({"active": True})]
+        self.assertEqual(active, ["model-2"])
+        self.activate_error = RuntimeError("model service returned 503")
+        self.assertEqual(self.client.post("/api/onboarding/rollback", json={}).status_code, 502)
+        self.assertEqual(self.client.get("/api/onboarding").get_json()["model_id"], "model-2")
+        self.activate_error = None
+        status = self.client.post("/api/onboarding/rollback", json={}).get_json()
+        self.assertEqual((status["model_id"], status["previous_model_id"]), ("model-1", "model-2"))
+        self.assertEqual(self.activated, ["model-1", "model-2", "model-1"])
+        self.assertEqual(self.client.post("/api/onboarding/candidate/activate", json={}).status_code, 409)
 
     def test_agent_windows_are_scoped_to_device_and_active_round(self):
         device_id, agent = self.pair()
@@ -285,12 +367,14 @@ class OnboardingTests(unittest.TestCase):
         with patch.dict(os.environ, ENV):
             hosted.register(
                 Flask(__name__), self.database, self.trainer, self.score, server.onboarding_window_error, self.deleter,
+                self.activate, self.compare,
             )
 
         session = self.database.rounds.find_one({"_id": "legacy-session"})
         self.assertEqual(session["device_id"], device_id)
         self.assertEqual(session["status"], "completed")
         self.assertEqual(session["valid_window_count"], 5)
+        self.assertEqual(session["generation"], 0)
 
     def test_rounds_credit_server_time_and_pick_latest_round_per_game_for_calibration(self):
         device_id, agent = self.pair()
@@ -311,6 +395,110 @@ class OnboardingTests(unittest.TestCase):
         cancelled_session = self.database.rounds.find_one({"_id": cancelled_session_id})
         self.assertEqual(cancelled_session["status"], "cancelled")
         self.assertEqual(cancelled_session["valid_window_count"], 0)
+
+    def test_enrollment_endpoints_are_owner_scoped_and_group_usable_windows_by_session(self):
+        device_id, agent = self.pair()
+        started = self.client.post(
+            "/api/enrollments", json={"device_id": device_id, "game": "typing"}
+        )
+        self.assertEqual(started.status_code, 201, started.get_json())
+        enrollment = started.get_json()
+        enrollment_id = enrollment["id"]
+        self.assertEqual(enrollment["status"], "active")
+        self.assertEqual(enrollment["progress"]["usable_window_count"], 0)
+
+        self.assertEqual(
+            self.client.post(
+                "/api/enrollments", json={"device_id": device_id, "game": "typing"}
+            ).status_code,
+            409,
+        )
+        self.assertEqual(
+            self.client.get("/api/agent/onboarding", headers=agent).get_json()["session_id"],
+            enrollment_id,
+        )
+        uploaded = self.client.post(
+            "/api/agent/windows", headers=agent, json=window(device_id, enrollment_id, 0)
+        )
+        self.assertEqual(uploaded.status_code, 201, uploaded.get_json())
+        stored = self.database.windows.find_one({"session_id": enrollment_id})
+        self.assertEqual(stored["session_id"], enrollment_id)
+        self.assertEqual(stored["window"]["session_id"], enrollment_id)
+        unusable = self.client.post(
+            "/api/agent/windows",
+            headers=agent,
+            json=window(device_id, enrollment_id, 1, key_count=20),
+        )
+        self.assertEqual(unusable.status_code, 201, unusable.get_json())
+        self.assertFalse(unusable.get_json()["usable"])
+
+        progress = self.client.get(f"/api/enrollments/{enrollment_id}").get_json()
+        self.assertEqual(progress["progress"]["usable_window_count"], 1)
+        self.clock += timedelta(seconds=30)
+        completed = self.client.post(f"/api/enrollments/{enrollment_id}/complete", json={})
+        self.assertEqual(completed.status_code, 200, completed.get_json())
+        self.assertEqual(completed.get_json()["status"], "completed")
+        onboarding_progress = self.client.get("/api/onboarding").get_json()
+        self.assertIn(enrollment_id, onboarding_progress["sessions"])
+        self.assertIn(enrollment_id, onboarding_progress["validation_sessions"])
+        self.assertEqual(onboarding_progress["usable_windows"], 1)
+        self.assertEqual(
+            self.client.post(
+                "/api/agent/windows", headers=agent, json=window(device_id, enrollment_id, 2)
+            ).status_code,
+            409,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/enrollments", json={"device_id": device_id, "game": "typing"}
+            ).status_code,
+            201,
+        )
+
+        self.sign_in("user-b")
+        self.assertEqual(self.client.get(f"/api/enrollments/{enrollment_id}").status_code, 404)
+        self.assertEqual(
+            self.client.post(f"/api/enrollments/{enrollment_id}/complete", json={}).status_code, 404
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/enrollments", json={"device_id": device_id, "game": "typing"}
+            ).status_code,
+            404,
+        )
+
+    def test_enrollment_unique_index_rejects_concurrent_active_sessions(self):
+        device_id, _ = self.pair()
+        onboarding = self.database.onboarding.find_one({"device_id": device_id})
+        session = {
+            "_id": "active-enrollment",
+            "onboarding_id": onboarding["_id"],
+            "device_id": device_id,
+            "game": "typing",
+            "started_at": self.clock,
+            "ended_at": None,
+            "status": "active",
+            "credited_ms": 0,
+            "valid_window_count": 0,
+        }
+        self.database.rounds.insert_one(session)
+        with self.assertRaises(DuplicateKeyError):
+            self.database.rounds.insert_one({**session, "_id": "second-active-enrollment"})
+
+    def test_enrollment_creation_rejects_invalid_game_or_unpaired_device(self):
+        device_id, _ = self.pair()
+        self.assertEqual(
+            self.client.post(
+                "/api/enrollments", json={"device_id": device_id, "game": "unknown"}
+            ).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/enrollments", json={"device_id": "unpaired-device", "game": "typing"}
+            ).status_code,
+            404,
+        )
 
     def test_ten_minutes_of_games_trains_and_activates_model(self):
         device_id, agent = self.pair()
@@ -352,6 +540,145 @@ class OnboardingTests(unittest.TestCase):
             ("better-auth:user-a", device_id, "monitor-1", 0),
         )
         self.assertEqual(stored["result"]["state"], "NORMAL")
+
+    def test_model_summary_reports_device_counts_algorithm_and_optional_evaluation(self):
+        self.assertEqual(self.client.get("/api/model").status_code, 401)
+        device_id, _ = self.pair()
+        self.assertFalse(self.client.get("/api/model").get_json()["available"])
+        trained_at = "2026-01-02T03:04:05+00:00"
+        self.database.model_versions.insert_one({
+            "_id": "model-7",
+            "user_id": "better-auth:user-a",
+            "device_id": device_id,
+            "state": "ready",
+            "algorithm": "IsolationForest",
+            "active": True,
+            "created_at": self.clock,
+            "metadata": {
+                "model_id": "model-7",
+                "algorithm": "IsolationForest",
+                "trained_at": trained_at,
+                "training_window_count": 24,
+                "validation_window_count": 12,
+                "training_sessions": ["s1", "s2"],
+                "validation_sessions": ["s3"],
+                "threshold": 1.5,
+                "threshold_rule": "fit on this device's enrollment",
+                "holdout_alert_count": 2,
+                "holdout_window_count": 10,
+                "impostor_evaluation_alert_count": 7,
+                "impostor_evaluation_window_count": 8,
+            },
+        })
+        summary = self.client.get("/api/model").get_json()
+        self.assertEqual(summary["device_name"], "keyboard")
+        self.assertEqual(summary["device_id"], device_id)
+        self.assertEqual(summary["model_id"], "model-7")
+        self.assertEqual(summary["trained_at"], trained_at)
+        self.assertEqual((summary["training_windows"], summary["validation_windows"], summary["window_count"]), (24, 12, 36))
+        self.assertEqual(summary["session_count"], 3)
+        self.assertEqual(summary["algorithm"], "IsolationForest")
+        self.assertIn("Isolation Forest", summary["algorithm_label"])
+        self.assertIn("not an identity", summary["algorithm_label"])
+        self.assertEqual(summary["threshold"], 1.5)
+        self.assertIn("above 1.5", summary["threshold_label"])
+        self.assertEqual((summary["holdout_alerts"], summary["holdout_windows"]), (2, 10))
+        self.assertEqual((summary["impostor_alerts"], summary["impostor_windows"]), (7, 8))
+        self.assertIn("not proof of identity", summary["limitations"])
+        self.database.model_versions.update_one({"_id": "model-7"}, {"$set": {"active": False}})
+        hidden = self.client.get("/api/model").get_json()
+        self.assertFalse(hidden["available"])
+        self.assertIsNone(hidden["holdout_windows"])
+        self.assertIsNone(hidden["impostor_windows"])
+        self.sign_in("user-b")
+        self.assertFalse(self.client.get("/api/model").get_json()["available"])
+
+    def seed_enrollment(self, device_id):
+        onboarding = self.database.onboarding.find_one({"device_id": device_id})
+        base = self.clock - timedelta(minutes=10)
+        for index, game in enumerate(("aim", "tetris", "typing", "arena")):
+            for offset, count in ((0, 6), (1, 3)):
+                session_id = f"{game}-{offset}"
+                started = base + timedelta(seconds=index * 10 + offset)
+                self.database.rounds.insert_one({
+                    "_id": session_id,
+                    "onboarding_id": onboarding["_id"],
+                    "device_id": device_id,
+                    "game": game,
+                    "started_at": started,
+                    "ended_at": started + timedelta(seconds=150),
+                    "status": "completed",
+                    "credited_ms": 150_000,
+                    "valid_window_count": count,
+                    "generation": 0,
+                })
+                for sequence in range(count):
+                    self.database.windows.insert_one({
+                        "onboarding_id": onboarding["_id"],
+                        "user_id": "better-auth:user-a",
+                        "device_id": device_id,
+                        "session_id": session_id,
+                        "sequence": sequence,
+                        "usable": True,
+                        "window": {"session_id": session_id, "features": {"key_count": 30}},
+                        "created_at": started,
+                    })
+        self.database.monitoring_windows.insert_one({
+            "user_id": "better-auth:user-a", "device_id": device_id, "session_id": "kept-monitor",
+        })
+        return onboarding
+
+    def test_retrain_reset_and_deactivate_require_confirmation(self):
+        self.assertEqual(self.client.post("/api/models/reset", json={"confirmation": "RESET"}).status_code, 401)
+        device_id, _ = self.pair()
+        onboarding = self.seed_enrollment(device_id)
+        self.assertEqual(self.client.post("/api/models/reset", data="{}").status_code, 415)
+        self.assertEqual(
+            self.client.post("/api/models/reset", json={"confirmation": "RESET"},
+                             headers={"Origin": "https://evil.example"}).status_code,
+            403,
+        )
+        rejected = self.client.post("/api/models/reset", json={"confirmation": "reset", "practiceText": "secret"})
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(self.trained, [])
+        self.assertEqual(self.reset_calls, [])
+        self.assertNotIn("secret", str(list(self.database.model_versions.find())))
+        trained = self.client.post("/api/onboarding/train", json={})
+        self.assertEqual(trained.status_code, 202)
+        counted = self.client.get("/api/model").get_json()
+        self.assertEqual(counted["model_id"], "model-1")
+        self.assertIsNone(counted["algorithm"])
+        self.assertEqual(counted["window_count"], 36)
+        self.assertEqual(counted["session_count"], 8)
+        self.assertIsNone(counted["holdout_windows"])
+        self.assertIsNone(counted["impostor_windows"])
+        self.database.model_versions.update_one(
+            {"_id": "model-1"}, {"$set": {"metadata.algorithm": "LogisticRegression"}},
+        )
+        labeled = self.client.get("/api/model").get_json()
+        self.assertEqual(labeled["algorithm"], "LogisticRegression")
+        self.assertIn("Logistic regression", labeled["algorithm_label"])
+        self.sign_in("user-b")
+        self.assertEqual(self.client.post("/api/models/reset", json={"confirmation": "RESET"}).status_code, 404)
+        self.assertEqual(self.reset_calls, [])
+        self.sign_in()
+        self.model_service_error = RuntimeError("down")
+        failed = self.client.post("/api/models/deactivate", json={"confirmation": "DEACTIVATE"})
+        self.assertEqual(failed.status_code, 502)
+        self.assertTrue(self.database.model_versions.find_one({"_id": "model-1"})["active"])
+        self.assertEqual(self.database.windows.count_documents({"onboarding_id": onboarding["_id"]}), 36)
+        self.model_service_error = None
+        deactivated = self.client.post("/api/models/deactivate", json={"confirmation": "DEACTIVATE"})
+        self.assertEqual(deactivated.status_code, 200)
+        self.assertEqual(self.deactivate_calls, [("better-auth:user-a", device_id)])
+        self.assertFalse(self.client.get("/api/model").get_json()["available"])
+        self.assertEqual(self.database.windows.count_documents({"onboarding_id": onboarding["_id"]}), 36)
+        reset = self.client.post("/api/models/reset", json={"confirmation": "RESET"})
+        self.assertEqual(reset.status_code, 200)
+        self.assertEqual(self.reset_calls, [("better-auth:user-a", device_id)])
+        self.assertEqual(self.database.windows.count_documents({"onboarding_id": onboarding["_id"]}), 0)
+        self.assertEqual(self.database.monitoring_windows.count_documents({"session_id": "kept-monitor"}), 1)
+        self.assertFalse(self.client.get("/api/model").get_json()["available"])
 
     def test_monitoring_waits_for_a_trained_model(self):
         device_id, agent = self.pair()

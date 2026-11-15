@@ -54,6 +54,7 @@ class EnrollmentSession(TypedDict):
     status: EnrollmentSessionStatus
     valid_window_count: int
     credited_ms: int
+    generation: int
 
 
 DEFAULT_PRIVACY_PREFERENCES: PrivacyPreferences = {

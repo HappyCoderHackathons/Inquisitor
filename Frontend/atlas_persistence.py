@@ -52,6 +52,18 @@ def record_model_version(
         )
 
 
+def activate_model_version(
+    database: Database, *, user_id: str, device_id: str, model_id: str, activated_at: datetime,
+) -> None:
+    database.model_versions.update_many(
+        {"user_id": user_id, "device_id": device_id, "_id": {"$ne": model_id}}, {"$set": {"active": False}},
+    )
+    database.model_versions.update_one(
+        {"_id": model_id, "user_id": user_id, "device_id": device_id},
+        {"$set": {"active": True, "updated_at": activated_at}},
+    )
+
+
 def record_inference(
     database: Database,
     *,

@@ -331,7 +331,9 @@ if hosted.configured():
     from pymongo import MongoClient
 
     ml_token = Path(os.environ["ML_TOKEN_FILE"]).read_text().strip()
-    trainer, scorer, deleter = hosted.ml_client(os.environ["ML_SERVICE_URL"], ml_token)
+    trainer, scorer, deleter, activator, comparer, resetter, deactivator = hosted.ml_client(
+        os.environ["ML_SERVICE_URL"], ml_token,
+    )
     hosted.register(
         app,
         MongoClient(os.environ["MONGODB_URI"], tz_aware=True)[os.environ["MONGODB_DB"]],
@@ -339,6 +341,10 @@ if hosted.configured():
         scorer,
         onboarding_window_error,
         deleter,
+        activator,
+        comparer,
+        resetter,
+        deactivator,
     )
 else:
     @app.get("/onboarding")

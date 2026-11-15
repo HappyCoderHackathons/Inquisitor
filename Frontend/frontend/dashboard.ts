@@ -34,6 +34,24 @@ type FeatureWindow = {
   mouse_features?: MouseFeatures;
 };
 type CollectionSummary = { windows: number; sessions: number; modes: Record<string, number> };
+type ModelSummary = {
+  available: boolean;
+  device_id: string | null;
+  device_name: string | null;
+  model_id: string | null;
+  trained_at: string | null;
+  training_windows: number | null;
+  validation_windows: number | null;
+  window_count: number | null;
+  session_count: number | null;
+  algorithm: string | null;
+  algorithm_label: string | null;
+  threshold_label: string | null;
+  holdout_alerts: number | null;
+  holdout_windows: number | null;
+  impostor_alerts: number | null;
+  impostor_windows: number | null;
+};
 
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector);
 const collectionSurface = $("#collectorSurface");
@@ -51,7 +69,57 @@ const windowCount = $("#featureWindowCount");
 const sessionCount = $("#featureSessionCount");
 const exportLink = $("#exportFeatureWindows") as HTMLAnchorElement | null;
 const dataActionStatus = $("#dataActionStatus");
+const modelSummaryStatus = $("#modelSummaryStatus");
 const dangerForms = document.querySelectorAll<HTMLFormElement>(".typed-confirm");
+
+type MonitoringStatus = "normal" | "not_enough_activity" | "unusual" | "needs_verification" | "paused";
+
+const monitoringStatusViews: Record<MonitoringStatus | "none", { label: string; detail: string; icon: string }> = {
+  normal: {
+    label: "Normal",
+    detail: "Recent activity is consistent with this device's enrollment.",
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/>',
+  },
+  not_enough_activity: {
+    label: "Not enough activity",
+    detail: "There is too little recent input to compare, so no judgment is made.",
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  },
+  unusual: {
+    label: "Unusual",
+    detail:
+      "Recent activity differs from this device's enrollment. Treat this as a prompt to check, not a finding about any person.",
+    icon: '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>',
+  },
+  needs_verification: {
+    label: "Needs verification",
+    detail: "Please confirm it is you. This does not identify anyone.",
+    icon: '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M9.8 9.8a2.3 2.3 0 1 1 3.3 2.1c-.7.3-1.1.8-1.1 1.6M12 16.5h.01"/>',
+  },
+  paused: {
+    label: "Paused",
+    detail: "Monitoring is paused. No input is being measured.",
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/>',
+  },
+  none: {
+    label: "No signal",
+    detail: "No live monitoring status is available in this prototype.",
+    icon: '<circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/><path d="M8.5 12h7"/>',
+  },
+};
+
+function renderMonitoringStatus(status: MonitoringStatus | null) {
+  const card = $("#monitoringStatusCard");
+  const view = monitoringStatusViews[status ?? "none"];
+  if (!card) return;
+  card.dataset.state = status ?? "none";
+  const icon = $("#monitoringStatusIcon");
+  const label = $("#monitoringStatusLabel");
+  const detail = $("#monitoringStatusDetail");
+  if (icon) icon.innerHTML = `<svg viewBox="0 0 24 24" focusable="false">${view.icon}</svg>`;
+  if (label) label.textContent = view.label;
+  if (detail) detail.textContent = view.detail;
+}
 
 const collectionWindowMs = 30_000;
 const mouseSegmentMs = 20;
@@ -452,11 +520,101 @@ function responseError(payload: unknown, status: number) {
   return `Request failed (${status}).`;
 }
 
+function recorded(value: string | null | undefined) {
+  return value && value.length > 0 ? value : "Not recorded";
+}
+
+function windowText(summary: ModelSummary) {
+  if (!summary.available) return "Not recorded";
+  if (summary.training_windows !== null && summary.validation_windows !== null) {
+    return `${summary.training_windows} training, ${summary.validation_windows} calibration`;
+  }
+  if (summary.window_count !== null) return String(summary.window_count);
+  return "Not recorded";
+}
+
+function rateText(alerts: number | null, total: number | null, label: string) {
+  if (alerts === null || total === null) return "Not available";
+  return `${alerts} of ${total} ${label} windows`;
+}
+
+function showModelSummary(summary: ModelSummary) {
+  if (modelSummaryStatus) {
+    modelSummaryStatus.classList.remove("error");
+    modelSummaryStatus.textContent = summary.available
+      ? "This is the active model for the signed-in account."
+      : "No trained model is recorded for this account.";
+  }
+  const detectionDetail = $("#detectionEmptyDetail");
+  if (detectionDetail) {
+    detectionDetail.textContent = summary.available
+      ? "A trained model is active. No live signal is connected yet."
+      : "No trained model is active for this account yet. Enroll to train one.";
+  }
+  const enrollLink = $("#detectionEnrollLink");
+  if (enrollLink) enrollLink.hidden = summary.available;
+  const device = $("#modelDevice");
+  if (device) {
+    device.textContent = summary.available
+      ? `${summary.device_name ?? "Unnamed device"}${summary.device_id ? ` (${summary.device_id})` : ""}`
+      : "Not recorded";
+  }
+  const version = $("#modelVersion");
+  if (version) version.textContent = summary.available ? recorded(summary.model_id) : "Not recorded";
+  const trained = $("#modelTrained");
+  if (trained) trained.textContent = summary.available ? recorded(summary.trained_at) : "Not recorded";
+  const windows = $("#modelWindows");
+  if (windows) windows.textContent = windowText(summary);
+  const sessions = $("#modelSessions");
+  if (sessions) {
+    sessions.textContent =
+      summary.available && summary.session_count !== null ? String(summary.session_count) : "Not recorded";
+  }
+  const algorithm = $("#modelAlgorithm");
+  if (algorithm) {
+    algorithm.textContent = summary.available ? recorded(summary.algorithm_label ?? summary.algorithm) : "Not recorded";
+  }
+  const threshold = $("#modelThreshold");
+  if (threshold) threshold.textContent = summary.available ? recorded(summary.threshold_label) : "Not recorded";
+  const holdout = $("#modelHoldout");
+  if (holdout) holdout.textContent = rateText(summary.holdout_alerts, summary.holdout_windows, "holdout");
+  const impostor = $("#modelImpostor");
+  if (impostor) impostor.textContent = rateText(summary.impostor_alerts, summary.impostor_windows, "impostor");
+}
+
+async function refreshModelSummary() {
+  let response: Response;
+  try {
+    response = await fetch("/api/model");
+  } catch {
+    if (modelSummaryStatus) {
+      modelSummaryStatus.classList.add("error");
+      modelSummaryStatus.textContent = "Could not load the model summary. The server did not respond.";
+    }
+    return;
+  }
+  if (response.status === 404) return;
+  if (!response.ok) {
+    if (modelSummaryStatus) {
+      modelSummaryStatus.classList.add("error");
+      modelSummaryStatus.textContent = `Could not load the model summary (${response.status}).`;
+    }
+    return;
+  }
+  showModelSummary((await response.json()) as ModelSummary);
+}
+
+function actionStatus(form: HTMLFormElement) {
+  if (form.dataset.status) return document.getElementById(form.dataset.status);
+  return dataActionStatus;
+}
+
 function wireDangerForm(form: HTMLFormElement) {
   const phrase = form.dataset.phrase ?? "";
   const method = form.dataset.method ?? "POST";
   const path = form.dataset.path ?? "";
   const success = form.dataset.success ?? "Done.";
+  const status = actionStatus(form);
   const input = form.querySelector<HTMLInputElement>("input");
   const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
   const opener = document.querySelector<HTMLButtonElement>(`[aria-controls="${form.id}"]`);
@@ -479,36 +637,37 @@ function wireDangerForm(form: HTMLFormElement) {
     event.preventDefault();
     if (!input || input.value !== phrase || !submit) return;
     submit.disabled = true;
-    if (dataActionStatus) {
-      dataActionStatus.classList.remove("error");
-      dataActionStatus.textContent = "Please wait.";
+    if (status) {
+      status.classList.remove("error");
+      status.textContent = "Please wait.";
     }
     void fetch(path, {
       method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirmation: phrase }),
+      body: JSON.stringify(form.dataset.approve === "true" ? { approve: true } : { confirmation: phrase }),
     })
       .then(async (response) => {
         if (!response.ok) throw new Error(responseError(await response.json().catch(() => null), response.status));
         closeDangerForms();
-        if (dataActionStatus) {
-          dataActionStatus.classList.remove("error");
-          dataActionStatus.textContent = success;
+        if (status) {
+          status.classList.remove("error");
+          status.textContent = success;
         }
         try {
           await refreshCollectionSummary();
+          if (form.dataset.status) await refreshModelSummary();
         } catch (error) {
-          if (dataActionStatus) {
-            dataActionStatus.classList.add("error");
-            dataActionStatus.textContent =
+          if (status) {
+            status.classList.add("error");
+            status.textContent =
               error instanceof Error ? error.message : "The action finished, but saved windows could not be reloaded.";
           }
         }
       })
       .catch((error: unknown) => {
-        if (dataActionStatus) {
-          dataActionStatus.classList.add("error");
-          dataActionStatus.textContent =
+        if (status) {
+          status.classList.add("error");
+          status.textContent =
             error instanceof TypeError
               ? "Could not reach the server. Nothing was changed."
               : error instanceof Error
@@ -523,6 +682,9 @@ function wireDangerForm(form: HTMLFormElement) {
 dangerForms.forEach(wireDangerForm);
 
 updateControls();
+void refreshModelSummary();
+// shortcut: no status source yet, wire this to GET /monitoring/status when #125 lands.
+renderMonitoringStatus(null);
 void (async () => {
   setCollectionStatus("Loading saved windows…");
   try {

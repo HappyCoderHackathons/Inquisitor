@@ -142,6 +142,23 @@
           </div>
         </section>
 
+        <section id="modelPanel" class="dashboard-panel" aria-labelledby="modelTitle" hidden>
+          <h2 id="modelTitle">Your model</h2>
+          <p class="dashboard-panel-copy">Retraining collects a new set of game rounds. Monitoring keeps using your current model until you choose to switch. The last round you play is held back to compare both models.</p>
+          <div id="modelComparison" hidden>
+            <h3>Compare before switching</h3>
+            <p class="dashboard-panel-copy">Both models scored the same held-back round, which neither was trained on. A round has only a few windows, so treat this as a check, not an accuracy score.</p>
+            <ul id="comparisonList" class="collection-summary"></ul>
+          </div>
+          <div class="auth-actions">
+            <button id="retrainModel" class="button secondary-button" type="button" hidden>Retrain my model</button>
+            <button id="activateCandidate" class="button primary" type="button" hidden>Switch to the new model</button>
+            <button id="keepCurrent" class="button secondary-button" type="button" hidden>Keep the current model</button>
+            <button id="rollbackModel" class="button secondary-button" type="button" hidden>Go back to the previous model</button>
+          </div>
+          <p id="modelStatus" class="action-status" role="status" aria-live="polite"></p>
+        </section>
+
         <section class="dashboard-panel" aria-labelledby="dataTitle">
           <h2 id="dataTitle">Your data</h2>
           <p class="dashboard-panel-copy">Disconnecting stops the agent's credential from working. Deleting removes your calibration and monitoring data and trained models, and disconnects every agent. Your account stays.</p>

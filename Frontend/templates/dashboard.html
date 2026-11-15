@@ -28,6 +28,15 @@
           <p>Review your account, the model connection, and anomaly signals.</p>
         </section>
 
+        <section id="monitoringStatusCard" class="status-card" data-state="none" aria-labelledby="monitoringStatusLabel">
+          <span id="monitoringStatusIcon" class="status-card-icon" aria-hidden="true"></span>
+          <div>
+            <p class="eyebrow">MONITORING STATUS</p>
+            <h2 id="monitoringStatusLabel">No signal</h2>
+            <p id="monitoringStatusDetail" role="status" aria-live="polite">No live monitoring status is available in this prototype.</p>
+          </div>
+        </section>
+
         <section class="connection-grid" aria-label="Connection status">
           <article class="connection-card">
             <div class="connection-card-heading"><span class="status-indicator pending"></span><span class="eyebrow">AGENT</span></div>
@@ -44,6 +53,79 @@
             <h2 id="accountConnectionStatus">Sign-in unavailable</h2>
             <p>Account details will appear here after the dashboard profile is connected. Sign in from Setup.</p>
           </article>
+        </section>
+
+        <section class="dashboard-panel model-panel" aria-labelledby="modelTitle">
+          <div class="dashboard-panel-heading">
+            <div>
+              <p class="eyebrow">TRAINED MODEL</p>
+              <h2 id="modelTitle">Model details</h2>
+            </div>
+          </div>
+          <p id="modelSummaryStatus" class="collection-status" role="status" aria-live="polite">No trained model is recorded for this account.</p>
+          <dl class="model-facts">
+            <div><dt>Device</dt><dd id="modelDevice">Not recorded</dd></div>
+            <div><dt>Version</dt><dd id="modelVersion">Not recorded</dd></div>
+            <div><dt>Trained</dt><dd id="modelTrained">Not recorded</dd></div>
+            <div><dt>Enrollment windows</dt><dd id="modelWindows">Not recorded</dd></div>
+            <div><dt>Sessions</dt><dd id="modelSessions">Not recorded</dd></div>
+            <div><dt>Algorithm</dt><dd id="modelAlgorithm">Not recorded</dd></div>
+            <div><dt>Threshold</dt><dd id="modelThreshold">Not recorded</dd></div>
+          </dl>
+          <h3 class="danger-heading" id="evaluationTitle">Evaluation</h3>
+          <dl class="model-facts">
+            <div><dt>Holdout alert rate</dt><dd id="modelHoldout">Not available</dd></div>
+            <div><dt>Impostor result</dt><dd id="modelImpostor">Not available</dd></div>
+          </dl>
+          <p id="modelLimitations" class="dashboard-footnote">These figures describe this device's model only. A holdout rate counts alerts on sessions that were not used to fit the model. An impostor result counts alerts on someone else's sessions when that evaluation was stored. These figures are not proof of identity. A small sample makes the rate unstable, and a missing figure means that evaluation was not stored with the model.</p>
+          <h3 class="danger-heading" id="modelActionsTitle">Model actions</h3>
+          <p class="dashboard-footnote">Retrain asks for a new enrollment on this device. It does not fit or activate a model by itself. Monitoring windows are not used. Type the phrase to confirm. These actions do not change the local prototype database on this page.</p>
+          <div class="data-action">
+            <div class="data-action-row">
+              <div><strong>Retrain</strong><p>Approves a new enrollment on this device. The current model stays active until a new one is compared and accepted.</p></div>
+              <button id="retrainModel" class="button secondary-button" type="button" data-danger-open aria-controls="retrainModelConfirm" aria-expanded="false">Retrain</button>
+            </div>
+            <form id="retrainModelConfirm" class="typed-confirm" hidden data-phrase="RETRAIN" data-method="POST" data-path="/api/onboarding/retrain" data-approve="true" data-status="modelActionStatus" data-success="Retraining is approved. Collect a new enrollment on this device. The current model stays active until you compare and accept a new one.">
+              <label for="retrainModelInput">Type RETRAIN to confirm
+                <input id="retrainModelInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
+              </label>
+              <div class="typed-confirm-actions">
+                <button class="button primary" type="submit" disabled>Retrain</button>
+                <button class="button secondary-button typed-cancel" type="button">Cancel</button>
+              </div>
+            </form>
+          </div>
+          <div class="data-action">
+            <div class="data-action-row">
+              <div><strong>Reset enrollment</strong><p>Clears this account's enrollment windows and active model. Monitoring windows stay.</p></div>
+              <button id="resetHostedEnrollment" class="button danger-button" type="button" data-danger-open aria-controls="resetHostedEnrollmentConfirm" aria-expanded="false">Reset enrollment</button>
+            </div>
+            <form id="resetHostedEnrollmentConfirm" class="typed-confirm" hidden data-phrase="RESET" data-method="POST" data-path="/api/models/reset" data-status="modelActionStatus" data-success="Enrollment windows and the active model were cleared for this account. Monitoring data was kept.">
+              <label for="resetHostedEnrollmentInput">Type RESET to confirm
+                <input id="resetHostedEnrollmentInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
+              </label>
+              <div class="typed-confirm-actions">
+                <button class="button danger-button" type="submit" disabled>Reset enrollment</button>
+                <button class="button secondary-button typed-cancel" type="button">Cancel</button>
+              </div>
+            </form>
+          </div>
+          <div class="data-action">
+            <div class="data-action-row">
+              <div><strong>Deactivate model</strong><p>Clears the active model for this account. Saved windows and model files stay.</p></div>
+              <button id="deactivateHostedModel" class="button danger-button" type="button" data-danger-open aria-controls="deactivateHostedModelConfirm" aria-expanded="false">Deactivate model</button>
+            </div>
+            <form id="deactivateHostedModelConfirm" class="typed-confirm" hidden data-phrase="DEACTIVATE" data-method="POST" data-path="/api/models/deactivate" data-status="modelActionStatus" data-success="The active model was deactivated. Saved windows and model files stay.">
+              <label for="deactivateHostedModelInput">Type DEACTIVATE to confirm
+                <input id="deactivateHostedModelInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
+              </label>
+              <div class="typed-confirm-actions">
+                <button class="button danger-button" type="submit" disabled>Deactivate model</button>
+                <button class="button secondary-button typed-cancel" type="button">Cancel</button>
+              </div>
+            </form>
+          </div>
+          <p id="modelActionStatus" class="action-status" role="status" aria-live="polite"></p>
         </section>
 
         <section class="dashboard-panel collection-panel" aria-labelledby="collectionTitle">
@@ -95,7 +177,7 @@
           <p class="dashboard-panel-copy">This area is reserved for an alert when a window differs from this device's enrollment. An alert asks you to verify. It does not name a person, and this prototype has no live model connection.</p>
           <div class="detection-empty">
             <span class="empty-mark" aria-hidden="true">—</span>
-            <div><strong>No anomaly signal</strong><span>Agent and model connections are not configured.</span></div>
+            <div><strong>No anomaly signal</strong><span id="detectionEmptyDetail">Agent and model connections are not configured.</span><a id="detectionEnrollLink" href="/onboarding" hidden>Start enrollment</a></div>
           </div>
           <p class="dashboard-footnote">Any future alert should be treated as a prompt to verify, not proof of identity. The user must remain in control of pause and exit actions.</p>
         </section>

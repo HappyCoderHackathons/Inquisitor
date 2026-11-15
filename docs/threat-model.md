@@ -105,8 +105,13 @@ auth user id. An empty id is rejected.
 | `GET /api/me`, `GET /api/onboarding` | The signed-in account |
 | `GET /onboarding`, `GET /login` | Page, or redirect to onboarding |
 | `POST /api/pairing-codes` | The signed-in account. The code is stored as a hash |
+| `POST /api/enrollments`, `GET /api/enrollments/<id>`, `POST /api/enrollments/<id>/complete` | The signed-in account, and only sessions associated with its owned device |
 | `POST /api/onboarding/rounds` and `POST /api/onboarding/rounds/current/<outcome>` | The signed-in account's round. The body selects a game or an outcome |
 | `POST /api/onboarding/train` | The signed-in account's onboarding |
+| `GET /api/model` | The signed-in account's active model. Counts and evaluation come from that model's stored metadata |
+| `POST /api/onboarding/retrain` | Requires `{"approve": true}`. Starts a new collection generation and does not activate a model |
+| `POST /api/models/reset` | Requires `RESET`. Clears that account's enrollment windows and active model |
+| `POST /api/models/deactivate` | Requires `DEACTIVATE`. Deactivates that account's active model and keeps its windows |
 | `POST /api/devices/<device_id>/revoke` | The signed-in account, and only a device row whose `user_id` matches that account |
 | `DELETE /api/me/data` | The signed-in account. Device ids come from that account's device records |
 
