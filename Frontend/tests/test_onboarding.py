@@ -1177,6 +1177,68 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.delete("/api/me/data", json={}).status_code, 200)
         self.assertEqual(self.database.demo_switches.count_documents({}), 0)
 
+    def test_each_device_has_its_own_model_and_monitoring_view(self):
+        first, first_agent = self.pair()
+        self.clock += timedelta(seconds=1)
+        second, _second_agent = self.pair()
+        self.assertEqual(self.database.onboarding.count_documents({"user_id": "better-auth:user-a"}), 2)
+        self.database.onboarding.update_one(
+            {"device_id": first}, {"$set": {"state": "ready", "model_id": "model-a"}},
+        )
+        for device_id, model_id, samples in ((first, "model-a", 20), (second, "model-b", 30)):
+            self.database.model_versions.insert_one({
+                "_id": model_id,
+                "user_id": "better-auth:user-a",
+                "device_id": device_id,
+                "active": True,
+                "created_at": self.clock,
+                "metadata": {
+                    "algorithm": "IsolationForest",
+                    "training_window_count": samples,
+                    "validation_window_count": 10,
+                },
+            })
+        self.assertEqual(self.client.get(f"/api/model?device_id={first}").get_json()["model_id"], "model-a")
+        self.assertEqual(self.client.get(f"/api/model?device_id={second}").get_json()["model_id"], "model-b")
+        self.assertEqual(self.client.get("/api/model").get_json()["model_id"], "model-b")
+        self.database.onboarding.delete_one({"device_id": second})
+        missing = self.client.get(f"/api/model?device_id={second}").get_json()
+        self.assertFalse(missing["available"])
+        self.assertEqual(missing["device_id"], second)
+        self.assertEqual(missing["device_name"], "keyboard")
+        self.sign_in("user-b")
+        self.assertEqual(self.client.get(f"/api/model?device_id={first}").status_code, 404)
+        self.sign_in()
+        self.upload_scores(first, first_agent, ["NORMAL"])
+        seen = self.client.get(f"/api/monitoring/status?device_id={first}").get_json()
+        self.assertEqual(seen["score"], -0.4)
+        self.assertNotIn("alerts", seen)
+        other = self.client.get(f"/api/monitoring/status?device_id={second}").get_json()
+        self.assertIsNone(other["score"])
+        self.assertEqual(other["device_id"], second)
+
+    def test_monitoring_stream_requires_the_owner_and_publishes_scores(self):
+        self.assertEqual(self.client.get("/api/monitoring/stream").status_code, 401)
+        self.sign_in()
+        self.assertEqual(self.client.get("/api/monitoring/stream").status_code, 404)
+        device_id, agent = self.ready_monitor()
+        self.sign_in("user-b")
+        self.assertEqual(self.client.get(f"/api/monitoring/stream?device_id={device_id}").status_code, 404)
+        self.sign_in()
+        with patch("hosted.listen_monitoring", return_value=iter([{"state": "normal", "score": -0.4}])):
+            response = self.client.get("/api/monitoring/stream")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("text/event-stream", response.content_type)
+            body = response.get_data(as_text=True)
+        self.assertIn("event: monitoring", body)
+        self.assertIn("normal", body)
+        self.assertIn("-0.4", body)
+        with patch("hosted.publish_monitoring") as published:
+            self.upload_scores(device_id, agent, ["NORMAL"])
+        user_id, published_device, payload = published.call_args.args
+        self.assertEqual((user_id, published_device, payload["score"]), ("better-auth:user-a", device_id, -0.4))
+        self.assertIn("alerts", payload)
+
 
 if __name__ == "__main__":
     unittest.main()
