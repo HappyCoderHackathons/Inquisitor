@@ -148,6 +148,9 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.trained, [])
         self.clock += timedelta(seconds=1)
         _, status = self.play("aim", [0], device_id, agent)
+        self.assertTrue(status["ready_to_train"])
+        self.assertEqual(self.trained, [], "training waits for the user")
+        status = self.client.post("/api/onboarding/train", json={}).get_json()
         self.assertEqual(status["state"], "ready")
         self.assertEqual(status["model_id"], "model-1")
         user_id, trained_device, windows, validation = self.trained[0]
@@ -161,9 +164,11 @@ class OnboardingTests(unittest.TestCase):
     def test_training_failure_is_reported(self):
         self.training_error = RuntimeError("model service returned 422: all training features are constant")
         device_id, agent = self.pair()
+        self.assertEqual(self.client.post("/api/onboarding/train", json={}).status_code, 409)
         for _ in range(3):
             for game in ("aim", "tetris", "typing", "arena"):
-                _, status = self.play(game, [40] * 4, device_id, agent)
+                self.play(game, [40] * 4, device_id, agent)
+        status = self.client.post("/api/onboarding/train", json={}).get_json()
         self.assertEqual(status["state"], "failed")
         self.assertIn("all training features are constant", status["error"])
         self.assertEqual(len(self.trained), 1)

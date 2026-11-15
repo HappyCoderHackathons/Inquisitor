@@ -7,6 +7,7 @@ type OnboardingStatus = {
   validation_windows: number;
   required_training_windows: number;
   required_validation_windows: number;
+  ready_to_train: boolean;
 };
 
 const gameNames: Record<string, string> = {
@@ -16,7 +17,7 @@ const gameNames: Record<string, string> = {
   arena: "Arena Rush",
 };
 const stateText: Record<OnboardingStatus["state"], string> = {
-  collecting: "Agent connected. Play each game until its timer is complete.",
+  collecting: "Agent connected. Play each game until its timer is complete, then train your model.",
   training: "Collection complete. Your model is training.",
   ready: "Setup complete. Your model is active.",
   failed: "Training failed.",
@@ -57,6 +58,11 @@ async function refresh() {
   }
   const play = element("playGames");
   if (play) play.hidden = status.state !== "collecting";
+  const train = element("trainModel") as HTMLButtonElement | null;
+  if (train) {
+    train.hidden = status.state !== "collecting";
+    train.disabled = !status.ready_to_train;
+  }
 }
 
 element("createCode")?.addEventListener("click", async () => {
@@ -68,6 +74,17 @@ element("createCode")?.addEventListener("click", async () => {
     return;
   }
   target.textContent = ((await response.json()) as { code: string }).code;
+});
+
+element("trainModel")?.addEventListener("click", async () => {
+  const button = element("trainModel") as HTMLButtonElement;
+  button.disabled = true;
+  const response = await post("/api/onboarding/train");
+  if (!response.ok) {
+    const label = element("onboardingState");
+    if (label) label.textContent = `Could not start training (${response.status}).`;
+  }
+  await refresh();
 });
 
 if (element("gameProgress")) {

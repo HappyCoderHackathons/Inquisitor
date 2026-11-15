@@ -8,7 +8,7 @@
     arena: "Arena Rush"
   };
   var stateText = {
-    collecting: "Agent connected. Play each game until its timer is complete.",
+    collecting: "Agent connected. Play each game until its timer is complete, then train your model.",
     training: "Collection complete. Your model is training.",
     ready: "Setup complete. Your model is active.",
     failed: "Training failed."
@@ -43,6 +43,11 @@
     }
     const play = element("playGames");
     if (play) play.hidden = status.state !== "collecting";
+    const train = element("trainModel");
+    if (train) {
+      train.hidden = status.state !== "collecting";
+      train.disabled = !status.ready_to_train;
+    }
   }
   element("createCode")?.addEventListener("click", async () => {
     const response = await post("/api/pairing-codes");
@@ -53,6 +58,16 @@
       return;
     }
     target.textContent = (await response.json()).code;
+  });
+  element("trainModel")?.addEventListener("click", async () => {
+    const button = element("trainModel");
+    button.disabled = true;
+    const response = await post("/api/onboarding/train");
+    if (!response.ok) {
+      const label = element("onboardingState");
+      if (label) label.textContent = `Could not start training (${response.status}).`;
+    }
+    await refresh();
   });
   if (element("gameProgress")) {
     const tick = () => refresh().catch((error) => {

@@ -280,11 +280,17 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
         started = cast(datetime, active["started_at"]).replace(tzinfo=timezone.utc)
         credited = min(int((ended - started).total_seconds() * 1000), ROUND_MS) if outcome == "finish" else 0
         database.rounds.update_one({"_id": active["_id"]}, {"$set": {"ended_at": ended, "credited_ms": credited}})
+        return jsonify(progress(database, onboarding))
+
+    @blueprint.post("/api/onboarding/train")
+    def train():
+        onboarding = user_onboarding(current_user())
+        json_body()
         status = progress(database, onboarding)
-        if status["ready_to_train"]:
-            start_training(onboarding, status)
-            status = progress(database, user_onboarding(onboarding["user_id"]))
-        return jsonify(status)
+        if onboarding["state"] != "collecting" or not status["ready_to_train"]:
+            return jsonify(status), 409
+        start_training(onboarding, status)
+        return jsonify(progress(database, user_onboarding(onboarding["user_id"]))), 202
 
     @blueprint.post("/api/agent/pair")
     def pair():
