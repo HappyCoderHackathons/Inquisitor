@@ -1,0 +1,75 @@
+{
+  "format_version": 1,
+  "model_version": "tray-timing-v2",
+  "algorithm": "LogisticRegression",
+  "schema_version": 3,
+  "schema_sha256": "ea527053e55ada5f9d381645c325e8a13d509043228bbfafde7765570ca72dbe",
+  "feature_profile": "tray-timing-full",
+  "feature_names": [
+    "hold_mean_ms",
+    "hold_std_ms",
+    "press_interval_mean_ms",
+    "press_interval_std_ms",
+    "hold_cv",
+    "press_interval_cv"
+  ],
+  "feature_transform": "selected timing statistics and ratios (denominator floor 1e-8); log1p; standard scaling",
+  "scaler_mean": [
+    4.989341645491899,
+    4.182455352497039,
+    5.997444547904374,
+    5.989597245162968,
+    0.405269228461746,
+    0.709185776659181
+  ],
+  "scaler_scale": [
+    0.6611613536817654,
+    1.1382420304517518,
+    0.4266826068610667,
+    0.7178973790585654,
+    0.19477099152318983,
+    0.21969494460320813
+  ],
+  "coefficient": [
+    1.8061424974592375,
+    1.0467708578604702,
+    -2.94937039024348,
+    -1.6340499091856644,
+    -1.0393554983715736,
+    3.764692589684443
+  ],
+  "intercept": 0.3885014221912272,
+  "threshold": -0.3028041960215536,
+  "threshold_percentile": 98,
+  "parameters": {
+    "C": 10.0,
+    "class_weight": "balanced",
+    "random_state": 49,
+    "max_iter": 1000
+  },
+  "training_summary": {
+    "genuine_windows": 10,
+    "impostor_windows": 12,
+    "genuine_sessions": 1,
+    "impostor_sessions": 1
+  },
+  "genuine_baseline": {
+    "median": [
+      115.09219858156028,
+      76.4142601977689,
+      425.6673334500468,
+      381.8617680675662,
+      0.6443214142380038,
+      0.8399874884403692
+    ],
+    "scale": [
+      18.04607187789083,
+      81.95164716182575,
+      68.94243944519384,
+      136.27921521148858,
+      0.3834425555653654,
+      0.12161468343752709
+    ]
+  },
+  "limitations": "Tray keyboard-timing pilot. One recording per class is permitted. Threshold uses genuine training data. No independent evaluation or mouse inference; no performance guarantee for other people, activities, or devices."
+}

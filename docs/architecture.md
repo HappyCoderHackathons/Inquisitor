@@ -21,10 +21,11 @@ These are implementation decisions, not claims that the integrations already wor
 The remote ML arrangement supersedes the initial local-model interpretation of
 #42, #43, and #46. Rust owns system I/O and transport; Python owns model execution
 on the designated remote host. Isolation Forest was the first implemented model;
-the current labeled pilot selects logistic regression using hold-time variability
-and press overlap. Its performance on other people is not established. Model
-selection uses grouped sessions; estimates from selection CV must be labeled as
-such rather than presented as an untouched final test.
+the current labeled pilot uses the shared `tray-multimodal` logistic regression
+on keyboard timing and mouse motion/click aggregates. It uses schema-v4 native
+aggregates; earlier numeric weights are retired under `archive_models/`.
+Its performance on other people is not established. Model selection uses complete
+computer/session groups; selection CV must not be presented as an untouched final test.
 
 ## Component boundaries and data flow
 
@@ -104,8 +105,9 @@ Aggregate-only privacy boundaries are in [privacy.md](privacy.md).
 ## Implementation verification still required
 
 - Prove Rust background input capture and timing quality on the target Windows PC.
-- Define feature-window schema v2 with mouse features. The current schema, published
-  model, and evaluation cover keyboard features only.
+- Integrate schema-v4 native aggregates into live collection and transport. The
+  deployed model now uses keyboard and mouse features from converted tray CSVs;
+  automatic tray upload and browser calibration compatibility remain unverified.
 - Verify that browser pointer events and Windows mouse input give comparable
   aggregates. Their event sources and sampling differ, so arcade calibration windows
   may not match agent monitoring windows without per-source checks.
