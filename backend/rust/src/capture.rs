@@ -36,6 +36,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, w};
 
+use crate::agent_log::AgentLog;
 use crate::features::{Row, Windower};
 
 // Mouse flag constants (not re-exported by the windows crate at every path).
@@ -134,6 +135,9 @@ pub struct Capture {
     header_written: bool,
     /// Live aggregate windows for upload, fed from every written row.
     windower: Option<Windower>,
+    log: AgentLog,
+    /// The last row could not be written; logged once until writes recover.
+    write_failed: bool,
 }
 
 impl Capture {
@@ -151,6 +155,8 @@ impl Capture {
             writer: io::BufWriter::new(writer),
             header_written: false,
             windower: None,
+            log: AgentLog::default(),
+            write_failed: false,
         }
     }
 
@@ -200,6 +206,11 @@ impl Capture {
             return;
         }
         let raw = unsafe { &*(buf.as_ptr() as *const RAWINPUT) };
+        self.process_raw(raw, filter);
+    }
+
+    /// Process one raw input event already read from Windows.
+    pub fn process_raw<F: FnOnce(&str) -> bool>(&mut self, raw: &RAWINPUT, filter: F) {
         let dev = raw.header.hDevice;
 
         // Caller decides whether this device is currently allowed to produce rows.
@@ -311,11 +322,16 @@ impl Capture {
         let dx = dx.map(|v| v.to_string()).unwrap_or_default();
         let dy = dy.map(|v| v.to_string()).unwrap_or_default();
         let value = value.map(|v| v.to_string()).unwrap_or_default();
-        let _ = writeln!(
+        let written = writeln!(
             self.writer,
             "{iso},{mono:.6},{io_type},{device_id},{event},{control},{hold},{flight},{dx},{dy},{value}"
-        );
-        let _ = self.writer.flush();
+        )
+        .and_then(|()| self.writer.flush());
+        // Never the error's text: a writer could echo the row it was given.
+        if written.is_err() && !self.write_failed {
+            self.log.event("capture file write failed");
+        }
+        self.write_failed = written.is_err();
     }
 
     fn handle_keyboard(&mut self, handle: HANDLE, kb: &RAWKEYBOARD) {
@@ -1071,6 +1087,57 @@ mod tests {
         for line in &lines[1..] {
             assert_eq!(cols(line)[5], "key");
         }
+    }
+
+    /// Fails every write once `failing` is set, with an error that echoes the row
+    /// and a key token, as a worst-case writer might.
+    struct FailingWriter(Rc<std::cell::Cell<bool>>);
+
+    impl Write for FailingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.0.get() {
+                let row = String::from_utf8_lossy(buf);
+                return Err(io::Error::other(format!("sc_001E {row}")));
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            self.write(&[]).map(|_| ())
+        }
+    }
+
+    #[test]
+    fn write_error_mid_window_logs_no_key_identity() {
+        let dir =
+            std::env::temp_dir().join(format!("inquisitor-test-{}-wfail", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let failing = Rc::new(std::cell::Cell::new(false));
+        let mut cap = Capture::new(Box::new(FailingWriter(failing.clone())));
+        cap.log = AgentLog::at(dir.join("agent.log"));
+        cap.set_windower(Some(Windower::new()));
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        cap.handle_keyboard(KBD, &key(0x1E, true));
+        failing.set(true);
+        for scan in [0x30, 0x2E, 0x20] {
+            cap.handle_keyboard(KBD, &key(scan, false));
+            cap.handle_keyboard(KBD, &key(scan, true));
+        }
+
+        // The window still closes with every press; the file error does not touch it.
+        let now = cap.monotonic_s();
+        let windower = cap.windower_mut().unwrap();
+        windower.tick(now + 30.0);
+        assert_eq!(windower.take_ready()[0].features.keyboard.key_count, 4);
+
+        // One line, the fixed message after a timestamp, with nothing from the error.
+        let text = fs::read_to_string(dir.join("agent.log")).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 1, "{text}");
+        assert_eq!(
+            lines[0].split_once(' ').unwrap().1,
+            "capture file write failed"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

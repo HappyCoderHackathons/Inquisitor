@@ -223,6 +223,11 @@ Offline, or Disconnected.
    - **Disconnect from account** does the same locally. The device stays on
      the website's device list, shown offline, until it is revoked there.
    - Removing the app also deletes the credential and the held windows.
+6. **Local log.** `%APPDATA%\inquisitor\agent.log` records state changes
+   (pairing, connect and disconnect, pause and resume, revocation) and errors,
+   as fixed messages with a timestamp. Panics record only their source
+   location. At 256 KiB it moves to `agent.log.1`, replacing the older one.
+   It never holds input data. Removing the app with its data deletes both.
 
 Without an account the tray works fully offline: it captures to the CSV files
 in the data folder (**Open data location** in the menu), which are never
