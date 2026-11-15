@@ -22,6 +22,10 @@ updates:
       - /test
     schedule:
       interval: weekly
+    ignore:
+      # Types track the Node 22 runtime used in CI.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: cargo
     directory: /backend/rust
     schedule:

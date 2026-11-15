@@ -3,5 +3,5 @@
   "version": "0.1.0",
   "private": true,
   "scripts": { "build": "esbuild frontend/app.ts --bundle --outfile=static/app.js --target=es2020", "dev": "esbuild frontend/app.ts --bundle --outfile=static/app.js --target=es2020 --watch" },
-  "devDependencies": { "esbuild": "^0.25.0", "typescript": "^5.7.0" }
+  "devDependencies": { "esbuild": "^0.28.2", "typescript": "^7.0.2" }
 }
