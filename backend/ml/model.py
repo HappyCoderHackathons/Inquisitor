@@ -127,6 +127,13 @@ class ModelStore:
         self._loaded: dict[str, dict[str, object]] = {}
         self._lock = threading.RLock()
 
+    def check_available(self) -> None:
+        with self._lock:
+            if not self.directory.is_dir():
+                raise FileNotFoundError("model store directory is unavailable")
+            with os.scandir(self.directory) as entries:
+                next(entries, None)
+
     def _path(self, model_id: str) -> Path:
         try:
             parsed = UUID(model_id)

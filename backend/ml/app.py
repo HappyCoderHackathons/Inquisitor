@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import sqlite3
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -58,7 +59,17 @@ def create_app() -> Flask:
 
     @app.get("/health")
     def health():
-        return jsonify(state="ok")
+        checks: dict[str, str] = {}
+        for name, check in (("database", account.check_available), ("model_store", store.check_available)):
+            try:
+                check()
+            except (OSError, sqlite3.Error):
+                checks[name] = "unavailable"
+            else:
+                checks[name] = "available"
+        healthy = all(status == "available" for status in checks.values())
+        response = jsonify(state="ok" if healthy else "degraded", **checks)
+        return response, 200 if healthy else 503
 
     def published_model() -> PublishedModel:
         if published is None:
