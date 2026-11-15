@@ -106,3 +106,25 @@ jobs:
           path: backend/rust/target/release/Inquisitor.exe
           if-no-files-found: error
           retention-days: 14
+
+  clean-machine:
+    name: Run on a clean Windows image
+    # Windows Server Core ships without the Visual C++ runtime, so this proves the exe needs only system DLLs.
+    # It pulls a multi-GB image, so it runs for releases and manual dispatch only.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+    runs-on: windows-2022
+    needs: release
+    steps:
+      - name: Download the built exe
+        uses: actions/download-artifact@v5
+        with:
+          name: inquisitor-windows-x64
+          path: dist
+
+      - name: Run the exe in Server Core
+        shell: pwsh
+        run: |
+          docker run --rm -v "${{ github.workspace }}\dist:C:\dist" mcr.microsoft.com/windows/servercore:ltsc2022 `
+            cmd /c "if exist C:\Windows\System32\vcruntime140.dll (echo vcruntime140 present & exit 1) else (C:\dist\Inquisitor.exe --help)"
+          if ($LASTEXITCODE -ne 0) { throw "exe failed on a clean image (exit $LASTEXITCODE)" }
+          "clean image OK"
