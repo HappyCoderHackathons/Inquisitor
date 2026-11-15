@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 /// Version of the terms shown in setup. Raise it when what is recorded changes,
 /// so everyone is asked to accept again before collection resumes.
-pub const TERMS_VERSION: u32 = 1;
+pub const TERMS_VERSION: u32 = 2;
 
 /// Everything the tray needs to remember across restarts.
 pub struct Config {
