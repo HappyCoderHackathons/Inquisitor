@@ -33,8 +33,11 @@ and keeps existing rows. Atlas has no foreign keys; every document stores `user_
 | `POST /retention/purge` | Monitoring windows, inference results, and alerts older than the retention period |
 
 On Atlas, `delete_device_records` in `Frontend/atlas_persistence.py` applies the same device cascade to
-`model_versions`, `inference_results`, `alerts`, `windows`, and `monitoring_windows`. No hosted route
-calls it yet.
+`model_versions`, `inference_results`, `alerts`, `windows`, and `monitoring_windows`. The hosted
+`DELETE /api/me/data` route deletes the account on the ML service first, then runs that cascade for
+each paired device, removes onboarding rounds, and revokes every device credential. If the ML service
+is unavailable it returns 502 and deletes nothing. `POST /api/devices/<id>/revoke` revokes one device
+without deleting data. Both are on the setup page.
 
 Enrollment windows stay until reset or account deletion. Model artifact files on the ML
 host follow the same account and device boundaries.

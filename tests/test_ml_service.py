@@ -101,38 +101,43 @@ class ModelServiceTests(unittest.TestCase):
                     self.assertEqual(response.status_code, 503)
             self.assertEqual([path for path in (Path(self.temporary.name) / "models").iterdir() if len(path.name) == 32], [])
 
-    @unittest.skipUnless(os.environ.get("ML_ALLOW_TRAINING") == "1", "training checks run on the designated host only")
-    def test_async_training_reports_ready_and_failed_jobs(self) -> None:
+    def finished_async_job(self, validation: str) -> dict[str, object]:
         windows = generate_windows(49, 20) + generate_windows(50, 10)
         for index, window in enumerate(windows):
             window["session_id"] = "training" if index < 20 else "validation"
+        for _ in range(200):
+            response = self.client.post("/models/train", headers=self.headers, json={
+                "windows": windows, "validation_session_id": validation,
+            })
+            if response.status_code != 503:
+                break
+            time.sleep(0.05)
+        self.assertEqual(response.status_code, 202, response.json)
+        self.assertEqual(response.json["state"], "queued")
+        url = "/models/" + response.json["model_id"]
+        for _ in range(200):
+            metadata = self.client.get(url, headers=self.headers).json
+            if metadata["state"] in ("ready", "failed"):
+                return metadata
+            time.sleep(0.05)
+        self.fail("training job did not finish")
 
-        def finished(validation: str) -> dict[str, object]:
-            for _ in range(200):
-                response = self.client.post("/models/train", headers=self.headers, json={
-                    "windows": windows, "validation_session_id": validation,
-                })
-                if response.status_code != 503:
-                    break
-                time.sleep(0.05)
-            self.assertEqual(response.status_code, 202, response.json)
-            self.assertEqual(response.json["state"], "queued")
-            url = "/models/" + response.json["model_id"]
-            for _ in range(200):
-                metadata = self.client.get(url, headers=self.headers).json
-                if metadata["state"] in ("ready", "failed"):
-                    return metadata
-                time.sleep(0.05)
-            self.fail("training job did not finish")
+    def test_async_job_failure_is_reported_and_releases_the_lock(self) -> None:
+        # Validation fails before any model is fitted, so this runs without a training host.
+        with patch.dict(os.environ, {"ML_ALLOW_TRAINING": "1", "ML_TRAIN_ASYNC": "1"}):
+            first = self.finished_async_job("missing")
+            second = self.finished_async_job("missing")
+        for failed in (first, second):
+            self.assertEqual(failed["state"], "failed")
+            self.assertIn("validation session", failed["error"])
+            self.assertEqual(self.client.put(f"/models/{failed['model_id']}/active", headers=self.headers).status_code, 422)
 
+    @unittest.skipUnless(os.environ.get("ML_ALLOW_TRAINING") == "1", "training checks run on the designated host only")
+    def test_async_training_reaches_ready(self) -> None:
         with patch.dict(os.environ, {"ML_TRAIN_ASYNC": "1"}):
-            ready = finished("validation")
-            failed = finished("missing")
+            ready = self.finished_async_job("validation")
         self.assertEqual(ready["state"], "ready")
         self.assertEqual(self.client.put(f"/models/{ready['model_id']}/active", headers=self.headers).status_code, 200)
-        self.assertEqual(failed["state"], "failed")
-        self.assertIn("validation session", failed["error"])
-        self.assertEqual(self.client.put(f"/models/{failed['model_id']}/active", headers=self.headers).status_code, 422)
 
     def test_published_api_auth_ownership_and_score_contract(self) -> None:
         artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v2.json"

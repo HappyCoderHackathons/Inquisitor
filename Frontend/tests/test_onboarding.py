@@ -49,6 +49,9 @@ class OnboardingTests(unittest.TestCase):
         self.trained = []
         self.scored = []
         self.training_error = None
+        self.score_error = None
+        self.deleted = []
+        self.delete_error = None
         self.auth_sessions = {}
         patcher = patch("hosted.requests.request", side_effect=self.auth_request)
         patcher.start()
@@ -60,12 +63,19 @@ class OnboardingTests(unittest.TestCase):
                 raise self.training_error
             return "model-1"
 
+        def deleter(user_id, device_id):
+            if self.delete_error:
+                raise self.delete_error
+            self.deleted.append((user_id, device_id))
+
         app = Flask(__name__, template_folder=str(Path(server.__file__).parent / "templates"))
         with patch.dict(os.environ, ENV):
-            hosted.register(app, self.database, trainer, self.score, server.onboarding_window_error)
+            hosted.register(app, self.database, trainer, self.score, server.onboarding_window_error, deleter)
         self.client = app.test_client()
 
     def score(self, user_id, device_id, value):
+        if self.score_error:
+            raise self.score_error
         self.scored.append((user_id, device_id, value["sequence"]))
         return {"model_id": "model-1", "state": "NORMAL", "score": -0.4, "threshold": 0.1, "score_delta": -0.5}
 
@@ -219,6 +229,54 @@ class OnboardingTests(unittest.TestCase):
         monitoring = window(device_id, "monitor-1", 0) | {"mode": "monitoring"}
         self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=monitoring).status_code, 409)
         self.assertEqual(self.scored, [])
+
+    def test_scoring_failure_removes_the_window_so_the_agent_can_retry(self):
+        device_id, agent = self.pair()
+        self.database.onboarding.update_one({"device_id": device_id}, {"$set": {"state": "ready", "model_id": "model-1"}})
+        monitoring = window(device_id, "monitor-1", 0) | {"mode": "monitoring"}
+        self.score_error = RuntimeError("model service returned 503")
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=monitoring).status_code, 502)
+        self.assertEqual(self.database.monitoring_windows.count_documents({}), 0)
+        self.score_error = None
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=monitoring).status_code, 201)
+        self.assertEqual(self.database.inference_results.count_documents({"device_id": device_id}), 1)
+
+    def test_revoking_a_device_is_owner_only_and_blocks_its_token(self):
+        device_id, agent = self.pair()
+        self.sign_in("user-b")
+        self.assertEqual(self.client.post(f"/api/devices/{device_id}/revoke", json={}).status_code, 404)
+        self.assertEqual(self.client.get("/api/agent/onboarding", headers=agent).status_code, 200)
+        self.sign_in("user-a")
+        self.assertEqual(self.client.post(f"/api/devices/{device_id}/revoke", data="{}").status_code, 415)
+        self.assertEqual(self.client.post(f"/api/devices/{device_id}/revoke", json={}).status_code, 200)
+        self.assertEqual(self.database.devices.find_one({"_id": device_id})["pairing_state"], "revoked")
+        self.assertEqual(self.client.get("/api/agent/onboarding", headers=agent).status_code, 401)
+        self.assertEqual(self.client.post(f"/api/devices/{device_id}/revoke", json={}).status_code, 404)
+
+    def test_delete_my_data_clears_atlas_rows_revokes_devices_and_calls_model_service(self):
+        device_id, agent = self.pair()
+        session_id = self.client.post("/api/onboarding/rounds", json={"game": "typing"}).get_json()["session_id"]
+        self.client.post("/api/agent/windows", headers=agent, json=window(device_id, session_id, 0))
+        user_id = "better-auth:user-a"
+        for collection in ("model_versions", "inference_results", "alerts", "monitoring_windows"):
+            self.database[collection].insert_many([
+                {"user_id": user_id, "device_id": device_id}, {"user_id": "other-user", "device_id": "other-device"},
+            ])
+        self.delete_error = RuntimeError("model service returned 503")
+        self.assertEqual(self.client.delete("/api/me/data", json={}).status_code, 502)
+        self.assertEqual(self.database.windows.count_documents({"user_id": user_id}), 1)
+        self.delete_error = None
+        response = self.client.delete("/api/me/data", json={})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(self.deleted, [(user_id, device_id)])
+        for collection in ("windows", "model_versions", "inference_results", "alerts", "monitoring_windows",
+                           "onboarding"):
+            self.assertEqual(self.database[collection].count_documents({"user_id": user_id}), 0, collection)
+        self.assertEqual(self.database.rounds.count_documents({}), 0)
+        self.assertEqual(self.database.alerts.count_documents({"user_id": "other-user"}), 1)
+        self.assertEqual(self.client.get("/api/agent/onboarding", headers=agent).status_code, 401)
+        self.assertEqual(self.database.devices.find_one({"_id": device_id})["pairing_state"], "revoked")
+        self.assertEqual(self.client.get("/api/onboarding").status_code, 404)
 
     def test_training_failure_is_reported(self):
         self.training_error = RuntimeError("model service returned 422: all training features are constant")

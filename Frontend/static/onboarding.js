@@ -127,6 +127,8 @@
       if (expiry) expiry.textContent = "";
     }
     currentDevice = status.device_id;
+    const revoke = element("revokeDevice");
+    if (revoke) revoke.hidden = false;
     if (stateLabel) {
       stateLabel.textContent = status.error ? `${stateText[status.state]} ${status.error}` : stateText[status.state];
       stateLabel.classList.toggle("error", status.state === "failed");
@@ -215,6 +217,43 @@
         label.textContent = error instanceof Error ? error.message : "Could not load setup status.";
       }
     }
+  });
+  async function dataAction(button, question, request) {
+    if (!window.confirm(question)) return;
+    const status = element("dataStatus");
+    button.disabled = true;
+    status.classList.remove("error");
+    status.textContent = "Please wait.";
+    try {
+      const response = await request();
+      if (!response.ok) {
+        status.classList.add("error");
+        status.textContent = response.status === 502 ? "The model service is unavailable, so nothing was deleted. Try again later." : `Could not complete the request (${response.status}).`;
+        return;
+      }
+      window.location.assign("/onboarding");
+    } catch {
+      status.classList.add("error");
+      status.textContent = "Could not connect. Check your connection and try again.";
+    } finally {
+      button.disabled = false;
+    }
+  }
+  element("revokeDevice")?.addEventListener("click", () => {
+    if (!currentDevice) return;
+    const device = currentDevice;
+    void dataAction(
+      element("revokeDevice"),
+      "Disconnect this agent? It will need a new pairing code to reconnect.",
+      () => post(`/api/devices/${encodeURIComponent(device)}/revoke`)
+    );
+  });
+  element("deleteData")?.addEventListener("click", () => {
+    void dataAction(
+      element("deleteData"),
+      "Delete all calibration and monitoring data and trained models? This cannot be undone.",
+      () => fetch("/api/me/data", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: "{}" })
+    );
   });
   if (element("gameProgress")) {
     const tick = () => refresh().catch((error) => {

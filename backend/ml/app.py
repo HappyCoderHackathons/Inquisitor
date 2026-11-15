@@ -162,20 +162,22 @@ def create_app() -> Flask:
         window = validate_window(body({"window"})["window"])
         if window["device_id"] != g.device_id:
             raise PermissionError("window belongs to another device")
-        model_id = None
+        result = None
         if window["mode"] == "monitoring":
             try:
                 model_id = store.active_model_id(g.user_id, g.device_id)
             except FileNotFoundError:
                 return jsonify(error="monitoring requires an active model for this account and device"), 409
+            # Score before saving so a scoring failure leaves nothing stored and the window can be retried.
+            try:
+                result = store.score(model_id, window, g.user_id, g.device_id)
+            except (EOFError, KeyError, OSError, RuntimeError, ValueError) as error:
+                return jsonify(error=f"scoring failed: {error}"), 502
         if not account.save_window(g.user_id, g.device_id, window):
             return jsonify(error="This device/session/sequence window already exists"), 409
-        if model_id is None:
+        if result is None:
             return jsonify(ok=True), 201
-        try:
-            return jsonify(remember(store.score(model_id, window, g.user_id, g.device_id))), 201
-        except (EOFError, KeyError, OSError, RuntimeError, ValueError) as error:
-            return jsonify(error=f"scoring failed: {error}"), 502
+        return jsonify(remember(result)), 201
 
     @app.post("/models/active/score")
     def active_score():

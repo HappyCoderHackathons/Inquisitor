@@ -110,10 +110,10 @@ class AccountControlTests(unittest.TestCase):
         self.assertEqual(self.client.post(
             "/windows", headers=self.headers, json={"window": self.window()},
         ).status_code, 201)
-        self.assertEqual(self.client.post(
-            "/windows", headers=self.headers,
-            json={"window": self.window(mode="monitoring", session_id="monitor", sequence=2)},
-        ).status_code, 502)
+        monitoring = self.window(mode="monitoring", session_id="monitor", sequence=2)
+        self.assertEqual(self.client.post("/windows", headers=self.headers, json={"window": monitoring}).status_code, 502)
+        self.assertEqual(self.account.counts("synthetic-user")["monitoring"], 0, "failed scoring stores nothing")
+        self.assertTrue(self.account.save_window("synthetic-user", "synthetic-device", monitoring))
         other_device = {**self.headers, "X-Device-ID": "other-device"}
         kept_id, kept_path = self.plant_model("synthetic-user", "other-device")
         self.assertEqual(self.client.put(f"/models/{kept_id}/active", headers=other_device).status_code, 200)
