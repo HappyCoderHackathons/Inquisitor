@@ -11,7 +11,7 @@ These are implementation decisions, not claims that the integrations already wor
 | --- | --- | --- |
 | Windows agent | Rust, with native Windows keyboard input and a visible pause/exit control | The local client and system I/O are assigned to Rust in [#43](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/43#issuecomment-6882866683) and [#46](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/46#issuecomment-6882888019). |
 | ML | Python 3.13+ with scikit-learn; logistic regression for the current labeled pilot | Fit on genuine and consenting second-user examples, then reuse the saved model. Training and inference run on the designated remote host. Isolation Forest artifacts remain compatible for comparison. Deployment identity stays in local configuration. |
-| Website | SvelteKit, TypeScript, Vite, Tailwind CSS, Iconify, and Prettier at 120 columns | Follow the project's preferred web stack. |
+| Website | Flask with Jinja templates and esbuild-bundled TypeScript, building on `Frontend/` | The team chose to stay with Flask. The existing `Frontend/` app already uses this stack, and it shares Python with the ML service. |
 | Backend arrangement | Rust collector, hosted application backend, and private remote Flask ML service | The application backend owns user/device authorization and forwards aggregate windows to the remote model service using a server-only credential. |
 | Database | MongoDB Atlas | [#44](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/44#issuecomment-6882901927) selects Atlas. Use MongoDB collections rather than adding PostgreSQL or Drizzle. |
 | Authentication | Managed SSOJet authentication | [#45](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/45#issuecomment-6882879091) selects SSOJet. Application authorization and device pairing remain application responsibilities. |
@@ -36,7 +36,7 @@ such rather than presented as an untouched final test.
    private Flask service. Training and inference run remotely, and versioned model
    artifacts are associated with the authorized account/device. The Rust client
    does not launch Python or hold the model-service credential.
-3. The user signs into the hosted SvelteKit app through SSOJet and pairs the agent
+3. The user signs into the hosted Flask app through SSOJet and pairs the agent
    using a short-lived, single-use code. The agent receives a revocable,
    device-scoped credential; it never receives the web password.
 4. The agent opens an authenticated outbound WSS connection to the hosted relay.
@@ -62,10 +62,10 @@ rather than displaying stale scores as live results.
 - All-in-one FastAPI would put HTTP, training, and inference in one Python
   process, reducing the Rust/Python boundary. It would change #43's chosen local
   Rust API and move model execution into the hosted backend if used centrally.
-- SvelteKit API plus a hosted Python ML worker would retain the preferred web
-  stack but add a deployed worker, service authentication, and model/data transfer.
-  The selected arrangement uses that hosted Python boundary with a small Flask
-  service, and keeps model execution off the Windows client.
+- SvelteKit was the original website choice. It would add a second server
+  language alongside the Python ML service and replace the existing `Frontend/`
+  Flask app. The team chose Flask instead. Model execution stays in the separate
+  private Flask ML service, off both the website host and the Windows client.
 - A Python-only agent would reduce language boundaries, while C#/.NET would offer
   another native Windows implementation. Neither matches the Rust client decision.
   No comparative capture benchmark is available in this repository.
@@ -81,9 +81,9 @@ rather than displaying stale scores as live results.
 
 ## Scope and existing prototype
 
-The `test/` arcade remains a standalone Flask/TypeScript/SQLite collection
-prototype. Its mouse and controller gameplay does not expand the Windows
-authentication MVP's scope. This decision does not migrate or alter that prototype.
+The arcade games in `Frontend/` remain a prototype collection surface. Their
+local SQLite storage is not the hosted Atlas store, and their mouse and controller
+gameplay does not expand the Windows authentication MVP's scope.
 
 For v1, collect keyboard timing only, require explicit opt-in, retain pause/exit
 controls, and never bypass the Windows secure desktop. An anomaly may request

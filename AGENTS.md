@@ -24,17 +24,19 @@
   on the designated remote host behind an authenticated Flask service. Keep model
   artifacts there; keep deployment identities and credentials out of the repository.
   Training is disabled by default and must only be enabled on that host.
-- Web: SvelteKit, TypeScript, Vite, Tailwind CSS, Iconify, and Prettier at 120 columns.
-  SvelteKit hosts account, pairing, persistence, and status endpoints, with a
-  persistent WebSocket relay for the desktop connection.
+- Web: Flask with Jinja templates, and browser TypeScript bundled by esbuild, building
+  on the existing app in `Frontend/`. Format TypeScript with Prettier at 120 columns.
+  Flask hosts account, pairing, persistence, and status endpoints, with a
+  persistent WebSocket relay for the desktop connection. Do not introduce SvelteKit
+  based on general stack preferences.
 - Storage: MongoDB Atlas. Use server-side credentials; do not introduce PostgreSQL
   or Drizzle based on general stack preferences.
 - Authentication: SSOJet. Enforce account/device authorization in the application;
   use short-lived, single-use pairing codes and revocable device credentials.
 - Hosting: HTTPS for the hosted service and authenticated outbound WSS from the
   Windows client. Do not require inbound Internet access to the user's PC.
-- The Flask/TypeScript/SQLite arcade in `test/` is a standalone prototype. Preserve
-  its existing stack unless the task explicitly requests a migration.
+- The arcade games in `Frontend/` remain a prototype collection surface. Their local
+  SQLite storage is not the hosted Atlas store.
 
 ## Input and ML boundaries
 
@@ -52,8 +54,8 @@
 
 - Use real TypeScript types, never `any`. Prefer Python type hints and avoid
   unnecessary abstractions or comments.
-- Use Vitest for requested web tests and pytest for requested Python tests, unless
-  an existing component already uses a different runner.
+- Use pytest for requested Python tests, unless an existing component already uses
+  a different runner (the backend, collector, and `Frontend/` tests use unittest).
 - Use conventional commits. Never add a `Co-Authored-By: Claude` trailer or a
   `Generated with Claude Code` line to commits or PRs.
 - Write concise, professional feedback. No emojis, em dashes, invented facts,
