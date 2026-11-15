@@ -1,24 +1,59 @@
 import json
+import math
 import unittest
 
 from jsonschema import Draft202012Validator, FormatChecker
-from keylogger.enroll import ROOT, WindowAccumulator
+from keylogger.enroll import ROOT, MouseAccumulator, WindowAccumulator
 
-VALIDATOR = Draft202012Validator(
-    json.loads((ROOT / "shared/feature-window-v1.schema.json").read_text(encoding="utf-8")),
-    format_checker=FormatChecker(),
-)
+VALIDATORS = {
+    version: Draft202012Validator(
+        json.loads((ROOT / f"shared/feature-window-v{version}.schema.json").read_text(encoding="utf-8")),
+        format_checker=FormatChecker(),
+    )
+    for version in (1, 2)
+}
+VALIDATOR = VALIDATORS[1]
 
 
 class EnrollmentTests(unittest.TestCase):
     def test_shared_schema_fixtures(self) -> None:
-        fixtures = json.loads((ROOT / "shared/fixtures/feature-window-v1.json").read_text(encoding="utf-8"))
-        for name, window in fixtures["valid"].items():
-            with self.subTest(name):
-                self.assertTrue(VALIDATOR.is_valid(window))
-        for name, window in fixtures["invalid"].items():
-            with self.subTest(name):
-                self.assertFalse(VALIDATOR.is_valid(window))
+        for version, validator in VALIDATORS.items():
+            path = ROOT / f"shared/fixtures/feature-window-v{version}.json"
+            fixtures = json.loads(path.read_text(encoding="utf-8"))
+            for name, window in fixtures["valid"].items():
+                with self.subTest(version=version, name=name):
+                    self.assertTrue(validator.is_valid(window))
+            for name, window in fixtures["invalid"].items():
+                with self.subTest(version=version, name=name):
+                    self.assertFalse(validator.is_valid(window))
+
+    def test_mouse_features_from_relative_motion(self) -> None:
+        pointer = MouseAccumulator()
+        for step in range(11):
+            pointer.move(10, 0, step * 0.025)
+        for step in range(1, 11):
+            pointer.move(0, 10, 0.25 + step * 0.025)
+        pointer.move(500, 500, 5)
+        pointer.move(10, 0, 5.025)
+        for second in (6, 6.5, 7.5):
+            pointer.click(second)
+        features = pointer.features()
+        self.assertEqual(features["move_count"], 21)
+        self.assertAlmostEqual(features["speed_mean_px_s"], 400)
+        self.assertAlmostEqual(features["acceleration_mean_px_s2"], 0)
+        self.assertAlmostEqual(features["turn_angle_mean_rad"], math.pi / 2 / 19)
+        self.assertEqual(features["click_count"], 3)
+        self.assertAlmostEqual(features["click_interval_mean_ms"], 750)
+
+    def test_mouse_window_uses_schema_v2(self) -> None:
+        window = WindowAccumulator(track_mouse=True)
+        for index in range(30):
+            window.press(index, index * 0.1)
+            window.release(index, index * 0.1 + 0.05)
+        payload = window.finish(10, "device", "session", 0)
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["mouse_features"]["move_count"], 0)
+        VALIDATORS[2].validate(payload)
 
     def test_complete_window_ignores_repeat_and_keeps_only_aggregates(self) -> None:
         window = WindowAccumulator()

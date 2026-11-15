@@ -36,6 +36,14 @@ feature schema. Evaluation does not train or change the model threshold.
 The manifest's `session_testers` map labels each session with the anonymous
 `enrolled` or `second-user` tester role.
 
+Add `--mouse` to any enrollment command to separately opt in to mouse timing.
+Windows then use `shared/feature-window-v2.schema.json`, which adds aggregate
+movement speed, acceleration, turn angle, and click interval statistics. Only
+deltas between pointer samples are computed in memory; positions, click targets,
+and window titles are never saved. Use the same `--mouse` choice when resuming.
+Motion is split into segments of at least 20 ms, and a gap over 250 ms starts a
+new stroke, matching the browser collector.
+
 Focused checks: `uv run --project python-keylogger python -m unittest discover -s python-keylogger/tests`.
 
 ## Legacy CSV collector

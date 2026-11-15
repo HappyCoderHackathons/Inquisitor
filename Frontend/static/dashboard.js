@@ -5,6 +5,7 @@
   var collectionSurface = $("#collectorSurface");
   var collectionMode = $("#collectionMode");
   var collectionConsent = $("#collectionConsent");
+  var mouseConsent = $("#mouseConsent");
   var startButton = $("#startCollection");
   var pauseButton = $("#pauseCollection");
   var stopButton = $("#stopCollection");
@@ -18,6 +19,8 @@
   var deleteLocalDataButton = $("#deleteLocalData");
   var dataActionStatus = $("#dataActionStatus");
   var collectionWindowMs = 3e4;
+  var mouseSegmentMs = 20;
+  var mouseStrokeGapMs = 250;
   var deviceId = "";
   var sessionId = "";
   var mode = "enrollment";
@@ -34,6 +37,20 @@
   var intervals = [];
   var holds = [];
   var heldKeys = /* @__PURE__ */ new Map();
+  var trackMouse = false;
+  var lastPointer = null;
+  var lastMoveAt = null;
+  var segmentStart = 0;
+  var segmentDx = 0;
+  var segmentDy = 0;
+  var previousSpeed = null;
+  var previousAngle = null;
+  var lastClickAt = null;
+  var clickCount = 0;
+  var speeds = [];
+  var accelerations = [];
+  var turns = [];
+  var clickIntervals = [];
   var pendingWindow = null;
   var resumeAfterRetry = false;
   function setCollectionStatus(message, isError = false) {
@@ -52,6 +69,7 @@
     if (deleteLocalDataButton) deleteLocalDataButton.disabled = collectionActive || pendingWindow !== null;
     if (collectionMode) collectionMode.disabled = collectionActive;
     if (collectionConsent) collectionConsent.disabled = collectionActive;
+    if (mouseConsent) mouseConsent.disabled = collectionActive;
   }
   function resetWindow() {
     firstPressAt = null;
@@ -63,12 +81,71 @@
     intervals = [];
     holds = [];
     heldKeys.clear();
+    lastPointer = null;
+    lastMoveAt = null;
+    previousSpeed = null;
+    previousAngle = null;
+    lastClickAt = null;
+    clickCount = 0;
+    speeds = [];
+    accelerations = [];
+    turns = [];
+    clickIntervals = [];
     if (progress) progress.value = 0;
     if (progressLabel) progressLabel.textContent = "Waiting for keyboard input";
   }
+  function average(values) {
+    return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+  }
   function standardDeviation(values) {
-    const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-    return Math.sqrt(values.reduce((sum, value) => sum + (value - average) ** 2, 0) / values.length);
+    if (values.length === 0) return 0;
+    const average2 = values.reduce((sum, value) => sum + value, 0) / values.length;
+    return Math.sqrt(values.reduce((sum, value) => sum + (value - average2) ** 2, 0) / values.length);
+  }
+  function recordMove(dx, dy, now) {
+    if (lastMoveAt === null || now - lastMoveAt > mouseStrokeGapMs) {
+      segmentStart = now;
+      segmentDx = 0;
+      segmentDy = 0;
+      previousSpeed = null;
+      previousAngle = null;
+      lastMoveAt = now;
+      return;
+    }
+    lastMoveAt = now;
+    segmentDx += dx;
+    segmentDy += dy;
+    const elapsed = now - segmentStart;
+    if (elapsed < mouseSegmentMs) return;
+    const distance = Math.hypot(segmentDx, segmentDy);
+    const speed = distance * 1e3 / elapsed;
+    speeds.push(speed);
+    if (previousSpeed !== null) accelerations.push(Math.abs(speed - previousSpeed) * 1e3 / elapsed);
+    if (distance > 0) {
+      const angle = Math.atan2(segmentDy, segmentDx);
+      if (previousAngle !== null) {
+        const wrapped = ((angle - previousAngle + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+        turns.push(Math.abs(wrapped - Math.PI));
+      }
+      previousAngle = angle;
+    }
+    previousSpeed = speed;
+    segmentStart = now;
+    segmentDx = 0;
+    segmentDy = 0;
+  }
+  function mouseFeatures() {
+    return {
+      move_count: speeds.length,
+      speed_mean_px_s: average(speeds),
+      speed_std_px_s: standardDeviation(speeds),
+      acceleration_mean_px_s2: average(accelerations),
+      acceleration_std_px_s2: standardDeviation(accelerations),
+      turn_angle_mean_rad: average(turns),
+      click_count: clickCount,
+      click_interval_mean_ms: average(clickIntervals),
+      click_interval_std_ms: standardDeviation(clickIntervals)
+    };
   }
   function makeWindow(now) {
     if (firstPressAt === null || keyCount < 30 || holds.length === 0 || intervals.length === 0) return null;
@@ -77,7 +154,7 @@
     const pauseMs = pauses.reduce((sum, gap) => sum + gap, 0);
     const activeMs = Math.max(1, durationMs - pauseMs);
     const sortedIntervals = [...intervals].sort((a, b) => a - b);
-    return {
+    const value = {
       schema_version: 1,
       device_id: deviceId,
       session_id: sessionId,
@@ -88,9 +165,9 @@
       features: {
         key_count: keyCount,
         presses_per_second: keyCount * 1e3 / activeMs,
-        hold_mean_ms: holds.reduce((sum, value) => sum + value, 0) / holds.length,
+        hold_mean_ms: holds.reduce((sum, value2) => sum + value2, 0) / holds.length,
         hold_std_ms: standardDeviation(holds),
-        press_interval_mean_ms: intervals.reduce((sum, value) => sum + value, 0) / intervals.length,
+        press_interval_mean_ms: intervals.reduce((sum, value2) => sum + value2, 0) / intervals.length,
         press_interval_std_ms: standardDeviation(intervals),
         press_interval_p90_ms: sortedIntervals[Math.ceil(0.9 * sortedIntervals.length) - 1],
         pause_count: pauses.length,
@@ -99,6 +176,11 @@
         press_overlap_fraction: overlaps / intervals.length
       }
     };
+    if (trackMouse) {
+      value.schema_version = 2;
+      value.mouse_features = mouseFeatures();
+    }
+    return value;
   }
   function startTimer() {
     window.clearInterval(timerId);
@@ -184,6 +266,7 @@
     }
     sessionId = window.crypto.randomUUID();
     mode = collectionMode.value === "monitoring" ? "monitoring" : "enrollment";
+    trackMouse = mouseConsent?.checked === true;
     sequence = 0;
     collectionActive = true;
     collectionPaused = false;
@@ -247,7 +330,24 @@
     holds.push(Math.max(0, performance.now() - pressedAt));
     heldKeys.delete(event.code);
   });
-  window.addEventListener("blur", () => heldKeys.clear());
+  collectionSurface?.addEventListener("pointermove", (event) => {
+    if (!trackMouse || !collectionActive || collectionPaused || pendingWindow || event.pointerType !== "mouse") return;
+    if (lastPointer !== null) recordMove(event.clientX - lastPointer.x, event.clientY - lastPointer.y, event.timeStamp);
+    lastPointer = { x: event.clientX, y: event.clientY };
+  });
+  collectionSurface?.addEventListener("pointerleave", () => {
+    lastPointer = null;
+  });
+  collectionSurface?.addEventListener("pointerdown", (event) => {
+    if (!trackMouse || !collectionActive || collectionPaused || pendingWindow || event.pointerType !== "mouse") return;
+    if (lastClickAt !== null) clickIntervals.push(event.timeStamp - lastClickAt);
+    lastClickAt = event.timeStamp;
+    clickCount++;
+  });
+  window.addEventListener("blur", () => {
+    heldKeys.clear();
+    lastPointer = null;
+  });
   collectionConsent?.addEventListener("change", updateControls);
   startButton?.addEventListener("click", startCollection);
   pauseButton?.addEventListener("click", pauseCollection);

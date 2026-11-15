@@ -27,17 +27,24 @@ SCHEMA_HASH = hashlib.sha256(SCHEMA_BYTES).hexdigest()
 SCHEMA = json.loads(SCHEMA_BYTES)
 VALIDATOR = Draft202012Validator(SCHEMA, format_checker=FormatChecker())
 FEATURE_NAMES = tuple(SCHEMA["properties"]["features"]["required"])
+# v2 adds mouse_features; models use keyboard features only, so they stay pinned to the v1 hash.
+VALIDATORS = {1: VALIDATOR, 2: Draft202012Validator(
+    json.loads((SCHEMA_PATH.parent / "feature-window-v2.schema.json").read_bytes()), format_checker=FormatChecker()
+)}
 MAX_DURATION_MS = 600_000
 MAX_PRESSES_PER_SECOND = 50
 
 
 def validate_window(value: object) -> dict[str, object]:
-    if not VALIDATOR.is_valid(value):
-        raise ValueError("window does not match feature-window schema v1")
+    version = value.get("schema_version") if isinstance(value, dict) else None
+    validator = VALIDATORS.get(version) if isinstance(version, int) else None
+    if validator is None or not validator.is_valid(value):
+        raise ValueError("window does not match feature-window schema v1 or v2")
     window = cast(dict[str, object], value)
     features = cast(dict[str, int | float], window["features"])
+    mouse = cast(dict[str, int | float], window.get("mouse_features", {}))
     try:
-        finite = all(math.isfinite(number) for number in features.values())
+        finite = all(math.isfinite(number) for number in [*features.values(), *mouse.values()])
     except OverflowError:
         finite = False
     if not finite:
@@ -45,7 +52,7 @@ def validate_window(value: object) -> dict[str, object]:
     duration = cast(int, window["duration_ms"])
     if duration > MAX_DURATION_MS:
         raise ValueError("window duration exceeds 10 minutes")
-    if any(features[name] > duration for name in FEATURE_NAMES if name.endswith("_ms")):
+    if any(number > duration for name, number in [*features.items(), *mouse.items()] if name.endswith("_ms")):
         raise ValueError("timing features cannot exceed window duration")
     if features["presses_per_second"] > MAX_PRESSES_PER_SECOND:
         raise ValueError("press rate is implausible")

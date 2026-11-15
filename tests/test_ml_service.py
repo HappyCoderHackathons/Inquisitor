@@ -43,13 +43,20 @@ class ModelServiceTests(unittest.TestCase):
             create_app()
 
     def test_shared_schema_fixtures(self) -> None:
-        fixtures = json.loads((Path(__file__).resolve().parents[1] / "shared/fixtures/feature-window-v1.json").read_text(encoding="utf-8"))
-        for name, window in fixtures["valid"].items():
-            with self.subTest(name):
-                validate_window(window)
-        for name, window in fixtures["invalid"].items():
-            with self.subTest(name), self.assertRaises(ValueError):
-                validate_window(window)
+        for version in (1, 2):
+            path = Path(__file__).resolve().parents[1] / f"shared/fixtures/feature-window-v{version}.json"
+            fixtures = json.loads(path.read_text(encoding="utf-8"))
+            for name, window in fixtures["valid"].items():
+                with self.subTest(version=version, name=name):
+                    validate_window(window)
+            for name, window in fixtures["invalid"].items():
+                with self.subTest(version=version, name=name), self.assertRaises(ValueError):
+                    validate_window(window)
+        mouse = json.loads((Path(__file__).resolve().parents[1] / "shared/fixtures/feature-window-v2.json").read_text(
+            encoding="utf-8"))["valid"]["enrollment"]
+        for field, value in (("click_interval_mean_ms", 90_000), ("speed_mean_px_s", float("inf"))):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_window({**mouse, "mouse_features": {**mouse["mouse_features"], field: value}})
 
     def test_nonfinite_and_impossible_timing(self) -> None:
         for field, value in (
@@ -82,6 +89,11 @@ class ModelServiceTests(unittest.TestCase):
         response = client.post("/score", headers=self.headers, json={"window": window})
         self.assertEqual(response.status_code, 200, response.json)
         self.assertAlmostEqual(response.json["score_delta"], response.json["score"] - response.json["threshold"])
+        with_mouse = {**window, "schema_version": 2, "mouse_features": {
+            "move_count": 0, "speed_mean_px_s": 0, "speed_std_px_s": 0, "acceleration_mean_px_s2": 0,
+            "acceleration_std_px_s2": 0, "turn_angle_mean_rad": 0, "click_count": 0,
+            "click_interval_mean_ms": 0, "click_interval_std_ms": 0}}
+        self.assertEqual(client.post("/score", headers=self.headers, json={"window": with_mouse}).json, response.json)
         self.assertEqual(client.post("/score", headers={**self.headers, "X-User-ID": "another-user"}, json={"window": window}).status_code, 403)
         window["device_id"] = "other-device"
         self.assertEqual(client.post("/score", headers=self.headers, json={"window": window}).status_code, 403)

@@ -92,6 +92,18 @@ class FeatureWindowApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/feature-windows", json=too_long).status_code, 422)
         self.assertEqual(self.client.get("/api/feature-windows").get_json()["windows"], 0)
 
+    def test_accepts_mouse_window_v2_and_rejects_pointer_positions(self):
+        mouse = {
+            "move_count": 50, "speed_mean_px_s": 600.0, "speed_std_px_s": 200.0, "acceleration_mean_px_s2": 9000.0,
+            "acceleration_std_px_s2": 4000.0, "turn_angle_mean_rad": 0.4, "click_count": 3,
+            "click_interval_mean_ms": 2000.0, "click_interval_std_ms": 500.0,
+        }
+        window = {**valid_window(), "schema_version": 2, "mouse_features": mouse}
+        self.assertEqual(self.client.post("/api/feature-windows", json=window).status_code, 201)
+        forged = {**window, "sequence": 1, "mouse_features": {**mouse, "x": 100, "y": 200}}
+        self.assertEqual(self.client.post("/api/feature-windows", json=forged).status_code, 422)
+        self.assertEqual(self.client.post("/api/feature-windows", json={**window, "schema_version": 3}).status_code, 422)
+
     def test_local_data_delete_clears_feature_windows(self):
         self.client.post("/api/feature-windows", json=valid_window())
         response = self.client.delete("/api/local-data")
