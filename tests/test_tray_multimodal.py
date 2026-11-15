@@ -63,6 +63,17 @@ class TrayMultimodalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             csv_windows(io.StringIO(mixed.replace(",pen,", ",webcam,")), "pc", "session")
 
+    def test_idle_stretches_produce_no_empty_windows(self) -> None:
+        lines = capture().splitlines()
+        later = [f"{iso},{float(time) + 300},{rest}" for iso, time, rest in (row.split(",", 2) for row in lines[1:])]
+        idle = "\n".join([*lines, *later])
+        for track_mouse in (False, True):
+            windows = csv_windows(io.StringIO(idle), "pc", "session", track_mouse=track_mouse)
+            # Windows 2 to 9 cover the five idle minutes and are skipped, not zero-filled.
+            self.assertEqual([window["sequence"] for window in windows], [0, 1, 10])
+            self.assertEqual(windows[2]["started_at"], "2026-01-01T00:05:00+00:00")
+            self.assertTrue(all(window["features"]["key_count"] for window in windows))
+
     def test_model_inputs_do_not_change_with_uniform_mouse_resolution_scaling(self) -> None:
         windows = [csv_windows(io.StringIO(capture(scale)), "pc", "session", track_mouse=True)[0] for scale in (1, 10)]
         matrix = labeled_features(windows, "tray-multimodal")
