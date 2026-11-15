@@ -166,14 +166,21 @@ def alert_rule() -> tuple[int, int, int]:
             return default
         return int(raw)
 
-    return read("ALERT_WINDOW", ALERT_WINDOW), read("ALERT_UNUSUAL_COUNT", ALERT_UNUSUAL_COUNT), read(
-        "ALERT_NORMAL_COUNT", ALERT_NORMAL_COUNT,
-    )
+    window = read("ALERT_WINDOW", ALERT_WINDOW)
+    unusual_needed = read("ALERT_UNUSUAL_COUNT", ALERT_UNUSUAL_COUNT)
+    normal_needed = read("ALERT_NORMAL_COUNT", ALERT_NORMAL_COUNT)
+    if unusual_needed > window or normal_needed > window:
+        return ALERT_WINDOW, ALERT_UNUSUAL_COUNT, ALERT_NORMAL_COUNT
+    return window, unusual_needed, normal_needed
 
 
 def persistence_decision(
     states: list[str], *, window: int, unusual_needed: int, normal_needed: int,
 ) -> str | None:
+    if window < 1:
+        raise ValueError("window must be positive")
+    if not 1 <= unusual_needed <= window or not 1 <= normal_needed <= window:
+        raise ValueError("persistence thresholds must be between 1 and window")
     recent = [state for state in states if state in {"NORMAL", "UNUSUAL"}][-window:]
     if len(recent) < window:
         return None

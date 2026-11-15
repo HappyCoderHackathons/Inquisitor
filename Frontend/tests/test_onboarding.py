@@ -1008,11 +1008,32 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(decide(
             ["NORMAL", "NORMAL", "NORMAL", "UNUSUAL"], window=4, unusual_needed=3, normal_needed=3,
         ), "close")
-        self.assertEqual(hosted.alert_rule(), (4, 3, 3))
-        with patch.dict(os.environ, {"ALERT_WINDOW": "0", "ALERT_UNUSUAL_COUNT": "nope", "ALERT_NORMAL_COUNT": ""}):
+        self.assertEqual(decide(["NORMAL", "UNUSUAL", "UNUSUAL", "UNUSUAL"], window=4,
+                                unusual_needed=3, normal_needed=3), "open")
+        self.assertEqual(decide(["UNUSUAL"] * 4 + ["NORMAL"] * 4, window=4,
+                                unusual_needed=3, normal_needed=3), "close")
+        self.assertEqual(decide(["UNUSUAL"], window=1, unusual_needed=1, normal_needed=1), "open")
+        self.assertEqual(decide(["NORMAL"], window=1, unusual_needed=1, normal_needed=1), "close")
+        with self.assertRaises(ValueError):
+            decide([], window=0, unusual_needed=1, normal_needed=1)
+        with self.assertRaises(ValueError):
+            decide([], window=4, unusual_needed=5, normal_needed=3)
+        with self.assertRaises(ValueError):
+            decide([], window=4, unusual_needed=3, normal_needed=5)
+        with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(hosted.alert_rule(), (4, 3, 3))
-        with patch.dict(os.environ, {"ALERT_WINDOW": "2", "ALERT_UNUSUAL_COUNT": "2", "ALERT_NORMAL_COUNT": "2"}):
+        with patch.dict(os.environ, {"ALERT_WINDOW": "0", "ALERT_UNUSUAL_COUNT": "nope", "ALERT_NORMAL_COUNT": ""},
+                        clear=True):
+            self.assertEqual(hosted.alert_rule(), (4, 3, 3))
+        with patch.dict(os.environ, {"ALERT_WINDOW": "2", "ALERT_UNUSUAL_COUNT": "2", "ALERT_NORMAL_COUNT": "2"},
+                        clear=True):
             self.assertEqual(hosted.alert_rule(), (2, 2, 2))
+        with patch.dict(os.environ, {"ALERT_WINDOW": "invalid", "ALERT_UNUSUAL_COUNT": "2", "ALERT_NORMAL_COUNT": "2"},
+                        clear=True):
+            self.assertEqual(hosted.alert_rule(), (4, 2, 2))
+        with patch.dict(os.environ, {"ALERT_WINDOW": "2", "ALERT_UNUSUAL_COUNT": "3", "ALERT_NORMAL_COUNT": "2"},
+                        clear=True):
+            self.assertEqual(hosted.alert_rule(), (4, 3, 3))
 
     def test_monitoring_status_history_and_alerts_follow_the_persistence_rule(self):
         self.assertEqual(self.client.get("/api/monitoring/status").status_code, 401)
