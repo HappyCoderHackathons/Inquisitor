@@ -4,11 +4,14 @@ import os
 import re
 import secrets
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import Flask, g, jsonify, request
 
-from .model import ModelStore
+from backend.account.store import AccountStore, retention_seconds_from_env
+
+from .model import ModelStore, validate_window
 from .published import PublishedModel
 
 
@@ -16,7 +19,9 @@ def create_app() -> Flask:
     token = Path(os.environ["ML_TOKEN_FILE"]).read_text(encoding="utf-8").strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{32,}", token):
         raise RuntimeError("ML_TOKEN_FILE must contain a dedicated token of at least 32 URL-safe characters")
-    store = ModelStore(Path(os.environ["ML_DATA_DIR"]))
+    data_dir = Path(os.environ["ML_DATA_DIR"])
+    store = ModelStore(data_dir)
+    account = AccountStore(data_dir / "account.sqlite3", data_dir / "account-artifacts", retention_seconds_from_env())
     published_path = os.environ.get("ML_PUBLISHED_MODEL_FILE")
     published = PublishedModel(Path(published_path)) if published_path else None
     published_user = os.environ.get("ML_PUBLISHED_USER_ID")
@@ -47,6 +52,10 @@ def create_app() -> Flask:
             raise ValueError("request fields do not match the endpoint contract")
         return value
 
+    def remember(result: dict[str, object]) -> dict[str, object]:
+        account.save_result(g.user_id, g.device_id, result)
+        return result
+
     @app.get("/health")
     def health():
         return jsonify(state="ok")
@@ -65,7 +74,7 @@ def create_app() -> Flask:
     @app.post("/score")
     def published_score():
         model = published_model()
-        return jsonify(model.score(body({"window"})["window"], g.device_id))
+        return jsonify(remember(model.score(body({"window"})["window"], g.device_id)))
 
     @app.post("/models/train")
     def train():
@@ -94,10 +103,19 @@ def create_app() -> Flask:
     def active_metadata():
         return jsonify(store.metadata(store.active_model_id(g.user_id, g.device_id), g.user_id, g.device_id))
 
+    @app.post("/windows")
+    def save_window():
+        window = validate_window(body({"window"})["window"])
+        if window["device_id"] != g.device_id:
+            raise PermissionError("window belongs to another device")
+        if not account.save_window(g.user_id, g.device_id, window):
+            return jsonify(error="This device/session/sequence window already exists"), 409
+        return jsonify(ok=True), 201
+
     @app.post("/models/active/score")
     def active_score():
         model_id = store.active_model_id(g.user_id, g.device_id)
-        return jsonify(store.score(model_id, body({"window"})["window"], g.user_id, g.device_id))
+        return jsonify(remember(store.score(model_id, body({"window"})["window"], g.user_id, g.device_id)))
 
     @app.put("/models/<model_id>/active")
     def activate(model_id: str):
@@ -109,7 +127,45 @@ def create_app() -> Flask:
 
     @app.post("/models/<model_id>/score")
     def score(model_id: str):
-        return jsonify(store.score(model_id, body({"window"})["window"], g.user_id, g.device_id))
+        return jsonify(remember(store.score(model_id, body({"window"})["window"], g.user_id, g.device_id)))
+
+    @app.post("/models/active/deactivate")
+    def deactivate():
+        store.deactivate(g.user_id, g.device_id)
+        return jsonify(active=False)
+
+    @app.post("/enrollment/reset")
+    def reset_enrollment():
+        deleted_windows = account.reset_enrollment(g.user_id, g.device_id)
+        removed_model = None
+        try:
+            removed_model = store.active_model_id(g.user_id, g.device_id)
+        except FileNotFoundError:
+            removed_model = None
+        if removed_model is not None:
+            store.delete(removed_model, g.user_id, g.device_id)
+        return jsonify(ok=True, deleted_windows=deleted_windows, removed_model=removed_model)
+
+    @app.delete("/me/data")
+    def delete_my_data():
+        removed_models = store.delete_user(g.user_id)
+        account.delete_user(g.user_id)
+        return jsonify(ok=True, models=removed_models)
+
+    @app.get("/retention")
+    def get_retention():
+        return jsonify(monitoring_retention_seconds=account.retention_seconds())
+
+    @app.put("/retention")
+    def put_retention():
+        value = body({"monitoring_retention_seconds"})["monitoring_retention_seconds"]
+        return jsonify(monitoring_retention_seconds=account.set_retention(value))
+
+    @app.post("/retention/purge")
+    def purge_monitoring():
+        if request.get_json(silent=True) not in (None, {}):
+            raise ValueError("request fields do not match the endpoint contract")
+        return jsonify(account.purge_monitoring(datetime.now(UTC)))
 
     @app.delete("/models/<model_id>")
     def delete(model_id: str):

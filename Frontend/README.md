@@ -20,7 +20,8 @@ A local Flask + TypeScript arcade prototype for collecting opt-in behavioral inp
 
 ## Pages
 
-- The home page (`/`) introduces the prototype, its four games, and its privacy scope.
+- The home page (`/`) states the product pitch, links to Create Account and Log In, says a Windows agent is required, and explains that scores are anomaly signals rather than identity.
+- The privacy page (`/privacy`) lists the accepted feature-window fields and units, a valid sample payload, and what is never collected.
 - The arcade (`/arcade`) contains the playable games and recent round summaries.
 - The user dashboard (`/dashboard`) shows the planned account, model, and agent status areas. Its profile and agent/model status connections are not integrated yet. Sign in and pair devices at `/onboarding`.
 - Use the navigation on each page to move between home, activities, and the dashboard.
@@ -91,6 +92,6 @@ the in-memory adapter; live Atlas connectivity still needs a deployment check.
 - At the end of a round, the browser sends only counts and timing statistics, selected game, and score.
 - The typing exercise does not send typed words. It sends the same numeric timing summary as the other activities.
 - Flask stores those aggregate samples in a local SQLite database (`inputprint.sqlite3`). **Clear Data** removes them.
-- This is an arcade data-collection prototype. It does not include the Windows background agent or the authentication/model pipeline described in the InputPrint project brief.
+- Arcade rounds still store only local aggregate samples in SQLite. The feature-window contract used by the agent and the model is the one on `/privacy`. Sign-in and pairing stay at `/onboarding` when hosted auth is configured. `/onboarding?mode=signup` opens account creation.
 
 The aim trainer uses mouse clicks or the A button. Block Stack uses arrows/WASD or the gamepad face buttons and D-pad. Arena Rush uses WASD or the arrow keys to move, the mouse to aim, and left-click to fire. Word Sprint shuffles its word list each round and highlights correct letters as you type.

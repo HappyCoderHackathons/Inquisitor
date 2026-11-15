@@ -46,6 +46,13 @@ the application's user/device authentication.
 | `POST /models/active/score` | `window` object | Score using the active model |
 | `GET /models/{id}` | No body | Owned model metadata |
 | `POST /models/{id}/score` | `window` object | Score, threshold, model ID, and state |
+| `POST /windows` | `window` object | Stores one authorized feature window, HTTP 201 |
+| `POST /models/active/deactivate` | No body | Leaves the model files in place and clears the active model |
+| `POST /enrollment/reset` | No body | Deletes this device's enrollment windows and active model artifact |
+| `DELETE /me/data` | No body | Deletes this account's windows, scores, alerts, and model artifact files |
+| `GET /retention` | No body | Monitoring retention period in seconds |
+| `PUT /retention` | `monitoring_retention_seconds` | Replaces the retention period. The initial value comes from `INQUISITOR_MONITORING_RETENTION_SECONDS`, defaulting to 604800 |
+| `POST /retention/purge` | No body | Deletes monitoring windows, inference results, and alerts older than the configured period |
 | `DELETE /models/{id}` | No body | Removes owned artifacts and cached model, HTTP 204 |
 
 For the `labeled-overlap` profile, training takes `windows` for genuine examples
@@ -140,8 +147,13 @@ low activity, model deletion, and health after service restart. A user service
 with lingering enabled supervises it. Host details and token files are local-only.
 A host reboot has not been tested.
 
+Account deletion, enrollment reset, model deactivation, and the monitoring
+retention period are implemented on this service. `INQUISITOR_MONITORING_RETENTION_SECONDS`
+sets the initial period; `PUT /retention` changes it without editing code.
+`POST /retention/purge` removes monitoring rows older than that period.
+
 Still required: real session data, a finalized collector aggregation contract,
-application ingestion and auth integration, enrollment retention/deletion policy,
+application ingestion and auth integration,
 and the hosted application's HTTPS or SSH-tunnel connection to the model service.
 The workstation's development tunnel is not that deployed application connection.
 Never upload the collector's raw per-event log directly to this service.

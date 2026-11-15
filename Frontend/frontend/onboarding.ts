@@ -28,16 +28,28 @@ const element = (id: string) => document.getElementById(id);
 const authForm = element("authForm") as HTMLFormElement | null;
 let signingUp = false;
 
-element("authToggle")?.addEventListener("click", () => {
-  signingUp = !signingUp;
-  const name = element("authName") as HTMLInputElement;
-  element("authNameLabel")!.hidden = !signingUp;
+function showSignUp(next: boolean) {
+  signingUp = next;
+  const name = element("authName") as HTMLInputElement | null;
+  const label = element("authNameLabel");
+  const password = element("authPassword") as HTMLInputElement | null;
+  const submit = element("authSubmit");
+  const toggle = element("authToggle");
+  const status = element("authStatus");
+  if (!name || !label || !password || !submit || !toggle || !status) return;
+  label.hidden = !signingUp;
   name.required = signingUp;
-  (element("authPassword") as HTMLInputElement).autocomplete = signingUp ? "new-password" : "current-password";
-  element("authSubmit")!.textContent = signingUp ? "Create account" : "Sign in";
-  element("authToggle")!.textContent = signingUp ? "I already have an account" : "Create an account";
-  element("authStatus")!.textContent = "";
+  password.autocomplete = signingUp ? "new-password" : "current-password";
+  submit.textContent = signingUp ? "Create account" : "Sign in";
+  toggle.textContent = signingUp ? "I already have an account" : "Create an account";
+  status.textContent = "";
+}
+
+element("authToggle")?.addEventListener("click", () => {
+  showSignUp(!signingUp);
 });
+
+if (new URLSearchParams(window.location.search).get("mode") === "signup") showSignUp(true);
 
 async function authenticate(path: string, body: Record<string, string>, button: HTMLButtonElement) {
   const status = element("authStatus")!;
