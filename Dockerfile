@@ -28,7 +28,7 @@ WORKDIR /app
 
 # Upgrade pip and install Python dependencies including Gunicorn
 COPY Frontend/requirements.txt /app/Frontend/requirements.txt
-RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-server && rm -f /etc/ssh/ssh_host_* && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r /app/Frontend/requirements.txt gunicorn
 
@@ -46,7 +46,8 @@ COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN sed -i 's/\r$//' /app/docker-entrypoint.sh && chmod +x /app/docker-entrypoint.sh
 
 # Create non-root user
-RUN groupadd -r inquisitor && useradd -r -g inquisitor -d /app inquisitor && \
+RUN groupadd -r inquisitor && useradd -r -g inquisitor -d /app -s /bin/sh inquisitor && \
+    usermod -p "*" inquisitor && mkdir -p /run/sshd && \
     chown -R inquisitor:inquisitor /app
 
 USER inquisitor

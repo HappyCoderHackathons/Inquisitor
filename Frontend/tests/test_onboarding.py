@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1481,6 +1482,26 @@ class OnboardingTests(unittest.TestCase):
             self.assertEqual(link.receive(raw), [], raw)
             self.assertTrue(link.done)
             self.assertEqual(link.close_code, hosted.POLICY_VIOLATION)
+
+    def test_ml_tunnel_needs_the_ml_token_and_no_origin(self):
+        with tempfile.TemporaryDirectory() as folder:
+            token_file = Path(folder) / "token"
+            token_file.write_text("tunnel-token\n")
+            app = Flask(__name__)
+            env = ENV | {"ML_TOKEN_FILE": str(token_file), "ML_TUNNEL_HOST_KEY": "key"}
+            with patch.dict(os.environ, env):
+                hosted.register(
+                    app, mongomock.MongoClient(tz_aware=True).db, self.trainer, self.score,
+                    server.onboarding_window_error, self.deleter, self.activate, self.compare,
+                )
+                client = app.test_client()
+                upgrade = {"Connection": "Upgrade", "Upgrade": "websocket"}
+                self.assertEqual(client.get("/api/ml-tunnel", headers=upgrade).status_code, 401)
+                wrong = upgrade | {"Authorization": "Bearer nope"}
+                self.assertEqual(client.get("/api/ml-tunnel", headers=wrong).status_code, 401)
+                browser = upgrade | {"Authorization": "Bearer tunnel-token", "Origin": "https://app.example.test"}
+                self.assertEqual(client.get("/api/ml-tunnel", headers=browser).status_code, 403)
+        self.assertEqual(self.client.get("/api/ml-tunnel").status_code, 404)
 
     def test_agent_socket_handshake_needs_a_token_and_no_foreign_origin(self):
         _device_id, agent = self.pair()

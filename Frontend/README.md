@@ -150,21 +150,30 @@ The hosted website runs as a containerized service on a WebSocket-capable host s
 ### Deploy on Fly.io
 
 [`fly.toml`](../fly.toml) runs one always-on machine (the agent WebSocket and the in-process
-monitoring stream need it) and sets `ML_SERVICE_URL` to the container's own tunnel. Set the
-required variables as secrets, plus the tunnel:
+monitoring stream need it) and sets `ML_SERVICE_URL` to `127.0.0.1:18765`.
+
+The model host is on a private network, so it dials in. Its user service
+[`inquisitor-ml-tunnel.service`](../backend/deploy/inquisitor-ml-tunnel.service) runs
+`ssh -R 127.0.0.1:18765:127.0.0.1:8765` through `wss://<app>/api/ml-tunnel`
+([`scripts/ml_tunnel_proxy.py`](../scripts/ml_tunnel_proxy.py), needs `simple-websocket`). The
+route requires the ML token and no `Origin`, and pipes to an sshd on the container's loopback
+that only lets that key open the `127.0.0.1:18765` listener.
 
 | Secret | Description |
 | --- | --- |
-| `ML_TOKEN` | ML service bearer token |
-| `ML_SSH_DESTINATION` | `user@host` of the private model host |
-| `ML_SSH_KEY` | Private key of a dedicated, forwarding-only key (`restrict,port-forwarding,permitopen="127.0.0.1:8765"` in `authorized_keys`) |
-| `ML_SSH_KNOWN_HOSTS` | The model host's `known_hosts` line. Host keys are checked strictly |
+| `ML_TOKEN` | ML service bearer token, also required by `/api/ml-tunnel` |
+| `ML_TUNNEL_HOST_KEY` | Base64 of the container sshd's private host key file |
+| `ML_TUNNEL_AUTHORIZED_KEY` | Public key of the model host's tunnel key (`type base64`) |
 
 ```sh
 fly secrets set BETTER_AUTH_SECRET=... BETTER_AUTH_URL=https://<app>.fly.dev MONGODB_URI=... MONGODB_DB=...
-fly secrets set ML_TOKEN=... ML_SSH_DESTINATION=... ML_SSH_KEY="$(cat key)" ML_SSH_KNOWN_HOSTS="$(cat known_hosts)"
+fly secrets set ML_TOKEN=... ML_TUNNEL_HOST_KEY="$(base64 -w0 host_key)" ML_TUNNEL_AUTHORIZED_KEY="ssh-ed25519 AAAA..."
 fly deploy
 ```
+
+On the model host, `~/inquisitor-model/tunnel/` holds the client key `id`, a `known_hosts` line
+`inquisitor-tunnel <host public key>`, and a venv with `simple-websocket`.
+`~/inquisitor-model/tunnel.env` sets `ML_TUNNEL_URL=wss://<app>/api/ml-tunnel` and `ML_TOKEN_FILE`.
 
 Atlas must allow connections from the app's egress IP (`fly ips list` / Atlas network access).
 
