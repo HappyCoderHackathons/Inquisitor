@@ -22,8 +22,9 @@ pub fn pick_folder() -> Option<PathBuf> {
         let dialog: IFileOpenDialog =
             CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
         dialog.SetOptions(FOS_PICKFOLDERS).ok()?;
-        // Show returns an error on cancel; treat that as None.
-        dialog.Show(None).ok()?;
+        // Show returns an error on cancel; treat that as None. The dialog is
+        // centered on the screen like the app's other windows.
+        crate::ui::centered(|| dialog.Show(None)).ok()?;
         let item = dialog.GetResult().ok()?;
         let path_pwstr = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
         let s = path_pwstr.to_string().ok();

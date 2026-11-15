@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, LPARAM, WPARAM,
 };
+use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, IPersistFile,
 };
@@ -176,17 +177,18 @@ pub fn installed_version() -> Option<String> {
 pub fn install(opts: &Options) -> Result<(), String> {
     let source =
         std::env::current_exe().map_err(|e| format!("Could not find this program: {e}"))?;
-    let target = installed_exe();
+    let target = opts.dir.join("Inquisitor.exe");
     stop_running_trays();
 
     if !same_file(&source, &target) {
-        fs::create_dir_all(install_dir())
-            .map_err(|e| format!("Could not create {}: {e}", install_dir().display()))?;
+        fs::create_dir_all(&opts.dir)
+            .map_err(|e| format!("Could not create {}: {e}", opts.dir.display()))?;
         copy_with_retry(&source, &target)
             .map_err(|e| format!("Could not copy to {}: {e}", target.display()))?;
     }
 
-    write_uninstall_entry(&target).map_err(|e| format!("Could not register the app: {e}"))?;
+    write_uninstall_entry(&target, &opts.dir)
+        .map_err(|e| format!("Could not register the app: {e}"))?;
 
     if opts.start_menu {
         create_shortcut(&target)
@@ -216,13 +218,16 @@ pub fn install(opts: &Options) -> Result<(), String> {
 /// What `remove` left for the caller to finish.
 pub struct Removed {
     /// This process is the installed exe, which cannot delete itself while it
-    /// runs. Call `delete_install_dir_after_exit` right before exiting.
-    pub self_delete_pending: bool,
+    /// runs. Pass this folder to `delete_install_dir_after_exit` right before
+    /// exiting.
+    pub self_delete_pending: Option<PathBuf>,
 }
 
 /// Undo everything `install` did. Captured data and settings are deleted only
 /// when `delete_data` is set.
 pub fn remove(delete_data: bool) -> Result<Removed, String> {
+    // Read before the Apps & features entry holding it is deleted.
+    let dir = install_dir();
     stop_running_trays();
     startup::disable().map_err(|e| format!("Could not remove Start with Windows: {e}"))?;
     let _ = fs::remove_file(shortcut_path());
@@ -234,34 +239,37 @@ pub fn remove(delete_data: bool) -> Result<Removed, String> {
             .map_err(|e| format!("Could not delete captured data: {e}"))?;
     }
 
-    let dir = install_dir();
-    let running_inside = std::env::current_exe()
-        .map(|exe| exe.parent().is_some_and(|p| same_file(p, &dir)))
+    let exe = dir.join("Inquisitor.exe");
+    let running_installed = std::env::current_exe()
+        .map(|current| same_file(&current, &exe))
         .unwrap_or(false);
-    if running_inside {
+    if running_installed {
         return Ok(Removed {
-            self_delete_pending: true,
+            self_delete_pending: Some(dir),
         });
     }
-    match fs::remove_dir_all(&dir) {
+    // Only the exe and then the folder if it is empty: never a recursive delete,
+    // so nothing else that ended up in the folder is lost.
+    match fs::remove_file(&exe) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(format!("Could not delete {}: {e}", dir.display())),
+        Err(e) => return Err(format!("Could not delete {}: {e}", exe.display())),
     }
+    let _ = fs::remove_dir(&dir);
     Ok(Removed {
-        self_delete_pending: false,
+        self_delete_pending: None,
     })
 }
 
-/// Start a hidden `cmd` that waits for this process to exit and then deletes the
-/// install folder. Used when the uninstall runs from the installed exe itself.
-pub fn delete_install_dir_after_exit() {
+/// Start a hidden `cmd` that waits for this process to exit, then deletes the
+/// installed exe and the install folder if it is empty. Used when the uninstall
+/// runs from the installed exe itself.
+pub fn delete_install_dir_after_exit(dir: &Path) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let dir = install_dir();
     // Retry for up to ~10 s in case the process is slow to exit.
     let script = format!(
-        "/d /c for /l %i in (1,1,10) do (ping -n 2 127.0.0.1 >nul & rmdir /s /q \"{0}\" 2>nul & if not exist \"{0}\" exit)",
+        "/d /c for /l %i in (1,1,10) do (ping -n 2 127.0.0.1 >nul & del /f /q \"{0}\\Inquisitor.exe\" 2>nul & if not exist \"{0}\\Inquisitor.exe\" (rmdir \"{0}\" 2>nul & exit))",
         dir.display()
     );
     let _ = std::process::Command::new("cmd.exe")
@@ -353,7 +361,7 @@ fn exe_command(exe: &Path, arg: &str) -> String {
     format!("\"{}\" {arg}", exe.display())
 }
 
-fn write_uninstall_entry(exe: &Path) -> windows::core::Result<()> {
+fn write_uninstall_entry(exe: &Path, dir: &Path) -> windows::core::Result<()> {
     let size_kb = fs::metadata(exe).map(|m| m.len() / 1024).unwrap_or(0) as u32;
     unsafe {
         let mut hkey = HKEY::default();
@@ -373,11 +381,7 @@ fn write_uninstall_entry(exe: &Path) -> windows::core::Result<()> {
             set_string(hkey, w!("DisplayName"), "Inquisitor")?;
             set_string(hkey, w!("DisplayVersion"), VERSION)?;
             set_string(hkey, w!("DisplayIcon"), &format!("{exe_str},0"))?;
-            set_string(
-                hkey,
-                w!("InstallLocation"),
-                &install_dir().display().to_string(),
-            )?;
+            set_string(hkey, w!("InstallLocation"), &dir.display().to_string())?;
             set_string(hkey, w!("UninstallString"), &exe_command(exe, "uninstall"))?;
             // "Modify" in Apps & features opens the wizard, which offers Repair.
             set_string(hkey, w!("ModifyPath"), &exe_command(exe, "setup"))?;
@@ -408,7 +412,8 @@ fn read_string(key: PCWSTR, name: PCWSTR) -> Option<String> {
         if RegOpenKeyExW(HKEY_CURRENT_USER, key, Some(0), KEY_READ, &mut hkey) != ERROR_SUCCESS {
             return None;
         }
-        let mut buf = [0u16; 128];
+        // Room for long install paths, not just short values like the version.
+        let mut buf = [0u16; 1024];
         let mut len = (buf.len() * 2) as u32;
         let mut kind = REG_VALUE_TYPE::default();
         let r = RegQueryValueExW(
@@ -481,6 +486,21 @@ mod tests {
             exe_command(exe, "uninstall"),
             r#""C:\Users\Some One\AppData\Local\Programs\Inquisitor\Inquisitor.exe" uninstall"#
         );
+    }
+
+    #[test]
+    fn install_dir_always_ends_in_its_own_folder() {
+        assert_eq!(
+            normalize_install_dir(r"D:\Apps"),
+            Some(PathBuf::from(r"D:\Apps\Inquisitor"))
+        );
+        // Already named for the app, typed with quotes and another case.
+        assert_eq!(
+            normalize_install_dir(r#" "D:\Apps\inquisitor" "#),
+            Some(PathBuf::from(r"D:\Apps\inquisitor"))
+        );
+        assert_eq!(normalize_install_dir(r"Apps\Inquisitor"), None);
+        assert_eq!(normalize_install_dir(""), None);
     }
 
     #[test]

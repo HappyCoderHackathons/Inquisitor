@@ -19,6 +19,8 @@
 //! `install`; this module is only the window.
 
 use std::mem::size_of;
+use std::path::PathBuf;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -34,22 +36,22 @@ use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, SetFocus};
 use windows::Win32::UI::WindowsAndMessaging::{
     BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON, BS_PUSHBUTTON, CW_USEDEFAULT,
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW,
-    GetWindowLongPtrW, HMENU, IDC_ARROW, IDC_WAIT, IsDialogMessageW, LoadCursorW, MB_ICONERROR,
-    MB_ICONINFORMATION, MB_OK, MESSAGEBOX_STYLE, MSG, MessageBoxW, MoveWindow, PostQuitMessage,
-    RegisterClassExW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER, SetCursor,
-    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
-    TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CTLCOLORBTN,
-    WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_SETFONT, WNDCLASSEXW, WS_BORDER, WS_CAPTION,
-    WS_CHILD, WS_CLIPCHILDREN, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
-    WS_VSCROLL,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EN_CHANGE, GWLP_USERDATA,
+    GetMessageW, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, HMENU, IDC_ARROW,
+    IDC_WAIT, IsDialogMessageW, LoadCursorW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK,
+    MESSAGEBOX_STYLE, MSG, MoveWindow, PostQuitMessage, RegisterClassExW, SW_HIDE, SW_SHOW,
+    SWP_NOACTIVATE, SWP_NOZORDER, SetCursor, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+    SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE,
+    WM_COMMAND, WM_CTLCOLORBTN, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_SETFONT,
+    WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN, WS_MINIMIZEBOX, WS_OVERLAPPED,
+    WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::{PCWSTR, w};
 
 use crate::config::{Config, TERMS_VERSION};
 use crate::install::{self, Mode, Options, VERSION};
 use crate::ui::{self, scale, to_wide};
-use crate::{icon, startup};
+use crate::{folder_picker, icon, startup};
 
 const CLASS: PCWSTR = w!("InquisitorWizardWnd");
 
@@ -63,12 +65,15 @@ const ID_STARTUP: u16 = 11;
 const ID_LAUNCH: u16 = 12;
 const ID_DELETE_DATA: u16 = 13;
 const ID_TERMS: u16 = 14;
+const ID_LOCATION: u16 = 15;
+const ID_BROWSE: u16 = 16;
 
 // Static-control style from <winuser.h>.
 const SS_NOPREFIX: u32 = 0x0080;
 // Edit-control styles from <winuser.h>.
 const ES_MULTILINE: u32 = 0x0004;
 const ES_AUTOVSCROLL: u32 = 0x0040;
+const ES_AUTOHSCROLL: u32 = 0x0080;
 const ES_READONLY: u32 = 0x0800;
 // Checkbox state from <winuser.h>.
 const BST_CHECKED: usize = 1;
@@ -131,11 +136,14 @@ pub enum Outcome {
 
 // Set by the window before it closes; read by `run` after the message loop.
 static RUN_TRAY: AtomicBool = AtomicBool::new(false);
-static SELF_DELETE: AtomicBool = AtomicBool::new(false);
+static SELF_DELETE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
+/// Pages in the order a fresh install shows them: Terms, Location, Main.
+/// Update and repair skip Location and keep the installed folder.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Terms,
+    Location,
     Main,
     Remove,
 }
@@ -146,6 +154,12 @@ struct WizardState {
     page: Page,
     /// Opened with `Start::Terms`: accepting closes the window and starts the tray.
     terms_only: bool,
+    /// Install folder: chosen on the Location page for a fresh install, or the
+    /// installed folder for update and repair.
+    install_to: PathBuf,
+    location: HWND,
+    browse: HWND,
+    space: HWND,
     dpi: u32,
     font: HFONT,
     title_font: HFONT,
@@ -238,9 +252,17 @@ pub fn run(start: Start) -> windows::core::Result<Outcome> {
             // Removal collects nothing, so it does not need the terms.
             Start::Remove if mode != Mode::Install => Page::Remove,
             Start::Terms => Page::Terms,
-            _ => main_or_terms(),
+            _ => first_page(&mode),
         },
         terms_only: start == Start::Terms,
+        install_to: install::install_dir(),
+        location: child(
+            w!("EDIT"),
+            ES_AUTOHSCROLL | WS_BORDER.0 | WS_TABSTOP.0,
+            ID_LOCATION,
+        ),
+        browse: child(w!("BUTTON"), button, ID_BROWSE),
+        space: child(w!("STATIC"), SS_NOPREFIX, 0),
         mode,
         dpi: unsafe { GetDpiForWindow(hwnd) }.max(96),
         font: HFONT::default(),
@@ -274,6 +296,9 @@ pub fn run(start: Start) -> windows::core::Result<Outcome> {
     set_text(st.launch, "Launch Inquisitor when done");
     set_text(st.delete_data, "Also delete captured data and settings");
     set_text(st.terms, TERMS);
+    set_text(st.browse, "Browse...");
+    set_text(st.location, &st.install_to.display().to_string());
+    update_space(st);
     set_text(st.run_once, "Run once");
     // Fresh installs get a shortcut; otherwise keep what is there now.
     set_checked(
@@ -307,8 +332,8 @@ pub fn run(start: Start) -> windows::core::Result<Outcome> {
         }
     }
 
-    if SELF_DELETE.load(Ordering::SeqCst) {
-        install::delete_install_dir_after_exit();
+    if let Some(dir) = SELF_DELETE.lock().ok().and_then(|mut p| p.take()) {
+        install::delete_install_dir_after_exit(&dir);
     }
     Ok(if RUN_TRAY.load(Ordering::SeqCst) {
         Outcome::RunTray
@@ -321,13 +346,82 @@ fn style() -> WINDOW_STYLE {
     WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN
 }
 
-/// The terms page until the current terms are accepted, then the main page.
-fn main_or_terms() -> Page {
+/// The terms page until the current terms are accepted, then the page after it.
+fn first_page(mode: &Mode) -> Page {
     if Config::load_or_default().terms_accepted() {
-        Page::Main
+        after_terms(mode)
     } else {
         Page::Terms
     }
+}
+
+/// A fresh install picks its folder next; update and repair keep theirs.
+fn after_terms(mode: &Mode) -> Page {
+    if *mode == Mode::Install {
+        Page::Location
+    } else {
+        Page::Main
+    }
+}
+
+/// "12.3 MB" or "45.6 GB".
+fn format_size(bytes: u64) -> String {
+    const MB: f64 = 1024.0 * 1024.0;
+    let mb = bytes as f64 / MB;
+    if mb >= 1024.0 {
+        format!("{:.1} GB", mb / 1024.0)
+    } else {
+        format!("{mb:.1} MB")
+    }
+}
+
+fn window_text(hwnd: HWND) -> String {
+    unsafe {
+        let len = GetWindowTextLengthW(hwnd).max(0) as usize;
+        let mut buf = vec![0u16; len + 1];
+        let n = GetWindowTextW(hwnd, &mut buf).max(0) as usize;
+        String::from_utf16_lossy(&buf[..n])
+    }
+}
+
+/// Refresh the "space required / available" line for the folder in the box.
+fn update_space(st: &WizardState) {
+    let required = format_size(install::required_space());
+    let text = match install::normalize_install_dir(&window_text(st.location))
+        .and_then(|dir| install::free_space(&dir))
+    {
+        Some(free) => format!(
+            "Space required: {required}    Space available: {}",
+            format_size(free)
+        ),
+        None => format!("Space required: {required}"),
+    };
+    set_text(st.space, &text);
+}
+
+/// Leave the Location page: check the folder and continue to the main page.
+fn confirm_location(hwnd: HWND, st: &mut WizardState) {
+    let Some(dir) = install::normalize_install_dir(&window_text(st.location)) else {
+        message(
+            hwnd,
+            "Enter a full folder path, such as C:\\Users\\you\\AppData\\Local\\Programs.",
+            MB_ICONERROR,
+        );
+        return;
+    };
+    if install::free_space(&dir).is_some_and(|free| free < install::required_space()) {
+        message(
+            hwnd,
+            "There is not enough free space on that drive.",
+            MB_ICONERROR,
+        );
+        return;
+    }
+    // Show the final folder, with the added Inquisitor folder, if they go back.
+    set_text(st.location, &dir.display().to_string());
+    st.install_to = dir;
+    st.page = Page::Main;
+    show_page(st);
 }
 
 fn client_height(page: Page) -> i32 {
@@ -392,9 +486,9 @@ fn set_visible(hwnd: HWND, visible: bool) {
 fn main_page_text(mode: &Mode, dir: &str) -> (String, String, &'static str) {
     match mode {
         Mode::Install => (
-            "Install Inquisitor".into(),
+            "Ready to install".into(),
             format!(
-                "Installs Inquisitor {VERSION} for this user in {dir}. \
+                "Inquisitor {VERSION} will be installed for this user in {dir}. \
                  Administrator rights are not needed."
             ),
             "Install",
@@ -430,14 +524,23 @@ fn main_page_text(mode: &Mode, dir: &str) -> (String, String, &'static str) {
 /// Switch the visible controls and texts to `st.page`, resizing the window when
 /// the page height changes.
 fn show_page(st: &mut WizardState) {
-    let dir = install::install_dir().display().to_string();
-    let (main, remove, terms) = (
+    let dir = st.install_to.display().to_string();
+    let (main, remove, terms, location) = (
         st.page == Page::Main,
         st.page == Page::Remove,
         st.page == Page::Terms,
+        st.page == Page::Location,
     );
     let (title, body, primary) = match st.page {
         Page::Main => main_page_text(&st.mode, &dir),
+        Page::Location => (
+            "Choose install location".into(),
+            "Inquisitor will be installed in this folder. To use a different folder, \
+             type it below or click Browse. Pick a folder you can write to without \
+             administrator rights."
+                .into(),
+            "Next",
+        ),
         Page::Remove => (
             "Remove Inquisitor".into(),
             format!(
@@ -459,34 +562,33 @@ fn show_page(st: &mut WizardState) {
     set_text(st.body, &body);
     set_text(st.primary, primary);
     set_text(st.cancel, if terms { "Decline" } else { "Cancel" });
-    set_text(st.left, if main { "Remove..." } else { "Back" });
+    let install = st.mode == Mode::Install;
+    set_text(
+        st.left,
+        if main && !install {
+            "Remove..."
+        } else {
+            "Back"
+        },
+    );
 
     set_visible(st.terms, terms);
+    for h in [st.location, st.browse, st.space] {
+        set_visible(h, location);
+    }
     for h in [st.start_menu, st.startup, st.launch] {
         set_visible(h, main);
     }
     set_visible(st.delete_data, remove);
-    // Back is always available on the remove page, and Remove only once there
-    // is something installed to remove.
-    set_visible(st.left, remove || (main && st.mode != Mode::Install));
+    // Back on Location, Remove, and a fresh install's main page; Remove... on
+    // the main page once something is installed. Terms has no page before it.
+    set_visible(st.left, !terms);
     // The installed exe has nothing to run "once"; it is already installed.
     set_visible(st.run_once, main && st.mode != Mode::Installed);
 
-    // Keep the top-left corner where it is and resize for the page.
-    let mut rc = RECT::default();
+    // Pages differ in height, so resize and recenter on the screen each time.
     let (w, h) = window_size(st.dpi, st.page);
-    unsafe {
-        let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(st.hwnd, &mut rc);
-        let _ = SetWindowPos(
-            st.hwnd,
-            None,
-            rc.left,
-            rc.top,
-            w,
-            h,
-            SWP_NOZORDER | SWP_NOACTIVATE,
-        );
-    }
+    ui::place_centered(st.hwnd, w, h);
     layout(st);
 }
 
@@ -513,6 +615,9 @@ fn apply_fonts(st: &mut WizardState) {
     for h in [
         st.body,
         st.terms,
+        st.location,
+        st.browse,
+        st.space,
         st.start_menu,
         st.startup,
         st.launch,
@@ -552,6 +657,33 @@ fn layout(st: &WizardState) {
             );
         }
         let _ = MoveWindow(st.delete_data, m, check_top, w - 2 * m, check_h, true);
+        // Location: [ folder box              ] [Browse...]
+        //           Space required ...  Space available ...
+        let (field_h, browse_w) = (st.scale(28), st.scale(96));
+        let _ = MoveWindow(
+            st.location,
+            m,
+            check_top,
+            w - 2 * m - gap - browse_w,
+            field_h,
+            true,
+        );
+        let _ = MoveWindow(
+            st.browse,
+            w - m - browse_w,
+            check_top - st.scale(2),
+            browse_w,
+            bh,
+            true,
+        );
+        let _ = MoveWindow(
+            st.space,
+            m,
+            check_top + field_h + st.scale(12),
+            w - 2 * m,
+            st.scale(20),
+            true,
+        );
         let terms_top = body_top + body_h + st.scale(8);
         let _ = MoveWindow(
             st.terms,
@@ -570,24 +702,18 @@ fn layout(st: &WizardState) {
     }
 }
 
+/// Modal to the wizard, but centered on the screen like every other window.
 fn message(hwnd: HWND, text: &str, style: MESSAGEBOX_STYLE) {
-    let text = to_wide(text);
-    unsafe {
-        MessageBoxW(
-            Some(hwnd),
-            PCWSTR(text.as_ptr()),
-            w!("Inquisitor setup"),
-            MB_OK | style,
-        );
-    }
+    ui::message_box(Some(hwnd), text, "Inquisitor setup", MB_OK | style);
 }
 
 /// Run the page's main action. The window is disabled while it runs, since
 /// closing a running tray can take a few seconds.
 fn primary(hwnd: HWND, st: &mut WizardState) {
-    if st.page == Page::Terms {
-        accept_terms(hwnd, st);
-        return;
+    match st.page {
+        Page::Terms => return accept_terms(hwnd, st),
+        Page::Location => return confirm_location(hwnd, st),
+        _ => {}
     }
     unsafe {
         let _ = EnableWindow(hwnd, false);
@@ -595,6 +721,7 @@ fn primary(hwnd: HWND, st: &mut WizardState) {
     }
     let result = if st.page == Page::Main {
         let opts = Options {
+            dir: st.install_to.clone(),
             start_menu: is_checked(st.start_menu),
             start_with_windows: is_checked(st.startup),
             launch: is_checked(st.launch),
@@ -616,7 +743,9 @@ fn primary(hwnd: HWND, st: &mut WizardState) {
     } else {
         let delete = is_checked(st.delete_data);
         install::remove(delete).map(|removed| {
-            SELF_DELETE.store(removed.self_delete_pending, Ordering::SeqCst);
+            if let Ok(mut pending) = SELF_DELETE.lock() {
+                *pending = removed.self_delete_pending;
+            }
             if delete {
                 "Inquisitor and its data were removed.".to_string()
             } else {
@@ -661,10 +790,21 @@ fn accept_terms(hwnd: HWND, st: &mut WizardState) {
         }
         return;
     }
-    st.page = Page::Main;
+    st.page = after_terms(&st.mode);
     show_page(st);
     unsafe {
         let _ = SetFocus(Some(st.primary));
+    }
+}
+
+/// Pick a parent folder with the shell's folder picker. Inquisitor gets its own
+/// folder inside it, as `normalize_install_dir` adds.
+fn browse(st: &WizardState) {
+    if let Some(picked) = folder_picker::pick_folder()
+        && let Some(dir) = install::normalize_install_dir(&picked.display().to_string())
+    {
+        // Setting the text fires EN_CHANGE, which refreshes the space line.
+        set_text(st.location, &dir.display().to_string());
     }
 }
 
@@ -686,14 +826,18 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         let _ = DestroyWindow(hwnd);
                     }
                     ID_LEFT => {
-                        st.page = if st.page == Page::Main {
-                            Page::Remove
-                        } else {
-                            main_or_terms()
+                        st.page = match st.page {
+                            Page::Main if st.mode == Mode::Install => Page::Location,
+                            Page::Main => Page::Remove,
+                            Page::Location => Page::Terms,
+                            _ => first_page(&st.mode),
                         };
                         show_page(st);
                         let _ = SetFocus(Some(st.primary));
                     }
+                    ID_BROWSE => browse(st),
+                    // EN_CHANGE from the folder box.
+                    ID_LOCATION if (wparam.0 >> 16) as u32 == EN_CHANGE => update_space(st),
                     _ => {}
                 }
                 LRESULT(0)
@@ -709,7 +853,8 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                     return LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize);
                 }
                 let _ = SetBkMode(hdc, TRANSPARENT);
-                if HWND(lparam.0 as *mut _) == st.body {
+                let from = HWND(lparam.0 as *mut _);
+                if from == st.body || from == st.space {
                     let _ = SetTextColor(hdc, COLORREF(GetSysColor(COLOR_GRAYTEXT)));
                 }
                 LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize)
