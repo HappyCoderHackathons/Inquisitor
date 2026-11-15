@@ -53,6 +53,8 @@ from pymongo.errors import DuplicateKeyError, PyMongoError
 from werkzeug.exceptions import RequestEntityTooLarge
 
 GAMES = ("aim", "tetris", "typing", "arena")
+# Aim is mouse-only, so its windows never reach the 30 presses training needs. It stays playable but optional.
+REQUIRED_GAMES = ("tetris", "typing", "arena")
 GAME_SECONDS = 150
 # One round covers a game's required time, so its latest round gives enough calibration windows.
 ROUND_MS = GAME_SECONDS * 1000
@@ -623,7 +625,10 @@ def progress(database: Database, onboarding: Document) -> Document:
         "candidate_model_id": onboarding.get("candidate_model_id"),
         "previous_model_id": onboarding.get("previous_model_id"),
         "comparison": onboarding.get("comparison"),
-        "ready_to_train": all(seconds[game] >= GAME_SECONDS for game in GAMES)
+        "required_games": list(REQUIRED_GAMES),
+        # Windows that count toward Train: calibration and training are capped separately.
+        "counted_windows": min(training, MIN_TRAINING_WINDOWS) + min(validation, MIN_VALIDATION_WINDOWS),
+        "ready_to_train": all(seconds[game] >= GAME_SECONDS for game in REQUIRED_GAMES)
         and training >= MIN_TRAINING_WINDOWS and validation >= MIN_VALIDATION_WINDOWS
         and (not generation or bool(holdout)),
         "collection": collection_state(onboarding),

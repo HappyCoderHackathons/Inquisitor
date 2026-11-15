@@ -579,6 +579,16 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(session["valid_window_count"], 5)
         self.assertEqual(session["generation"], 0)
 
+    def test_keyboard_games_alone_reach_training_without_aim(self):
+        device_id, agent = self.pair()
+        for _ in range(2):
+            for game in hosted.REQUIRED_GAMES:
+                _, status = self.play(game, [40] * 5, device_id, agent)
+        self.assertEqual((status["counted_windows"], status["ready_to_train"]), (25, False))
+        _, status = self.play("typing", [40] * 5, device_id, agent)
+        self.assertEqual((status["counted_windows"], status["ready_to_train"]), (30, True))
+        self.assertEqual(status["seconds"]["aim"], 0)
+
     def test_rounds_credit_server_time_and_pick_latest_round_per_game_for_calibration(self):
         device_id, agent = self.pair()
         first, _ = self.play("typing", [40] * 4, device_id, agent)

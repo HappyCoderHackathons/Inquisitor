@@ -29,6 +29,8 @@ type OnboardingStatus = {
   usable_windows: number;
   duration_seconds: number;
   required_windows: number;
+  required_games: string[];
+  counted_windows: number;
 };
 
 const gameNames: Record<string, string> = {
@@ -326,7 +328,8 @@ async function refresh() {
     list.replaceChildren(
       ...Object.entries(status.seconds).map(([game, seconds]) => {
         const item = document.createElement("li");
-        item.textContent = `${gameNames[game] ?? game}: ${Math.min(seconds, status.required_seconds)} / ${status.required_seconds} s`;
+        const optional = status.required_games.includes(game) ? "" : " (optional)";
+        item.textContent = `${gameNames[game] ?? game}${optional}: ${Math.min(seconds, status.required_seconds)} / ${status.required_seconds} s`;
         return item;
       }),
     );
@@ -336,7 +339,7 @@ async function refresh() {
     windows.textContent =
       `Keyboard-active windows: ${status.training_windows} / ${status.required_training_windows} training, ` +
       `${status.validation_windows} / ${status.required_validation_windows} calibration. ` +
-      "If time is complete but windows are short, keep playing Word Sprint or Block Stack.";
+      "Play Block Stack, Word Sprint, and Arena twice, then one more round of any: the latest round of each is kept for calibration.";
   }
   const play = element("playGames");
   if (play) play.hidden = status.state !== "collecting";
@@ -350,11 +353,11 @@ async function refresh() {
   const progressLabel = element("enrollmentProgressLabel");
   if (progressBar) {
     progressBar.max = required;
-    progressBar.value = Math.min(status.usable_windows, required);
-    progressBar.textContent = `${status.usable_windows} of ${required} usable windows`;
+    progressBar.value = Math.min(status.counted_windows, required);
+    progressBar.textContent = `${status.counted_windows} of ${required} windows toward training`;
   }
   if (progressLabel) {
-    progressLabel.textContent = `${status.usable_windows} of ${required} usable windows · ${status.duration_seconds} s recorded`;
+    progressLabel.textContent = `${status.counted_windows} of ${required} windows toward training · ${status.duration_seconds} s recorded`;
   }
   agentOffline = status.agent === "offline";
   const agent = element("agentStatus");
