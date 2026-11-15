@@ -17,7 +17,7 @@
 
 - Follow [docs/architecture.md](docs/architecture.md) for the selected stack and
   component boundaries. It supersedes open options in the original project spec.
-- Windows client: Rust owns native keyboard I/O, local orchestration, and transport.
+- Windows client: Rust owns native keyboard and mouse I/O, local orchestration, and transport.
 - ML: Python 3.13+ with scikit-learn. The current labeled pilot uses logistic
   regression on hold-time variability and press overlap; Isolation Forest artifacts
   remain supported for comparison and rollback. Training and inference run
@@ -40,12 +40,14 @@
 
 ## Input and ML boundaries
 
-- Authentication v1 is keyboard-only. Arcade mouse/controller gameplay does not
-  expand that scope.
+- Authentication v1 uses keyboard and mouse, collected by the arcade for calibration
+  and by the Windows agent for monitoring with matching feature definitions. Mouse
+  collection needs its own opt-in toggle. Controller input does not expand that scope.
 - Require explicit opt-in and visible pause/exit controls. Do not bypass secure
-  desktop protections, lock Windows, or block keyboard input.
+  desktop protections, lock Windows, or block keyboard or mouse input.
 - Key identity may exist transiently in memory only to pair press/release events.
-  Never persist, log, or transmit key identities, typed content, or ordered events.
+  Never persist, log, or transmit key identities, typed content, absolute pointer
+  coordinates, click targets, window titles, or ordered events.
   Only aggregate numeric features may enter model requests or telemetry.
 - Preserve session boundaries for ML evaluation. Label synthetic fixtures and replay
   data clearly; do not claim they establish model accuracy or identity certainty.

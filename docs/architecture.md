@@ -9,14 +9,14 @@ These are implementation decisions, not claims that the integrations already wor
 
 | Area | Decision | Reason and source |
 | --- | --- | --- |
-| Windows agent | Rust, with native Windows keyboard input and a visible pause/exit control | The local client and system I/O are assigned to Rust in [#43](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/43#issuecomment-6882866683) and [#46](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/46#issuecomment-6882888019). |
+| Windows agent | Rust, with native Windows keyboard and mouse input and a visible pause/exit control | The local client and system I/O are assigned to Rust in [#43](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/43#issuecomment-6882866683) and [#46](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/46#issuecomment-6882888019). |
 | ML | Python 3.13+ with scikit-learn; logistic regression for the current labeled pilot | Fit on genuine and consenting second-user examples, then reuse the saved model. Training and inference run on the designated remote host. Isolation Forest artifacts remain compatible for comparison. Deployment identity stays in local configuration. |
 | Website | Flask with Jinja templates and esbuild-bundled TypeScript, building on `Frontend/` | The team chose to stay with Flask. The existing `Frontend/` app already uses this stack, and it shares Python with the ML service. |
 | Backend arrangement | Rust collector, hosted application backend, and private remote Flask ML service | The application backend owns user/device authorization and forwards aggregate windows to the remote model service using a server-only credential. |
 | Database | MongoDB Atlas | [#44](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/44#issuecomment-6882901927) selects Atlas. Use MongoDB collections rather than adding PostgreSQL or Drizzle. |
 | Authentication | Managed SSOJet authentication | [#45](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/45#issuecomment-6882879091) selects SSOJet. Application authorization and device pairing remain application responsibilities. |
 | Demo hosting | Hosted HTTPS application, Windows Rust client, and remote Python training/inference | Model requests use authenticated HTTPS or a protected SSH tunnel. No public model-service port is required. |
-| Input scope | Keyboard-only v1 | Matches the spec's essential input signal and keeps the background collector and model contract focused. Mouse and controller signals are outside the v1 authentication model. |
+| Input scope | Keyboard and mouse in v1 | The team added mouse as a second v1 signal. The arcade collects it during calibration games and the Windows agent collects it during monitoring, using the same aggregate feature definitions. Mouse collection has its own opt-in toggle. Controller signals are outside the v1 authentication model. |
 
 The remote ML arrangement supersedes the initial local-model interpretation of
 #42, #43, and #46. Rust owns system I/O and transport; Python owns model execution
@@ -29,9 +29,10 @@ such rather than presented as an untouched final test.
 ## Component boundaries and data flow
 
 1. The consenting user enables the visible Windows agent. Rust captures transient
-   keyboard timing, pairs press/release events in memory, and produces numeric
-   feature windows. Key identity and ordered input events never enter persistence,
-   logs, model requests, or network messages.
+   keyboard timing and, when mouse collection is enabled, mouse motion and click
+   timing. It pairs events in memory and produces numeric feature windows. Key
+   identity, absolute pointer coordinates, click targets, window titles, and ordered
+   input events never enter persistence, logs, model requests, or network messages.
 2. The application backend forwards authorized aggregate JSON requests to the
    private Flask service. Training and inference run remotely, and versioned model
    artifacts are associated with the authorized account/device. The Rust client
@@ -81,12 +82,13 @@ rather than displaying stale scores as live results.
 
 ## Scope and existing prototype
 
-The arcade games in `Frontend/` remain a prototype collection surface. Their
-local SQLite storage is not the hosted Atlas store, and their mouse and controller
-gameplay does not expand the Windows authentication MVP's scope.
+The arcade games in `Frontend/` are the calibration surface. Their keyboard and
+mouse gameplay produces aggregate calibration windows; controller gameplay does
+not expand the authentication scope. Their local SQLite storage is not the hosted
+Atlas store.
 
-For v1, collect keyboard timing only, require explicit opt-in, retain pause/exit
-controls, and never bypass the Windows secure desktop. An anomaly may request
+For v1, collect keyboard and mouse aggregates only, require explicit opt-in,
+retain pause/exit controls, and never bypass the Windows secure desktop. An anomaly may request
 application-level verification; it must not lock Windows. Enrollment and evaluation
 must preserve session boundaries, and synthetic fixtures must not be presented as
 evidence of model accuracy.
@@ -94,6 +96,11 @@ evidence of model accuracy.
 ## Implementation verification still required
 
 - Prove Rust background input capture and timing quality on the target Windows PC.
+- Define feature-window schema v2 with mouse features. The current schema, published
+  model, and evaluation cover keyboard features only.
+- Verify that browser pointer events and Windows mouse input give comparable
+  aggregates. Their event sources and sampling differ, so arcade calibration windows
+  may not match agent monitoring windows without per-source checks.
 - Verify Python 3.13+ and the locked scikit-learn environment on the model host.
 - Configure SSOJet, validate its login/callback/logout flow, and enforce account
   isolation. [SSOJet's OIDC documentation](https://ssojet.com/docs/en/enterprise-sso/oidc-configuration)
