@@ -30,5 +30,6 @@ where residual risk remains. It complements [architecture decisions](architectur
 
 ## Operator controls
 
-Users can pause the agent, revoke device credentials, delete account data, and request
-enrollment reset. Monitoring retention is configurable on the ML service.
+Users can pause the agent. The ML service and local arcade support account data deletion
+and enrollment reset; the hosted dashboard does not expose deletion or device revocation
+yet. Monitoring retention is configurable on the ML service.

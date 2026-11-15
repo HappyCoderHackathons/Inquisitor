@@ -5,20 +5,20 @@ timing, per-user models, and dashboard alerts.
 
 ## Prerequisites
 
-- Windows 11 for the Rust agent (see `backend/rust/README.md`)
+- Windows 10 or later for the Rust agent (see `backend/rust/README.md`)
 - Python 3.13+ with [uv](https://docs.astral.sh/uv/) for backend and ML tests
-- Node.js 20+ for Better Auth and Frontend bundles
+- Node.js 22.18+ for Better Auth and Frontend bundles
 - MongoDB Atlas URI for hosted onboarding (optional for local arcade-only work)
 
 ## Run components
 
 | Component | Directory | Command |
 | --- | --- | --- |
-| Arcade / local Flask app | `Frontend/` | `uv run --project Frontend python server.py` after `npm install && npm run build` in `Frontend/` |
-| Better Auth (hosted) | `Frontend/auth/` | `npm run start` with `MONGODB_URI` and secrets configured |
+| Arcade / local Flask app | `Frontend/` | `python3 -m pip install -r requirements.txt`, `npm install`, `npm run build`, then `python3 server.py` |
+| Better Auth (hosted) | `Frontend/` | `npm ci`, then `npm run auth` with `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `MONGODB_URI`, and `MONGODB_DB` set |
 | ML service | repo root | `ML_TOKEN_FILE=... ML_DATA_DIR=... ML_ALLOW_TRAINING=0 uv run --project backend python -m flask --app backend.ml.app:create_app run` |
 | Backend tests | repo root | `uv sync --project backend --locked` then `uv run --project backend python -m unittest discover -s tests -v` |
-| Rust agent | `backend/rust/` | `cargo run` (see README there) |
+| Rust agent | `backend/rust/` | `cargo build --release` (see README there) |
 
 Hosted onboarding needs every variable listed in `Frontend/hosted.py` (`ENV`). Local arcade mode
 works without them.

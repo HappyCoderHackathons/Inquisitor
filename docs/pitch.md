@@ -10,7 +10,7 @@ person who enrolled. We only send numeric summaries, not what was typed.
 ## Problem (25 seconds)
 
 Shared PCs and quick unlocks make it easy for someone else to keep working after you step
-away. We want a continuous, consent-based signal—not a lock screen replacement.
+away. We want a continuous, consent-based signal, not a lock screen replacement.
 
 ## How it works (45 seconds)
 
@@ -20,8 +20,8 @@ dashboard highlights sustained deviations.
 
 ## What we can show today (40 seconds)
 
-- Pairing, enrollment, training, and live monitoring on a real Windows client
-- Alerts with plain-language explanations on aggregate features
+- Pairing, arcade enrollment, and remote training on the hosted service
+- Scored monitoring windows with plain-language explanations on aggregate features
 - Documented evaluation with separate sessions and reported sample sizes
 
 ## Limits we state plainly (30 seconds)
@@ -32,5 +32,5 @@ alarms can happen when you change tasks or keyboards.
 
 ## Close (20 seconds)
 
-Inquisitor is a research prototype with visible pause controls and delete-my-data paths.
-We are hardened enough to demo honestly and still learning where the model fails.
+Inquisitor is a research prototype with visible pause controls. Background capture on the
+Windows agent still needs verification, and we are still learning where the model fails.

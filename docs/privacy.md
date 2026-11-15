@@ -17,8 +17,9 @@ Inquisitor collects aggregate timing features, not typed content or pointer targ
 ## Storage and retention
 
 Enrollment windows support model training. Monitoring windows, inference results, and
-alerts follow the configured retention period on the ML service. Users can delete their
-data through dashboard controls backed by `DELETE /me/data`.
+alerts follow the configured retention period on the ML service. `DELETE /me/data` on the
+ML service and the local arcade removes an account's windows, results, alerts, and models.
+The hosted dashboard does not expose deletion yet.
 
 ## Remote processing
 
