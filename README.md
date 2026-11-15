@@ -1,14 +1,38 @@
 # Inquisitor
 
-[Architecture and stack decisions](docs/architecture.md)
+Continuous behavioral authentication prototype: aggregate keyboard and optional mouse
+timing, per-user models, and dashboard alerts.
 
-The local Flask and TypeScript arcade prototype lives in [`Frontend/`](Frontend/).
-From the repository root, run `cd Frontend` before following its
-[run instructions](Frontend/README.md). It serves an introduction at `/` and
-the playable arcade at `/arcade`.
-[Synthetic sample windows and generator instructions](sample-data/README.md)
+## Prerequisites
 
-[Remote ML service and API](backend/README.md)
+- Windows 11 for the Rust agent (see `backend/rust/README.md`)
+- Python 3.13+ with [uv](https://docs.astral.sh/uv/) for backend and ML tests
+- Node.js 20+ for Better Auth and Frontend bundles
+- MongoDB Atlas URI for hosted onboarding (optional for local arcade-only work)
+
+## Run components
+
+| Component | Directory | Command |
+| --- | --- | --- |
+| Arcade / local Flask app | `Frontend/` | `uv run --project Frontend python server.py` after `npm install && npm run build` in `Frontend/` |
+| Better Auth (hosted) | `Frontend/auth/` | `npm run start` with `MONGODB_URI` and secrets configured |
+| ML service | repo root | `ML_TOKEN_FILE=... ML_DATA_DIR=... ML_ALLOW_TRAINING=0 uv run --project backend python -m flask --app backend.ml.app:create_app run` |
+| Backend tests | repo root | `uv sync --project backend --locked` then `uv run --project backend python -m unittest discover -s tests -v` |
+| Rust agent | `backend/rust/` | `cargo run` (see README there) |
+
+Hosted onboarding needs every variable listed in `Frontend/hosted.py` (`ENV`). Local arcade mode
+works without them.
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Threat model](docs/threat-model.md)
+- [Privacy](docs/privacy.md)
+- [Data persistence](docs/data-persistence.md)
+- [Model evaluation](docs/model-evaluation.md)
+- [Demo runbook](docs/demo.md)
+- [Pitch script](docs/pitch.md)
+- [Remote ML API](backend/README.md)
 
 ## Contributing
 
