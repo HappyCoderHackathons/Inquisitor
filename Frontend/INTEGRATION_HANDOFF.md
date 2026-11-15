@@ -16,10 +16,13 @@ so the page does not present placeholder data as live.
   windows that match the v1 contract.
 - `server.py`: `/api/feature-windows` validates and stores windows,
   `/api/feature-windows/export` returns JSONL, and the danger-zone actions
-  require an exact confirmation phrase. `DELETE /api/local-data` with `DELETE`
-  removes arcade samples and feature windows. `POST /api/enrollment/reset` with
-  `RESET` removes enrollment windows only. `POST /api/model/deactivate` with
-  `DEACTIVATE` reports that this prototype stores no model.
+  require an exact confirmation phrase. `DELETE /me/data` with `DELETE` removes
+  arcade samples, feature windows, scores, alerts, and local model files for
+  the local user. `POST /api/enrollment/reset` with `RESET` removes enrollment
+  windows and the active local model. `POST /api/model/deactivate` with
+  `DEACTIVATE` marks that model inactive and keeps its files. `PUT /api/retention`
+  sets the monitoring retention period, and `POST /api/retention/purge` deletes
+  monitoring rows older than that period.
 - `shared/feature-window-v1.schema.json`: shared schema used to validate saved
   windows.
 - `static/dashboard.js`: generated from `frontend/dashboard.ts` by `npm run build`.
@@ -45,10 +48,11 @@ The follow-up implementer should:
    features and result summaries.
 4. Mark stale connections offline and avoid showing old detection results as
    current. A detection is a verification prompt, not proof of identity.
-5. Implement account-scoped deletion on the hosted service, with authorization,
-   confirmation, and an explicit result. The local danger zone deletes or resets
-   rows in this prototype database after a typed phrase. It does not delete an
-   authenticated user's account or a remote model artifact.
+5. Forward the website `DELETE /me/data` action to the model service with the
+   server-side credential. The website already deletes its own rows and local
+   artifact files after a typed phrase. The model service deletes that account's
+   stored windows, scores, alerts, and model artifacts at `DELETE /me/data`.
+   Those two stores are not yet linked, and neither one deletes an SSOJet account.
 6. Add tests for authorization, account/device isolation, message validation,
    disconnect/revocation, stale status, and deletion before presenting the
    integration as complete.

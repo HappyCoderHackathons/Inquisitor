@@ -121,10 +121,10 @@
             <p class="dashboard-footnote danger-note">These actions change this machine's local prototype database. Type the requested phrase before each one runs. They do not delete a Better Auth account or a remote model.</p>
             <div class="data-action">
               <div class="data-action-row">
-                <div><strong>Delete data</strong><p>Removes every arcade round and feature window stored by this local prototype.</p></div>
+                <div><strong>Delete data</strong><p>Removes arcade rounds, feature windows, scores, alerts, and local model files for this prototype.</p></div>
                 <button id="deleteLocalData" class="button danger-button" type="button" data-danger-open aria-controls="deleteLocalDataConfirm" aria-expanded="false">Delete data</button>
               </div>
-              <form id="deleteLocalDataConfirm" class="typed-confirm" hidden data-phrase="DELETE" data-method="DELETE" data-path="/api/local-data" data-success="Local arcade rounds and feature windows deleted.">
+              <form id="deleteLocalDataConfirm" class="typed-confirm" hidden data-phrase="DELETE" data-method="DELETE" data-path="/me/data" data-success="Local arcade rounds, feature windows, scores, alerts, and model files deleted.">
                 <label for="deleteLocalDataInput">Type DELETE to confirm
                   <input id="deleteLocalDataInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
                 </label>
@@ -136,10 +136,10 @@
             </div>
             <div class="data-action">
               <div class="data-action-row">
-                <div><strong>Reset enrollment</strong><p>Removes enrollment feature windows. Monitoring windows and arcade rounds stay.</p></div>
+                <div><strong>Reset enrollment</strong><p>Removes enrollment windows and the active model. Monitoring windows, arcade rounds, and inactive models stay.</p></div>
                 <button id="resetEnrollment" class="button danger-button" type="button" data-danger-open aria-controls="resetEnrollmentConfirm" aria-expanded="false">Reset</button>
               </div>
-              <form id="resetEnrollmentConfirm" class="typed-confirm" hidden data-phrase="RESET" data-method="POST" data-path="/api/enrollment/reset" data-success="Enrollment feature windows removed. Monitoring windows were kept.">
+              <form id="resetEnrollmentConfirm" class="typed-confirm" hidden data-phrase="RESET" data-method="POST" data-path="/api/enrollment/reset" data-success="Enrollment windows and the active model were cleared. Monitoring data was kept.">
                 <label for="resetEnrollmentInput">Type RESET to confirm
                   <input id="resetEnrollmentInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
                 </label>
@@ -151,10 +151,10 @@
             </div>
             <div class="data-action">
               <div class="data-action-row">
-                <div><strong>Deactivate model</strong><p>Confirms that no trained model is stored or left active in this prototype.</p></div>
+                <div><strong>Deactivate model</strong><p>Marks the active local model inactive and keeps saved windows and model files.</p></div>
                 <button id="deactivateModel" class="button danger-button" type="button" data-danger-open aria-controls="deactivateModelConfirm" aria-expanded="false">Deactivate</button>
               </div>
-              <form id="deactivateModelConfirm" class="typed-confirm" hidden data-phrase="DEACTIVATE" data-method="POST" data-path="/api/model/deactivate" data-success="No model is stored in this prototype. Nothing remains active.">
+              <form id="deactivateModelConfirm" class="typed-confirm" hidden data-phrase="DEACTIVATE" data-method="POST" data-path="/api/model/deactivate" data-success="Model deactivated. Saved windows and model files were kept.">
                 <label for="deactivateModelInput">Type DEACTIVATE to confirm
                   <input id="deactivateModelInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
                 </label>

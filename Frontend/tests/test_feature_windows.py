@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import server
 
@@ -127,42 +128,128 @@ class FeatureWindowApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/feature-windows", json=valid_window()).status_code, 201)
         self.assertEqual(self.client.post("/api/feature-windows", json=monitoring).status_code, 201)
 
+    def account(self):
+        self.assertIsNotNone(server.account)
+        return server.account
+
     def test_local_data_delete_leaves_no_rows(self):
         self.save_sample_and_windows()
+        store = self.account()
+        model_id = uuid4().hex
+        other_id = uuid4().hex
+        artifact = store.add_model(server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID, model_id, active=True)
+        (artifact / "model.bin").write_bytes(b"weights")
+        other = store.add_model("other-user", "other-device", other_id, active=True)
+        (other / "model.bin").write_bytes(b"keep")
+        window = valid_window()
+        self.assertTrue(store.save_window(server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID, window))
+        self.assertTrue(store.save_window(
+            "other-user", "other-device", {**window, "device_id": "other-device", "session_id": "other-session"},
+        ))
+        store.save_result(server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID, {"model_id": model_id, "state": "UNUSUAL"})
+        store.save_result("other-user", "other-device", {"model_id": other_id, "state": "UNUSUAL"})
         self.assertEqual(self.stored_counts(), (1, 2, 1, 1))
 
-        rejected = self.client.delete("/api/local-data", json={"confirmation": "delete"})
+        rejected = self.client.delete("/me/data", json={"confirmation": "delete"})
         self.assertEqual(rejected.status_code, 400)
         self.assertEqual(self.stored_counts(), (1, 2, 1, 1))
+        self.assertTrue((artifact / "model.bin").is_file())
 
-        response = self.client.delete("/api/local-data", json={"confirmation": "DELETE"})
+        response = self.client.delete("/me/data", json={"confirmation": "DELETE"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.stored_counts(), (0, 0, 0, 0))
+        self.assertEqual(store.counts(server.LOCAL_USER_ID), {
+            "windows": 0, "enrollment": 0, "monitoring": 0, "inference_results": 0,
+            "alerts": 0, "models": 0, "active_models": 0,
+        })
+        self.assertFalse(artifact.exists())
+        self.assertTrue((other / "model.bin").is_file())
+        self.assertEqual(store.counts("other-user")["windows"], 1)
+        self.assertEqual(store.counts("other-user")["alerts"], 1)
+        self.assertEqual(store.counts("other-user")["models"], 1)
         self.assertEqual(self.client.get("/api/feature-windows").get_json()["windows"], 0)
         self.assertEqual(self.client.get("/api/feature-windows/export").get_data(), b"")
         self.assertEqual(self.client.get("/api/summary").get_json()["samples"], 0)
 
-    def test_reset_removes_only_enrollment_windows(self):
+    def test_reset_removes_enrollment_and_active_model(self):
         self.save_sample_and_windows()
+        store = self.account()
+        inactive = store.add_model(server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID, uuid4().hex, active=False)
+        active = store.add_model(server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID, uuid4().hex, active=True)
+        (inactive / "model.bin").write_bytes(b"old")
+        (active / "model.bin").write_bytes(b"current")
+        monitoring = {**valid_window(), "session_id": "account-monitor", "sequence": 3, "mode": "monitoring"}
+        self.assertTrue(store.save_window(server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID, valid_window()))
+        self.assertTrue(store.save_window(server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID, monitoring))
         rejected = self.client.post("/api/enrollment/reset", json={})
         self.assertEqual(rejected.status_code, 400)
-        self.assertEqual(self.stored_counts(), (1, 2, 1, 1))
+        self.assertTrue((active / "model.bin").is_file())
 
         response = self.client.post("/api/enrollment/reset", json={"confirmation": "RESET"})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["deleted"], 1)
+        self.assertEqual(response.get_json()["deleted"], 2)
         self.assertEqual(self.stored_counts(), (1, 1, 0, 1))
+        self.assertFalse(active.exists())
+        self.assertTrue((inactive / "model.bin").is_file())
+        self.assertEqual(store.counts(server.LOCAL_USER_ID)["enrollment"], 0)
+        self.assertEqual(store.counts(server.LOCAL_USER_ID)["monitoring"], 1)
+        self.assertEqual(store.counts(server.LOCAL_USER_ID)["active_models"], 0)
+        self.assertEqual(store.counts(server.LOCAL_USER_ID)["models"], 1)
 
-    def test_deactivate_requires_phrase_and_keeps_rows(self):
+    def test_deactivate_keeps_rows_and_model_files(self):
         self.save_sample_and_windows()
+        store = self.account()
         rejected = self.client.post("/api/model/deactivate")
         self.assertEqual(rejected.status_code, 400)
         self.assertEqual(self.stored_counts(), (1, 2, 1, 1))
 
+        artifact = store.add_model(server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID, uuid4().hex, active=True)
+        (artifact / "model.bin").write_bytes(b"weights")
         response = self.client.post("/api/model/deactivate", json={"confirmation": "DEACTIVATE"})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {"ok": True, "active": False, "stored": False})
+        self.assertEqual(response.get_json(), {"ok": True, "active": False, "stored": True})
+        self.assertTrue((artifact / "model.bin").is_file())
+        self.assertEqual(store.counts(server.LOCAL_USER_ID)["models"], 1)
+        self.assertEqual(store.counts(server.LOCAL_USER_ID)["active_models"], 0)
         self.assertEqual(self.stored_counts(), (1, 2, 1, 1))
+
+    def test_retention_is_configurable_and_purges_old_monitoring_data(self):
+        self.save_sample_and_windows()
+        store = self.account()
+        old = datetime.now(timezone.utc) - timedelta(hours=2)
+        recent = datetime.now(timezone.utc)
+        with server.db() as conn:
+            conn.execute(
+                "UPDATE feature_windows SET created_at = ? WHERE mode = 'monitoring'", (old.isoformat(),),
+            )
+        self.assertTrue(store.save_window(
+            server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID,
+            {**valid_window(), "session_id": "old-monitor", "sequence": 4, "mode": "monitoring"}, created_at=old,
+        ))
+        self.assertTrue(store.save_window(
+            server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID, valid_window(), created_at=old,
+        ))
+        self.assertTrue(store.save_window(
+            server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID,
+            {**valid_window(), "session_id": "new-monitor", "sequence": 5, "mode": "monitoring"}, created_at=recent,
+        ))
+        store.save_result(
+            server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID,
+            {"model_id": "score", "state": "UNUSUAL"}, created_at=old,
+        )
+        self.assertEqual(self.client.put("/api/retention", json={"monitoring_retention_seconds": 0}).status_code, 422)
+        self.assertEqual(
+            self.client.put("/api/retention", json={"monitoring_retention_seconds": 3600}).status_code, 200,
+        )
+        self.assertEqual(self.client.get("/api/retention").get_json(), {"monitoring_retention_seconds": 3600})
+
+        purged = self.client.post("/api/retention/purge")
+        self.assertEqual(purged.status_code, 200)
+        self.assertEqual(store.counts(server.LOCAL_USER_ID)["monitoring"], 1)
+        self.assertEqual(store.counts(server.LOCAL_USER_ID)["enrollment"], 1)
+        self.assertEqual(store.counts(server.LOCAL_USER_ID)["inference_results"], 0)
+        self.assertEqual(store.counts(server.LOCAL_USER_ID)["alerts"], 0)
+        self.assertEqual(self.stored_counts()[2:], (1, 0))
 
 
 if __name__ == "__main__":

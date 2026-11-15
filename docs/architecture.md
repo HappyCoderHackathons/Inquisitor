@@ -47,8 +47,9 @@ such rather than presented as an untouched final test.
 5. The hosted service stores account identity mappings, devices, enrollment/model
    metadata, and authorized monitoring results in Atlas. Model artifacts remain on
    the remote ML host. Enrollment windows must be transferred for training; consent,
-   retention, and deletion must cover that remote processing. The initial ML service
-   does not persist enrollment request bodies.
+   retention, and deletion must cover that remote processing. The model service
+   stores windows submitted to `POST /windows` so reset and deletion can remove
+   them. A training request is not kept as a raw body beyond the saved model artifact.
 
 The outbound connection is the implementation choice for #43's server-to-local
 status channel. The hosted server sends messages through the agent's established
