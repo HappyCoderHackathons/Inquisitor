@@ -22,10 +22,10 @@ A local Flask + TypeScript arcade prototype for collecting opt-in behavioral inp
 
 - The home page (`/`) introduces the prototype, its four games, and its privacy scope.
 - The arcade (`/arcade`) contains the playable games and recent round summaries.
-- The user dashboard (`/dashboard`) shows the planned account, model, and agent status areas. SSOJet and agent/model connections are not integrated yet.
+- The user dashboard (`/dashboard`) shows the planned account, model, and agent status areas. Its profile and agent/model status connections are not integrated yet. Sign in and pair devices at `/onboarding`.
 - Use the navigation on each page to move between home, activities, and the dashboard.
 
-See [INTEGRATION_HANDOFF.md](INTEGRATION_HANDOFF.md) for dashboard code locations and the remaining authenticated WebSocket, SSOJet, model-status, and account-deletion work.
+See [INTEGRATION_HANDOFF.md](INTEGRATION_HANDOFF.md) for dashboard code locations and the remaining authenticated WebSocket, profile, model-status, and account-deletion work.
 
 ## Collecting local feature windows
 
@@ -39,16 +39,34 @@ Xbox and Nintendo controllers work through the browser Gamepad API. Connect the 
 
 ## Hosted onboarding
 
-When all of these environment variables are set, `server.py` also serves SSOJet sign-in, agent pairing, and onboarding training backed by MongoDB Atlas. If none are set, the app stays local-only. If only some are set, startup fails.
+When all Flask variables below are set, `server.py` also serves Better Auth sign-in, agent pairing, and onboarding training backed by MongoDB Atlas. If none are set, the app stays local-only. If only some are set, startup fails.
 
 | Variable | Purpose |
 | --- | --- |
-| `SSOJET_AUTHORITY` | SSOJet base URL; `/.well-known/openid-configuration` is appended |
-| `SSOJET_CLIENT_ID`, `SSOJET_CLIENT_SECRET` | SSOJet regular web application credentials |
-| `SSOJET_REDIRECT_URI` | Must exactly match the SSOJet callback, e.g. `https://<host>/auth/callback` |
-| `SESSION_SECRET` | Random string that signs session cookies |
+| `BETTER_AUTH_URL` | Public Flask origin, e.g. `http://localhost:5000`; use HTTPS when hosted |
 | `MONGODB_URI`, `MONGODB_DB` | Atlas connection string and database name |
 | `ML_SERVICE_URL`, `ML_TOKEN_FILE` | Remote ML service URL and the file holding its bearer token |
+
+Better Auth runs as a separate Node 22.18+ process. In `Frontend/`, run `npm ci`, then
+set `BETTER_AUTH_SECRET` to a random secret of at least 32 characters and run `npm run auth`.
+That command loads the root `.env` if present; process environment variables take precedence.
+The auth process also requires `BETTER_AUTH_URL`, `MONGODB_URI`, and `MONGODB_DB`.
+Flask needs its variables exported into its process environment as before; it does not load `.env` itself.
+Run both processes on the same host. Only Flask should be publicly reachable;
+the auth service binds to `127.0.0.1:3001` and Flask forwards the required `/api/auth/` routes.
+Use the exact same hostname in the browser and `BETTER_AUTH_URL`, including during local development.
+
+At `/onboarding`, choose **Create an account** for a new email/password account or
+**Sign in** for an existing one. Better Auth handles password hashing. No SMTP sender,
+enterprise connection, or hosted login dashboard is required. Social SSO is not configured.
+Email ownership is not verified and password reset is unavailable until email delivery is added.
+Do not use email addresses as verified organization membership or link legacy accounts by email.
+
+SSOJet variables and Authlib are no longer used. Existing provider sessions do not carry over.
+No old data is deleted: Better Auth uses `auth_user`, `auth_account`, `auth_session`,
+`auth_verification`, and its rate-limit collection. Application identities use a `better-auth:`
+prefix, so old provider IDs cannot accidentally grant access to existing devices or models.
+Before migrating real accounts, explicitly map verified identities and their account-scoped data.
 
 The user signs in at `/onboarding` and gets a single-use pairing code that expires after 10 minutes. The agent redeems it at `POST /api/agent/pair` and receives a device token; only the token's SHA-256 hash is stored.
 
@@ -58,9 +76,12 @@ The **Train my model** button turns on once each of the four games has 150 secon
 
 After training, the agent sends `monitoring` windows to the same upload endpoint. Each is scored by the active model, and the result is stored in `monitoring_windows`. Monitoring windows before training, and enrollment windows after it, return 409.
 
-The session cookie holds only a random ID. Its hash is stored in `sessions` with a 12-hour TTL, and logout deletes it. Requests are rate-limited, returning 429, at 30 per minute per IP for login, 10 per 10 minutes per IP for pairing attempts, and 60 per minute per device for window uploads. Behind a reverse proxy, add Werkzeug's `ProxyFix` so limits use the client address.
+Better Auth validates its signed HttpOnly session cookie against MongoDB on each authenticated request. Sessions expire after 12 hours without refresh; sign-out revokes the server-side session. Flask forwards every Set-Cookie header from authentication responses. Authentication and pairing APIs reject cross-site JSON requests. Requests are rate-limited, returning 429, at 30 per minute per IP for auth posts, 10 per 10 minutes per IP for pairing attempts, and 60 per minute per device for window uploads. Better Auth also applies its own database-backed endpoint limits. Behind a reverse proxy, configure Werkzeug's `ProxyFix` for the exact trusted proxy count so limits use the client address; never trust arbitrary forwarded IP headers.
 
-Store Atlas and SSOJet credentials only in deployment configuration.
+Store Atlas credentials and `BETTER_AUTH_SECRET` only in deployment configuration. Run
+`npm run test:auth` for Better Auth credential/session checks and the existing Python
+unittest suite for Flask's auth boundary and account/device isolation. Auth tests use
+the in-memory adapter; live Atlas connectivity still needs a deployment check.
 
 ## Privacy and current scope
 

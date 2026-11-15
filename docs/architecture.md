@@ -14,7 +14,7 @@ These are implementation decisions, not claims that the integrations already wor
 | Website | Flask with Jinja templates and esbuild-bundled TypeScript, building on `Frontend/` | The team chose to stay with Flask. The existing `Frontend/` app already uses this stack, and it shares Python with the ML service. |
 | Backend arrangement | Rust collector, hosted application backend, and private remote Flask ML service | The application backend owns user/device authorization and forwards aggregate windows to the remote model service using a server-only credential. |
 | Database | MongoDB Atlas | [#44](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/44#issuecomment-6882901927) selects Atlas. Use MongoDB collections rather than adding PostgreSQL or Drizzle. |
-| Authentication | Managed SSOJet authentication | [#45](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/45#issuecomment-6882879091) selects SSOJet. Application authorization and device pairing remain application responsibilities. |
+| Authentication | Better Auth email/password accounts and MongoDB sessions | Replaces the original provider decision in #45 at the user's request. A loopback Node service owns passwords and sessions; Flask retains account/device authorization and pairing. |
 | Demo hosting | Hosted HTTPS application, Windows Rust client, and remote Python training/inference | Model requests use authenticated HTTPS or a protected SSH tunnel. No public model-service port is required. |
 | Input scope | Keyboard and mouse in v1 | The team added mouse as a second v1 signal. The arcade collects it during calibration games and the Windows agent collects it during monitoring, using the same aggregate feature definitions. Mouse collection has its own opt-in toggle. Controller signals are outside the v1 authentication model. |
 
@@ -37,7 +37,7 @@ such rather than presented as an untouched final test.
    private Flask service. Training and inference run remotely, and versioned model
    artifacts are associated with the authorized account/device. The Rust client
    does not launch Python or hold the model-service credential.
-3. The user signs into the hosted Flask app through SSOJet and pairs the agent
+3. The user signs into the hosted Flask app through Better Auth and pairs the agent
    using a short-lived, single-use code. The agent receives a revocable,
    device-scoped credential; it never receives the web password.
 4. The agent opens an authenticated outbound WSS connection to the hosted relay.
@@ -74,9 +74,12 @@ rather than displaying stale scores as live results.
   the selected hosted database. PostgreSQL would follow the usual project
   preference, but the explicit Atlas decision takes precedence. Atlas credentials
   belong only on the hosted service, never in the browser or desktop client.
-- Framework-native accounts would require local password storage and password
-  lifecycle implementation. SSOJet owns authentication instead. Use its supported
-  OIDC flow and verify the configured integration; do not invent password hashing.
+- Better Auth owns password hashing and account/session persistence in separate
+  MongoDB collections. Flask forwards `/api/auth/` requests to a Node service on
+  `127.0.0.1:3001` and validates cookies through its `get-session` endpoint.
+  Keep both processes on the same host. Auth cookies remain HttpOnly and use Secure
+  when `BETTER_AUTH_URL` is HTTPS. Email verification, password recovery, and social
+  providers require additional configuration and are not enabled.
 - A laptop-only demo would reduce hosted infrastructure but diverge from #46.
   An aggregate-only replay may be prepared as a clearly labeled fallback.
 
@@ -102,9 +105,10 @@ evidence of model accuracy.
   aggregates. Their event sources and sampling differ, so arcade calibration windows
   may not match agent monitoring windows without per-source checks.
 - Verify Python 3.13+ and the locked scikit-learn environment on the model host.
-- Configure SSOJet, validate its login/callback/logout flow, and enforce account
-  isolation. [SSOJet's OIDC documentation](https://ssojet.com/docs/en/enterprise-sso/oidc-configuration)
-  describes issuer configuration and redirect URIs; no tenant setup has been tested here.
+- Configure Better Auth's public origin and secret, start its Node service, and
+  validate sign-up/sign-in/sign-out against Atlas with account isolation. Existing
+  provider accounts are not automatically linked by email or migrated. Better Auth
+  IDs are namespaced in application records to avoid identity collisions.
 - Provision Atlas and test the hosted service connection using TLS and restricted
   database credentials. [Atlas connection documentation](https://www.mongodb.com/docs/atlas/driver-connection/)
   requires TLS-capable clients. No promotional credit or existing cluster is assumed.

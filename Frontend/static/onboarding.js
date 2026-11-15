@@ -14,6 +14,55 @@
     failed: "Training failed."
   };
   var element = (id) => document.getElementById(id);
+  var authForm = element("authForm");
+  var signingUp = false;
+  element("authToggle")?.addEventListener("click", () => {
+    signingUp = !signingUp;
+    const name = element("authName");
+    element("authNameLabel").hidden = !signingUp;
+    name.required = signingUp;
+    element("authPassword").autocomplete = signingUp ? "new-password" : "current-password";
+    element("authSubmit").textContent = signingUp ? "Create account" : "Sign in";
+    element("authToggle").textContent = signingUp ? "I already have an account" : "Create an account";
+    element("authStatus").textContent = "";
+  });
+  async function authenticate(path, body, button) {
+    const status = element("authStatus");
+    button.disabled = true;
+    status.classList.remove("error");
+    status.textContent = "Please wait.";
+    try {
+      const response = await fetch(`/api/auth/${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        status.classList.add("error");
+        status.textContent = response.status === 429 ? "Too many attempts. Wait a minute and try again." : response.status >= 500 ? "Sign-in is unavailable. Try again later." : "Could not complete the request. Check your details and try again.";
+        return;
+      }
+      window.location.assign("/onboarding");
+    } catch {
+      status.classList.add("error");
+      status.textContent = "Could not connect. Check your connection and try again.";
+    } finally {
+      button.disabled = false;
+    }
+  }
+  authForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const fields = new FormData(authForm);
+    const body = { email: String(fields.get("email")), password: String(fields.get("password")) };
+    void authenticate(
+      signingUp ? "sign-up/email" : "sign-in/email",
+      signingUp ? { ...body, name: String(fields.get("name")) } : body,
+      element("authSubmit")
+    );
+  });
+  element("signOut")?.addEventListener("click", () => {
+    void authenticate("sign-out", {}, element("signOut"));
+  });
   var countdownId = 0;
   var currentDevice = null;
   var deviceBeforeCode = null;
