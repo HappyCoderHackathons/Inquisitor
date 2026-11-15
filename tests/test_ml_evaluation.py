@@ -8,7 +8,12 @@ from unittest.mock import patch
 import numpy as np
 
 from backend.ml.evaluate import evaluate, main, render_report
-from backend.ml.evaluation import MedianMAD, split_sessions, switch_latency, window_metrics
+from backend.ml.evaluation import (
+    MedianMAD,
+    split_sessions,
+    switch_latency,
+    window_metrics,
+)
 from backend.ml.model import FEATURE_NAMES
 from scripts.generate_sample_windows import generate_windows
 
