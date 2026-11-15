@@ -25,11 +25,10 @@ The larger stream was selected explicitly to avoid counting shadow reports twice
 Convert locally, passing the paired or privately configured PC identity:
 
 ```powershell
-uv run --project backend --locked python -m backend.ml.tray_csv capture.csv --device-id AUTHORIZED_DEVICE --keyboard-source PRIMARY_SOURCE --mouse --mode enrollment --output .private/windows.jsonl
+uv run --project backend --locked python -m backend.ml.tray_csv capture.csv --device-id AUTHORIZED_DEVICE --keyboard-source PRIMARY_SOURCE --mode enrollment --output .private/windows.jsonl
 ```
 
-`--mouse` is a separate opt-in. Without it the converter retains schema-v3
-keyboard-only behavior. Multiple keyboards require explicit source selection;
+The converter always produces schema-v4 keyboard and mouse windows. Multiple keyboards require explicit source selection;
 missing selected sources, multiple mouse sources, malformed rows, and clock
 resets fail rather than being merged silently. Choose the raw-input source for
 each real recording, not a source inferred from the person's label.

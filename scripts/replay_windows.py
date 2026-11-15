@@ -50,6 +50,9 @@ def main() -> None:
     windows = [json.loads(line) for line in args.windows.read_text(encoding="utf-8").splitlines() if line.strip()]
     if not windows:
         parser.error("no windows to replay")
+    if any(window.get("schema_version") != 4 for window in windows):
+        # The agent endpoint accepts schema v4 only; tray_csv.py converts a tray capture to v4.
+        parser.error("every window must be schema v4; convert tray captures with backend.ml.tray_csv")
     session_id = f"replay-{uuid4().hex[:12]}"
     print(f"{LABEL}: session {session_id}, {len(windows)} windows at {args.speed}x", flush=True)
     for sequence, window in enumerate(windows):

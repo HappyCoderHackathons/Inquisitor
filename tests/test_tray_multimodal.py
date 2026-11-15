@@ -36,18 +36,16 @@ def capture(scale: int = 1, shadow: bool = False) -> str:
 
 
 class TrayMultimodalTests(unittest.TestCase):
-    def test_primary_keyboard_is_explicit_and_mouse_has_separate_opt_in(self) -> None:
+    def test_primary_keyboard_is_explicit_and_windows_are_always_v4(self) -> None:
         with self.assertRaises(ValueError):
             csv_windows(io.StringIO(capture(shadow=True)), "pc", "session")
         window = csv_windows(io.StringIO(capture(shadow=True)), "pc", "session",
-                             keyboard_source="primary", track_mouse=True)[0]
+                             keyboard_source="primary")[0]
         self.assertEqual(window["schema_version"], 4)
         self.assertEqual(window["features"]["key_count"], 60)
         self.assertEqual(window["features"]["hold_sample_count"], 60)
         self.assertEqual(window["features"]["mouse_click_count"], 30)
         validate_window(window)
-        keyboard_only = csv_windows(io.StringIO(capture()), "pc", "session")[0]
-        self.assertEqual(keyboard_only["schema_version"], 3)
         with self.assertRaises(ValueError):
             csv_windows(io.StringIO(capture()), "pc", "session", keyboard_source="absent")
 
@@ -63,19 +61,25 @@ class TrayMultimodalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             csv_windows(io.StringIO(mixed.replace(",pen,", ",webcam,")), "pc", "session")
 
+    def test_converter_matches_the_shared_fixture_the_rust_tray_is_checked_against(self) -> None:
+        # The tray builds the same windows live (backend/rust/src/features.rs); both sides test this fixture.
+        fixtures = Path(__file__).parents[1] / "shared" / "fixtures"
+        text = (fixtures / "tray-capture.csv").read_text(encoding="utf-8")
+        expected = json.loads((fixtures / "tray-capture.v4.json").read_text(encoding="utf-8"))
+        self.assertEqual(csv_windows(io.StringIO(text), "fixture-pc", "fixture-session"), expected)
+
     def test_idle_stretches_produce_no_empty_windows(self) -> None:
         lines = capture().splitlines()
         later = [f"{iso},{float(time) + 300},{rest}" for iso, time, rest in (row.split(",", 2) for row in lines[1:])]
         idle = "\n".join([*lines, *later])
-        for track_mouse in (False, True):
-            windows = csv_windows(io.StringIO(idle), "pc", "session", track_mouse=track_mouse)
-            # Windows 2 to 9 cover the five idle minutes and are skipped, not zero-filled.
-            self.assertEqual([window["sequence"] for window in windows], [0, 1, 10])
-            self.assertEqual(windows[2]["started_at"], "2026-01-01T00:05:00+00:00")
-            self.assertTrue(all(window["features"]["key_count"] for window in windows))
+        windows = csv_windows(io.StringIO(idle), "pc", "session")
+        # Windows 2 to 9 cover the five idle minutes and are skipped, not zero-filled.
+        self.assertEqual([window["sequence"] for window in windows], [0, 1, 10])
+        self.assertEqual(windows[2]["started_at"], "2026-01-01T00:05:00+00:00")
+        self.assertTrue(all(window["features"]["key_count"] for window in windows))
 
     def test_model_inputs_do_not_change_with_uniform_mouse_resolution_scaling(self) -> None:
-        windows = [csv_windows(io.StringIO(capture(scale)), "pc", "session", track_mouse=True)[0] for scale in (1, 10)]
+        windows = [csv_windows(io.StringIO(capture(scale)), "pc", "session")[0] for scale in (1, 10)]
         matrix = labeled_features(windows, "tray-multimodal")
         self.assertEqual(matrix.shape, (2, 13))
         np.testing.assert_allclose(matrix[0], matrix[1], rtol=1e-12, atol=1e-12)
@@ -88,7 +92,7 @@ class TrayMultimodalTests(unittest.TestCase):
     def test_one_model_serves_two_allowed_devices_and_keeps_other_accounts_out(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
-            template = csv_windows(io.StringIO(capture()), "pc-1", "session", "enrollment", track_mouse=True)[0]
+            template = csv_windows(io.StringIO(capture()), "pc-1", "session", "enrollment")[0]
             groups = [[], []]
             for label, target in enumerate(groups):
                 for device in ("pc-1", "pc-2"):
