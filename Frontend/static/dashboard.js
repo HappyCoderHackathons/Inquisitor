@@ -657,6 +657,17 @@
       const label = alert.acknowledgement === "expected" ? "Marked expected." : alert.acknowledgement === "unexpected" ? "Marked unexpected." : "";
       body.textContent = `${started}. ${duration}. ${alert.explanation} ${label}`.trim();
       item.append(title, body);
+      if (alert.investigation.length > 0) {
+        const heading = document.createElement("p");
+        heading.textContent = "Things to check (suggested by Gemini):";
+        const hints = document.createElement("ul");
+        for (const hint of alert.investigation) {
+          const entry = document.createElement("li");
+          entry.textContent = hint;
+          hints.append(entry);
+        }
+        item.append(heading, hints);
+      }
       if (!alert.acknowledgement) {
         const actions = document.createElement("div");
         actions.className = "alert-actions";

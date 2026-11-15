@@ -111,7 +111,8 @@ jobs:
     name: Run on a clean Windows image
     # Windows Server Core ships without the Visual C++ runtime, so this proves the exe needs only system DLLs.
     # It pulls a multi-GB image, so it runs for releases and manual dispatch only.
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+    # In a called workflow, event_name is the caller's (push), so match the release tag instead.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-2022
     needs: release
     steps:

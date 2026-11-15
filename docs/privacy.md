@@ -50,6 +50,12 @@ Training and inference run on the designated remote ML host. Enrollment windows 
 user's device only after explicit onboarding. Credentials for that host never ship in the
 client binary.
 
+When `GEMINI_API_KEY` is set, opening an alert sends Google's Gemini API the recent window states
+(`NORMAL`/`UNUSUAL`), the latest score and threshold, and the top feature names with their
+contributions and baseline deviations, and stores the suggested checks on the alert. No windows,
+account or device IDs, timestamps, or input content are sent. The suggestions are generic prompts
+for the account owner, not evidence about who used the device.
+
 ## Automated privacy scanning
 
 [`scripts/scan_privacy_payloads.py`](../scripts/scan_privacy_payloads.py) checks supplied JSON,
