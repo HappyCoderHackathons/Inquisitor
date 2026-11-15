@@ -13,14 +13,10 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     /// Directory where capture CSVs land.
     pub data_dir: PathBuf,
-    /// Allow raw input from devices the user has not explicitly approved.
-    /// `false` by default per the user's requested behaviour.
-    pub allow_new_connections: bool,
-    /// Device system paths captured at first run. Any input from a path in this
-    /// set is accepted; paths outside it need `allow_new_connections`.
+    /// Device system paths the user has whitelisted. Only these devices produce
+    /// rows; everything else is dropped. Starts empty on first run so no device
+    /// captures until the user ticks it (or Allow all) from the tray.
     pub allowed_devices: HashSet<String>,
-    /// Devices the user has explicitly silenced. Overrides `allowed_devices`.
-    pub ignored_devices: HashSet<String>,
 }
 
 impl Config {
@@ -40,9 +36,7 @@ impl Config {
     pub fn defaults() -> Self {
         Self {
             data_dir: default_app_dir(),
-            allow_new_connections: false,
             allowed_devices: HashSet::new(),
-            ignored_devices: HashSet::new(),
         }
     }
 
@@ -61,13 +55,12 @@ impl Config {
             let val = line[eq + 1..].trim();
             match key {
                 "data_dir" => cfg.data_dir = PathBuf::from(val),
-                "allow_new_connections" => cfg.allow_new_connections = val == "true",
                 "allowed_device" => {
                     cfg.allowed_devices.insert(val.to_string());
                 }
-                "ignored_device" => {
-                    cfg.ignored_devices.insert(val.to_string());
-                }
+                // `allow_new_connections` and `ignored_device` from older configs
+                // are silently dropped: the menu now models everything through
+                // `allowed_devices` only.
                 _ => {}
             }
         }
@@ -84,12 +77,8 @@ impl Config {
         let mut f = fs::File::create(&path)?;
         writeln!(f, "# Inquisitor config")?;
         writeln!(f, "data_dir={}", self.data_dir.display())?;
-        writeln!(f, "allow_new_connections={}", self.allow_new_connections)?;
         for d in &self.allowed_devices {
             writeln!(f, "allowed_device={d}")?;
-        }
-        for d in &self.ignored_devices {
-            writeln!(f, "ignored_device={d}")?;
         }
         Ok(())
     }
