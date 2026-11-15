@@ -5,9 +5,11 @@ import json
 import math
 import os
 import sqlite3
+import sys
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import cast
+from typing import Iterator, cast
 
 from flask import Flask, jsonify, render_template, request
 from jsonschema import Draft202012Validator, FormatChecker
@@ -15,6 +17,12 @@ from jsonschema import Draft202012Validator, FormatChecker
 import hosted
 
 ROOT = Path(__file__).parent
+if str(ROOT.parent) not in sys.path:
+    sys.path.insert(0, str(ROOT.parent))
+from backend.account.store import AccountStore, retention_seconds_from_env
+
+LOCAL_USER_ID = "local-user"
+LOCAL_DEVICE_ID = "local-device"
 DB_PATH = Path(os.environ.get("INPUTPRINT_DB", ROOT / "inputprint.sqlite3"))
 FEATURE_VALIDATORS = {
     version: Draft202012Validator(
@@ -24,15 +32,32 @@ FEATURE_VALIDATORS = {
     for version in (1, 2)
 }
 app = Flask(__name__, static_folder="static", template_folder="templates")
+account: AccountStore | None = None
 
 
-def db():
+@contextmanager
+def db() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def open_account() -> AccountStore:
+    global account
+    artifact_root = Path(os.environ.get("INQUISITOR_ARTIFACT_DIR", DB_PATH.parent / "account-artifacts"))
+    account = AccountStore(DB_PATH.parent / "account.sqlite3", artifact_root, retention_seconds_from_env())
+    return account
 
 
 def initialize():
+    open_account()
     with db() as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS samples (
             id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, game TEXT NOT NULL,
@@ -184,12 +209,90 @@ def delete_samples():
     return jsonify(ok=True)
 
 
-@app.delete("/api/local-data")
-def delete_local_data():
+def confirmation_rejected(phrase: str):
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {"confirmation"} or data.get("confirmation") != phrase:
+        return jsonify(error=f"Type {phrase} to confirm this action"), 400
+    return None
+
+
+def current_account() -> AccountStore:
+    return account if account is not None else open_account()
+
+
+def erase_local_account() -> None:
     with db() as conn:
         conn.execute("DELETE FROM samples")
         conn.execute("DELETE FROM feature_windows")
+    current_account().delete_user(LOCAL_USER_ID)
+
+
+def purge_monitoring_data(now: datetime | None = None) -> dict[str, int]:
+    moment = now or datetime.now(timezone.utc)
+    store = current_account()
+    removed = store.purge_monitoring(moment)
+    cutoff = moment - timedelta(seconds=store.retention_seconds())
+    with db() as conn:
+        rows = conn.execute("SELECT id, created_at FROM feature_windows WHERE mode = 'monitoring'").fetchall()
+        stale = [row["id"] for row in rows if datetime.fromisoformat(row["created_at"]) < cutoff]
+        if stale:
+            conn.executemany("DELETE FROM feature_windows WHERE id = ?", [(row_id,) for row_id in stale])
+        removed["collector_windows"] = len(stale)
+    return removed
+
+
+@app.delete("/api/local-data")
+@app.delete("/me/data")
+def delete_local_data():
+    rejected = confirmation_rejected("DELETE")
+    if rejected:
+        return rejected
+    erase_local_account()
     return jsonify(ok=True)
+
+
+@app.post("/api/enrollment/reset")
+def reset_enrollment():
+    rejected = confirmation_rejected("RESET")
+    if rejected:
+        return rejected
+    with db() as conn:
+        deleted = conn.execute("DELETE FROM feature_windows WHERE mode = 'enrollment'").rowcount
+    deleted += current_account().reset_enrollment(LOCAL_USER_ID, LOCAL_DEVICE_ID)
+    return jsonify(ok=True, deleted=deleted)
+
+
+@app.post("/api/model/deactivate")
+def deactivate_model():
+    rejected = confirmation_rejected("DEACTIVATE")
+    if rejected:
+        return rejected
+    stored = current_account().deactivate(LOCAL_USER_ID, LOCAL_DEVICE_ID)
+    return jsonify(ok=True, active=False, stored=stored)
+
+
+@app.get("/api/retention")
+def get_retention():
+    return jsonify(monitoring_retention_seconds=current_account().retention_seconds())
+
+
+@app.put("/api/retention")
+def put_retention():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or set(data) != {"monitoring_retention_seconds"}:
+        return jsonify(error="monitoring_retention_seconds must be a positive integer"), 422
+    try:
+        seconds = current_account().set_retention(data["monitoring_retention_seconds"])
+    except ValueError as error:
+        return jsonify(error=str(error)), 422
+    return jsonify(monitoring_retention_seconds=seconds)
+
+
+@app.post("/api/retention/purge")
+def purge_retention():
+    if request.get_json(silent=True) not in (None, {}):
+        return jsonify(error="purge takes no fields"), 422
+    return jsonify(purge_monitoring_data())
 
 
 def onboarding_window_error(window: dict[str, object]) -> str | None:

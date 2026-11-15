@@ -365,8 +365,42 @@ class ModelStore:
     def delete(self, model_id: str, user_id: str, device_id: str) -> None:
         with self._lock:
             self.metadata(model_id, user_id, device_id)
-            shutil.rmtree(self._path(model_id))
-            self._loaded.pop(model_id, None)
+            self._remove_model(model_id, user_id, device_id)
+
+    def deactivate(self, user_id: str, device_id: str) -> bool:
+        with self._lock:
             active = self._active_path(user_id, device_id)
-            if active.exists() and json.loads(active.read_text(encoding="utf-8"))["model_id"] == model_id:
+            if not active.exists():
+                return False
+            active.unlink()
+            return True
+
+    def delete_user(self, user_id: str) -> list[str]:
+        with self._lock:
+            owned: list[tuple[str, str]] = []
+            if self.directory.exists():
+                for child in self.directory.iterdir():
+                    if not child.is_dir() or not (child / "metadata.json").is_file():
+                        continue
+                    try:
+                        if UUID(child.name).hex != child.name:
+                            continue
+                    except ValueError:
+                        continue
+                    metadata = json.loads((child / "metadata.json").read_text(encoding="utf-8"))
+                    if metadata.get("user_id") == user_id and isinstance(metadata.get("device_id"), str):
+                        owned.append((child.name, cast(str, metadata["device_id"])))
+            for model_id, device_id in owned:
+                self._remove_model(model_id, user_id, device_id)
+            return [model_id for model_id, _device_id in owned]
+
+    def _remove_model(self, model_id: str, user_id: str, device_id: str) -> None:
+        path = self._path(model_id)
+        if path.exists():
+            shutil.rmtree(path)
+        self._loaded.pop(model_id, None)
+        active = self._active_path(user_id, device_id)
+        if active.exists():
+            recorded = json.loads(active.read_text(encoding="utf-8"))
+            if recorded.get("model_id") == model_id:
                 active.unlink()
