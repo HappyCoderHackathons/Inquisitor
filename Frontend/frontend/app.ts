@@ -245,7 +245,12 @@ async function checkOnboarding() {
     const response = await fetch("/api/onboarding");
     if (response.status === 404) return;
     if (!response.ok) throw new Error(`Could not check setup (${response.status}).`);
-    onboardingActive = ((await response.json()) as { state: string }).state === "collecting";
+    const status = (await response.json()) as { state: string; ready_to_train: boolean };
+    onboardingActive = status.state === "collecting";
+    // Once Train is possible, offer the way back to setup.
+    document.querySelectorAll<HTMLElement>(".back-to-setup").forEach((link) => {
+      link.hidden = !(onboardingActive && status.ready_to_train);
+    });
   } catch (error) {
     serverWarning =
       error instanceof Error && error.message.startsWith("Could not check setup")
@@ -757,6 +762,7 @@ function endArena() {
 }
 function saveSample() {
   reportRound("/api/onboarding/rounds/current/finish");
+  onboardingQueue = onboardingQueue.then(checkOnboarding);
   const avg = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
   const mean = avg(intervals),
     std = Math.sqrt(avg(intervals.map((x) => (x - mean) ** 2)));
