@@ -28,7 +28,7 @@ use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::{
     GetRawInputData, GetRawInputDeviceInfoW, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER, RAWKEYBOARD,
-    RAWMOUSE, RID_INPUT, RIDEV_INPUTSINK, RIDI_DEVICENAME, RIDI_PREPARSEDDATA,
+    RAWMOUSE, RID_INPUT, RIDEV_INPUTSINK, RIDEV_PAGEONLY, RIDI_DEVICENAME, RIDI_PREPARSEDDATA,
     RegisterRawInputDevices,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -68,6 +68,23 @@ struct HidCaps {
     data: Vec<u8>,
     button_caps: Vec<HIDP_BUTTON_CAPS>,
     value_caps: Vec<HIDP_VALUE_CAPS>,
+    /// CSV `io_type` for this device, derived from its top-level HID usage.
+    io_type: &'static str,
+}
+
+/// CSV `io_type` for a HID device's top-level usage. Controllers share one label;
+/// digitizers and media keys get their own so rows are easy to filter.
+fn hid_io_type(usage_page: u16, usage: u16) -> &'static str {
+    match (usage_page, usage) {
+        (0x01, 0x04 | 0x05 | 0x08) => "gamepad",
+        (0x01, 0x07) => "keypad",
+        (0x0C, _) => "consumer",
+        (0x0D, 0x02) => "pen",
+        (0x0D, 0x04) => "touchscreen",
+        (0x0D, 0x05) => "touchpad",
+        (0x0D, _) => "digitizer",
+        _ => "hid",
+    }
 }
 
 /// Previous HID state used for change detection.
@@ -442,6 +459,7 @@ impl Capture {
             return;
         }
 
+        let io_type = self.hid_caps[&key].io_type;
         let base = hid.bRawData.as_ptr() as *mut u8;
         for i in 0..count {
             let report = unsafe { std::slice::from_raw_parts_mut(base.add(i * size), size) };
@@ -451,12 +469,12 @@ impl Capture {
                 collect_hid_events(caps, prev, report)
             };
             for ev in events {
-                self.emit_hid_event(&device_id, ev);
+                self.emit_hid_event(io_type, &device_id, ev);
             }
         }
     }
 
-    fn emit_hid_event(&mut self, device_id: &str, ev: HidEvent) {
+    fn emit_hid_event(&mut self, io_type: &str, device_id: &str, ev: HidEvent) {
         let now = Instant::now();
         match ev {
             HidEvent::ButtonPress(control) => {
@@ -464,7 +482,7 @@ impl Capture {
                 let flight = state.last_release.map(|t| now.duration_since(t).as_millis());
                 state.press_times.insert(control.clone(), now);
                 self.write_row(
-                    "gamepad", device_id, "press", &control, None, flight, None, None, None,
+                    io_type, device_id, "press", &control, None, flight, None, None, None,
                 );
             }
             HidEvent::ButtonRelease(control) => {
@@ -475,12 +493,12 @@ impl Capture {
                     .map(|t| now.duration_since(t).as_millis());
                 state.last_release = Some(now);
                 self.write_row(
-                    "gamepad", device_id, "release", &control, hold, None, None, None, None,
+                    io_type, device_id, "release", &control, hold, None, None, None, None,
                 );
             }
             HidEvent::Value { control, value } => {
                 self.write_row(
-                    "gamepad",
+                    io_type,
                     device_id,
                     "axis",
                     &control,
@@ -542,6 +560,7 @@ fn load_hid_caps(handle: HANDLE) -> Option<HidCaps> {
         data,
         button_caps,
         value_caps,
+        io_type: hid_io_type(caps.UsagePage, caps.Usage),
     })
 }
 
@@ -680,10 +699,41 @@ pub fn read_device_path(handle: HANDLE) -> Option<String> {
     Some(String::from_utf16_lossy(&buffer[..end]))
 }
 
-/// Subscribe the given window to keyboard, mouse, gamepad, joystick and multi-axis
-/// raw input. `RIDEV_INPUTSINK` lets the hidden window receive events without focus.
+/// Subscribe the given window to raw input from every kind of user-input device:
+/// keyboards, keypads, mice, controllers (gamepad, joystick, multi-axis), media
+/// keys (whole consumer page) and digitizers (whole page: touch pads, touch
+/// screens, pens). `RIDEV_INPUTSINK` lets the hidden window receive events
+/// without focus.
+///
+/// Digitizers matter because precision touch pads and pens move the pointer as a
+/// synthesized mouse with no device handle; only their own digitizer reports
+/// identify the physical device. Subscribing does not record anything by
+/// itself: the tray drops events from devices that are not whitelisted.
 pub fn register_for_raw_input(hwnd: HWND) -> windows::core::Result<()> {
+    const HID_USAGE_GENERIC_KEYPAD: u16 = 0x07;
+    const HID_USAGE_PAGE_CONSUMER: u16 = 0x0C;
+    const HID_USAGE_PAGE_DIGITIZER: u16 = 0x0D;
     let devices = [
+        RAWINPUTDEVICE {
+            usUsagePage: HID_USAGE_PAGE_GENERIC,
+            usUsage: HID_USAGE_GENERIC_KEYPAD,
+            dwFlags: RIDEV_INPUTSINK,
+            hwndTarget: hwnd,
+        },
+        // RIDEV_PAGEONLY subscribes every top-level collection on the page; it
+        // requires usUsage = 0.
+        RAWINPUTDEVICE {
+            usUsagePage: HID_USAGE_PAGE_CONSUMER,
+            usUsage: 0,
+            dwFlags: RIDEV_INPUTSINK | RIDEV_PAGEONLY,
+            hwndTarget: hwnd,
+        },
+        RAWINPUTDEVICE {
+            usUsagePage: HID_USAGE_PAGE_DIGITIZER,
+            usUsage: 0,
+            dwFlags: RIDEV_INPUTSINK | RIDEV_PAGEONLY,
+            hwndTarget: hwnd,
+        },
         RAWINPUTDEVICE {
             usUsagePage: HID_USAGE_PAGE_GENERIC,
             usUsage: HID_USAGE_GENERIC_KEYBOARD,

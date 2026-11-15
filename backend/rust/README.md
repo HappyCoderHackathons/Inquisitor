@@ -60,7 +60,8 @@ iso_time,monotonic_s,io_type,device_id,event,control,hold_ms,flight_ms,dx,dy,val
 
 - `iso_time`: UTC timestamp with milliseconds, e.g. `2026-11-15T03:13:19.875Z`.
 - `monotonic_s`: seconds since capture start, six decimal places.
-- `io_type`: one of `keyboard`, `mouse`, `gamepad`.
+- `io_type`: `keyboard`, `mouse`, or for HID devices `gamepad`, `keypad`,
+  `consumer` (media keys), `touchpad`, `touchscreen`, `pen`, `digitizer`, `hid`.
 - `device_id`: short per-session id such as `kbd0`, `mouse0`, `hid0`. Stable
   within a run; not stable across runs.
 - `event`: see the table below.
@@ -90,7 +91,8 @@ Mouse:
 - `event = scroll`, with `control` in `wheel_v`, `wheel_h`, and `value` as
   the wheel delta.
 
-Gamepad (standard HID devices on usage page 1):
+Gamepad and other HID devices (controllers, keypads, media keys, touch pads,
+touch screens, pens; `io_type` names the kind):
 
 - `event = press` or `release`. `control` is `button_NN` for buttons on the
   standard HID Button usage page.

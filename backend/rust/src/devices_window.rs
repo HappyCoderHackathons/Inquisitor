@@ -9,9 +9,16 @@
 //! `GWLP_USERDATA`, plus a raw pointer to the tray's `Config`. The tray owns the
 //! config and destroys this window before freeing it, so the pointer stays valid
 //! for the window's whole lifetime. Everything runs on the tray's UI thread.
+//!
+//! Identify mode: while the "Identify" button is toggled on, the tray forwards
+//! the device path of every raw input event (allowed or not) through
+//! `report_activity`, and the matching row is highlighted for a moment and
+//! scrolled into view. Only the device path is used; key identities never reach
+//! this window.
 
 use std::mem::size_of;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use windows::core::{PCWSTR, PWSTR, w};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -23,23 +30,26 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
+    CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW,
     ICC_LISTVIEW_CLASSES, ICC_STANDARD_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
     LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_STATE, LVIF_TEXT, LVIS_STATEIMAGEMASK, LVITEMW,
-    LVM_DELETEALLITEMS, LVM_GETITEMSTATE, LVM_INSERTCOLUMNW, LVM_INSERTITEMW,
+    LVM_DELETEALLITEMS, LVM_ENSUREVISIBLE, LVM_GETITEMSTATE, LVM_INSERTCOLUMNW, LVM_INSERTITEMW,
     LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE, LVM_SETITEMTEXTW,
     LVN_ITEMCHANGED, LVS_EX_CHECKBOXES, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT,
-    NMHDR, NMLISTVIEW, SetWindowTheme, WC_LISTVIEWW,
+    NM_CUSTOMDRAW, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW, SetWindowTheme, WC_LISTVIEWW,
 };
+use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     BS_PUSHBUTTON, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
     GetClientRect, GetCursorPos, GetWindowLongPtrW, HMENU, IDC_ARROW, IDI_APPLICATION, IsWindow,
-    LoadCursorW, LoadIconW, MINMAXINFO, MoveWindow, RegisterClassExW, SW_RESTORE,
-    SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND,
-    WM_CTLCOLORBTN, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_GETMINMAXINFO, WM_NOTIFY,
-    WM_SETFONT, WM_SIZE, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN,
-    WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_THICKFRAME, WS_VISIBLE,
+    KillTimer, LoadCursorW, LoadIconW, MINMAXINFO, MoveWindow, RegisterClassExW, SW_RESTORE,
+    SW_SHOW, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetTimer,
+    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_CLOSE, WM_COMMAND, WM_CTLCOLORBTN, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED,
+    WM_GETMINMAXINFO, WM_NOTIFY, WM_SETFONT, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER,
+    WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_THICKFRAME,
+    WS_VISIBLE,
 };
 
 use crate::config::Config;
@@ -51,6 +61,18 @@ const CLASS: PCWSTR = w!("InquisitorDevicesWnd");
 const ID_ALLOW_ALL: u16 = 1;
 const ID_REMOVE_ALL: u16 = 2;
 const ID_LIST: u16 = 3;
+const ID_IDENTIFY: u16 = 4;
+
+// Identify mode: how long a row stays lit after its device's last input, how
+// often expired highlights are cleared, and the highlight colour (0x00BBGGRR,
+// a soft green).
+const HIGHLIGHT_FOR: Duration = Duration::from_millis(700);
+const FADE_TIMER_ID: usize = 1;
+const FADE_TIMER_MS: u32 = 100;
+const HIGHLIGHT: COLORREF = COLORREF(0x00C6_EFCE);
+
+const HINT_IDLE: &str = "Only checked devices are recorded.";
+const HINT_IDENTIFY: &str = "Use any device to highlight it below.";
 
 // List view styles from <commctrl.h>. The windows crate exposes these as plain
 // numbers in some places and typed wrappers in others, so keep them local.
@@ -81,6 +103,7 @@ struct WindowState {
     rows: Vec<Row>,
     title: HWND,
     hint: HWND,
+    identify: HWND,
     allow_all: HWND,
     remove_all: HWND,
     list: HWND,
@@ -90,6 +113,13 @@ struct WindowState {
     /// Set while code (not the user) changes checkboxes, so LVN_ITEMCHANGED does
     /// not rewrite the config once per row during populate / Allow all.
     suppress: bool,
+    /// Identify mode is on: rows light up when their device sends input.
+    listening: bool,
+    /// Per-row highlight deadline, parallel to `rows`. Some(t) in the future = lit.
+    lit_until: Vec<Option<Instant>>,
+    /// Last time Identify mode re-enumerated devices because input came from a
+    /// device missing from the list. Limits re-enumeration to once a second.
+    last_refresh: Option<Instant>,
 }
 
 impl WindowState {
@@ -169,11 +199,12 @@ pub fn open(existing: Option<HWND>, config: *mut Config) -> Option<HWND> {
     };
 
     let title = child(w!("STATIC"), "Devices", SS_NOPREFIX | SS_ENDELLIPSIS, 0);
-    let hint = child(
-        w!("STATIC"),
-        "Only checked devices are recorded.",
-        SS_NOPREFIX | SS_ENDELLIPSIS,
-        0,
+    let hint = child(w!("STATIC"), HINT_IDLE, SS_NOPREFIX | SS_ENDELLIPSIS, 0);
+    let identify = child(
+        w!("BUTTON"),
+        "Identify",
+        WS_TABSTOP.0 | BS_PUSHBUTTON as u32,
+        ID_IDENTIFY,
     );
     let allow_all = child(
         w!("BUTTON"),
@@ -233,6 +264,7 @@ pub fn open(existing: Option<HWND>, config: *mut Config) -> Option<HWND> {
         rows: Vec::new(),
         title,
         hint,
+        identify,
         allow_all,
         remove_all,
         list,
@@ -240,6 +272,9 @@ pub fn open(existing: Option<HWND>, config: *mut Config) -> Option<HWND> {
         title_font: HFONT::default(),
         dpi,
         suppress: false,
+        listening: false,
+        lit_until: Vec::new(),
+        last_refresh: None,
     });
     let st_ptr = Box::into_raw(st);
     unsafe {
@@ -337,7 +372,7 @@ fn apply_fonts(st: &mut WindowState) {
         );
     };
     set(st.title, st.title_font);
-    for h in [st.hint, st.allow_all, st.remove_all, st.list] {
+    for h in [st.hint, st.identify, st.allow_all, st.remove_all, st.list] {
         set(h, st.font);
     }
 }
@@ -403,7 +438,88 @@ fn populate(st: &mut WindowState) {
         set_checked(st.list, i as isize, config.allowed_devices.contains(&row.path));
     }
     st.suppress = false;
+    st.lit_until = vec![None; rows.len()];
     st.rows = rows;
+}
+
+/// Called by the tray for every raw input event while this window exists.
+/// Lights up the matching row when Identify mode is on; otherwise a no-op.
+pub fn report_activity(hwnd: HWND, path: &str) {
+    if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+        return;
+    }
+    let Some(st) = (unsafe { state_mut(hwnd) }) else {
+        return;
+    };
+    // An empty path is input Windows synthesized without a device handle (for
+    // example pointer motion from a precision touch pad); it matches no row.
+    if !st.listening || path.is_empty() {
+        return;
+    }
+    let now = Instant::now();
+    let mut found = st.rows.iter().position(|r| r.path == path);
+    if found.is_none() && st.last_refresh.is_none_or(|t| now - t >= Duration::from_secs(1)) {
+        // A device plugged in after the list was built: re-enumerate once, keeping
+        // existing highlights where the same device is still present.
+        st.last_refresh = Some(now);
+        let lit: Vec<(String, Option<Instant>)> = st
+            .rows
+            .iter()
+            .map(|r| r.path.clone())
+            .zip(st.lit_until.iter().copied())
+            .collect();
+        populate(st);
+        for (p, until) in lit {
+            if let Some(j) = st.rows.iter().position(|r| r.path == p) {
+                st.lit_until[j] = until;
+            }
+        }
+        layout(hwnd, st);
+        found = st.rows.iter().position(|r| r.path == path);
+    }
+    let Some(i) = found else {
+        return;
+    };
+    let was_lit = st.lit_until[i].is_some_and(|t| t > now);
+    st.lit_until[i] = Some(now + HIGHLIGHT_FOR);
+    // Mouse movement arrives hundreds of times a second; only repaint and
+    // scroll when a row actually changes from unlit to lit.
+    if !was_lit {
+        unsafe {
+            SendMessageW(st.list, LVM_ENSUREVISIBLE, Some(WPARAM(i)), Some(LPARAM(0)));
+            let _ = InvalidateRect(Some(st.list), None, false);
+        }
+    }
+}
+
+/// Turn Identify mode on or off, updating the button, hint, and fade timer.
+fn set_listening(hwnd: HWND, st: &mut WindowState, on: bool) {
+    st.listening = on;
+    st.lit_until.iter_mut().for_each(|t| *t = None);
+    let (button, hint) = if on {
+        ("Stop identifying", HINT_IDENTIFY)
+    } else {
+        ("Identify", HINT_IDLE)
+    };
+    let (button, hint) = (to_wide(button), to_wide(hint));
+    unsafe {
+        let _ = SetWindowTextW(st.identify, PCWSTR(button.as_ptr()));
+        let _ = SetWindowTextW(st.hint, PCWSTR(hint.as_ptr()));
+        if on {
+            SetTimer(Some(hwnd), FADE_TIMER_ID, FADE_TIMER_MS, None);
+        } else {
+            let _ = KillTimer(Some(hwnd), FADE_TIMER_ID);
+        }
+        let _ = InvalidateRect(Some(st.list), None, false);
+    }
+}
+
+fn is_lit(st: &WindowState, index: usize) -> bool {
+    st.lit_until
+        .get(index)
+        .copied()
+        .flatten()
+        .is_some_and(|t| t > Instant::now())
 }
 
 /// Set one row's checkbox, or every row's when `index` is -1.
@@ -464,7 +580,7 @@ fn place_centered(hwnd: HWND, st: &WindowState) {
 /// Position children for the current client size:
 ///
 /// ```text
-///  Devices                                [Allow all] [Remove all]
+///  Devices                     [Identify] [Allow all] [Remove all]
 ///  Only checked devices are recorded.
 ///  +-----------------------------------------------------------+
 ///  | [x] Device name            Type          ID               |
@@ -478,16 +594,20 @@ fn layout(hwnd: HWND, st: &WindowState) {
     let (w, h) = (rc.right, rc.bottom);
     let m = st.scale(16);
     let (bw, bh, gap) = (st.scale(100), st.scale(32), st.scale(8));
+    // Wide enough for "Stop identifying" so the button does not resize on toggle.
+    let iw = st.scale(130);
     let title_h = st.scale(28);
     let hint_h = st.scale(20);
-    let text_w = (w - 2 * m - 2 * bw - 2 * gap).max(0);
+    let text_w = (w - 2 * m - iw - 2 * bw - 3 * gap).max(0);
     let list_top = m + title_h + hint_h + st.scale(12);
+    let by = m + st.scale(6);
 
     unsafe {
         let _ = MoveWindow(st.title, m, m, text_w, title_h, true);
         let _ = MoveWindow(st.hint, m, m + title_h, text_w, hint_h, true);
-        let _ = MoveWindow(st.allow_all, w - m - 2 * bw - gap, m + st.scale(6), bw, bh, true);
-        let _ = MoveWindow(st.remove_all, w - m - bw, m + st.scale(6), bw, bh, true);
+        let _ = MoveWindow(st.identify, w - m - 2 * bw - iw - 2 * gap, by, iw, bh, true);
+        let _ = MoveWindow(st.allow_all, w - m - 2 * bw - gap, by, bw, bh, true);
+        let _ = MoveWindow(st.remove_all, w - m - bw, by, bw, bh, true);
         let _ = MoveWindow(st.list, m, list_top, w - 2 * m, (h - list_top - m).max(0), true);
 
         // Split the list's client width (which already excludes a vertical
@@ -559,8 +679,24 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 }
                 LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize)
             }
+            WM_TIMER if wparam.0 == FADE_TIMER_ID => {
+                // Clear highlights whose deadline passed; repaint only if any did.
+                let now = Instant::now();
+                let mut changed = false;
+                for t in st.lit_until.iter_mut() {
+                    if t.is_some_and(|until| until <= now) {
+                        *t = None;
+                        changed = true;
+                    }
+                }
+                if changed {
+                    let _ = InvalidateRect(Some(st.list), None, false);
+                }
+                LRESULT(0)
+            }
             WM_COMMAND => {
                 match (wparam.0 & 0xFFFF) as u16 {
+                    ID_IDENTIFY => set_listening(hwnd, st, !st.listening),
                     ID_ALLOW_ALL => {
                         let config = &mut *st.config;
                         for row in &st.rows {
@@ -586,6 +722,21 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             }
             WM_NOTIFY => {
                 let hdr = &*(lparam.0 as *const NMHDR);
+                if hdr.idFrom == ID_LIST as usize && hdr.code == NM_CUSTOMDRAW {
+                    // Paint lit rows with the highlight colour; everything else
+                    // draws normally.
+                    let cd = &mut *(lparam.0 as *mut NMLVCUSTOMDRAW);
+                    if cd.nmcd.dwDrawStage == CDDS_PREPAINT {
+                        return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
+                    }
+                    if cd.nmcd.dwDrawStage == CDDS_ITEMPREPAINT
+                        && is_lit(st, cd.nmcd.dwItemSpec)
+                    {
+                        cd.clrTextBk = HIGHLIGHT;
+                        return LRESULT(CDRF_NEWFONT as isize);
+                    }
+                    return LRESULT(CDRF_DODEFAULT as isize);
+                }
                 if hdr.idFrom == ID_LIST as usize && hdr.code == LVN_ITEMCHANGED && !st.suppress {
                     let nm = &*(lparam.0 as *const NMLISTVIEW);
                     let image_changed =
@@ -610,6 +761,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 LRESULT(0)
             }
             WM_DESTROY => {
+                let _ = KillTimer(Some(hwnd), FADE_TIMER_ID);
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
                 let st = Box::from_raw(st as *mut WindowState);
                 let _ = DeleteObject(st.font.into());

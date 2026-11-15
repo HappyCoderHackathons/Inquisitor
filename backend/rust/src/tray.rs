@@ -201,6 +201,11 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 state.capture.process_wm_input(lparam, |path| {
                     // Reborrow to avoid double-mut-aliasing through the closure.
                     let s = &mut *state_for_filter;
+                    // Feed Identify mode before filtering, so blocked and paused
+                    // devices still light up. Only the device path is passed.
+                    if let Some(dh) = s.devices_hwnd {
+                        devices_window::report_activity(dh, path);
+                    }
                     !s.drop_event(path)
                 });
                 LRESULT(0)
