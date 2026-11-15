@@ -560,7 +560,9 @@ class AgentLink:
             return []
         device = self.database.devices.find_one_and_update(
             {"_id": self.device_id, "pairing_state": "paired", "revoked_at": None},
-            {"$set": {"last_heartbeat_at": now(), "ws_connected": True, "agent_paused": message["paused"]}},
+            # The same fields every authenticated agent call refreshes, plus the socket's own state.
+            {"$set": {"status": "online", "last_heartbeat_at": now(), "ws_connected": True,
+                      "agent_paused": message["paused"]}},
             return_document=ReturnDocument.AFTER,
         )
         if device is None:

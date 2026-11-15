@@ -200,16 +200,30 @@ Offline, or Disconnected.
      `shared/fixtures/tray-capture.*`.
    - Every window is schema v4: keyboard and mouse aggregates together, the
      only kind the website accepts.
-   - Nothing is sent before the terms are accepted and the PC is paired, while
-     paused, or while the website is not collecting.
-4. **Offline.** Windows wait in a queue of at most 120 and are dropped after
-   23 hours, since the website refuses windows over a day old. Uploads and
-   reconnects back off from 1 second to 1 minute, with jitter.
+   - Nothing is collected while paused, and nothing is sent before the terms
+     are accepted and the PC is paired.
+4. **Held until sent.** Every finished window is held on disk in
+   `%APPDATA%\inquisitor\outbox.jsonl` until it is sent: while offline,
+   across restarts, and before the PC is paired. Nothing expires; the website
+   accepts agent windows of any age, and duplicates are still refused.
+   - A window made during an enrollment round is sent to that round. The
+     website refuses it if the round has already ended.
+   - Every other window, including those made while unpaired, offline before
+     the first status, or while the website was not collecting, is sent for
+     monitoring once a model is trained.
+   - The menu shows how many are held. The file holds the same aggregate
+     numbers that are uploaded; it is capped at 100,000 windows (about a
+     month of non-stop activity), dropping the oldest beyond that.
+   - Uploads and reconnects back off from 1 second to 1 minute, with jitter.
 5. **Fail closed.** A 401 or 403, or a `revoked` message, stops uploads,
-   clears the queue, and deletes the stored credential.
+   deletes the held windows, and deletes the stored credential.
    - **Disconnect from account** does the same locally. The device stays on
      the website's device list, shown offline, until it is revoked there.
-   - Removing the app also deletes the credential.
+   - Removing the app also deletes the credential and the held windows.
+
+Without an account the tray works fully offline: it captures to the CSV files
+in the data folder (**Open data location** in the menu), which are never
+uploaded, and holds summaries in case a PC is connected later.
 
 Transport is WinHTTP, the HTTP stack built into Windows, so TLS uses the
 Windows certificate store and system proxy settings, and certificate checks

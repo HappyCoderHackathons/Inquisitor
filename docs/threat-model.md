@@ -138,7 +138,7 @@ The agent socket carries presence only, as JSON text frames with `"v": 1`:
 
 | Direction | Message | Effect |
 | --- | --- | --- |
-| Agent to server | `hello {paused, agent_version?}`, then `heartbeat {paused}` every 30 seconds | Sets `last_heartbeat_at`, `ws_connected`, and `agent_paused` on the device; publishes an updated owner-scoped monitoring snapshot |
+| Agent to server | `hello {paused, agent_version?}`, then `heartbeat {paused}` every 30 seconds | Sets `status: "online"`, `last_heartbeat_at`, `ws_connected`, and `agent_paused` on the device; publishes an updated owner-scoped monitoring snapshot |
 | Server to agent | `status {state, collection, session_id}` | Sent after `hello` and whenever it changes. The same fields as `GET /api/agent/onboarding` |
 | Server to agent | `revoked` | The device was revoked. The agent deletes its credential and stops |
 
@@ -179,7 +179,9 @@ compared with `compare_digest`. Account routes take the user from the session or
 device record.
 
 Agent window uploads require the strict shared feature-window schema v4, are capped
-at 64 KiB, and are limited to 60 requests per minute per device. Replay of a captured
+at 64 KiB, and are limited to 60 requests per minute per device. They have no age limit,
+because the tray holds windows while offline and sends them later; a window ending more
+than five minutes in the future is still refused. Replay of a captured
 window is limited by device, session, and sequence uniqueness (a duplicate is HTTP 409),
 session expiry, and sign-out revocation. Audit events record only metadata such as the
 authenticated device, sequence, schema version, mode, and outcome; they omit

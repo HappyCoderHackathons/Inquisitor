@@ -24,7 +24,7 @@
 use std::collections::BTreeMap;
 use std::f64::consts::PI;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::capture::iso_utc;
 
@@ -45,7 +45,7 @@ pub struct Row<'a> {
     pub dy: Option<i32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyboardFeatures {
     pub key_count: usize,
     pub hold_sample_count: usize,
@@ -55,7 +55,7 @@ pub struct KeyboardFeatures {
     pub press_interval_std_ms: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MouseFeatures {
     pub mouse_sample_count: usize,
     pub mouse_click_count: usize,
@@ -68,7 +68,7 @@ pub struct MouseFeatures {
     pub mouse_path_straightness: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Features {
     #[serde(flatten)]
     pub keyboard: KeyboardFeatures,
@@ -104,7 +104,8 @@ pub fn sample_features() -> Features {
 
 /// A finished window, without the device, session, and mode the link adds when
 /// it uploads.
-#[derive(Debug, Clone, PartialEq)]
+/// Serializable so the link can hold it on disk until it can be sent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FeatureWindow {
     /// Window number since the session's first row, as the converter counts.
     pub index: u64,
@@ -124,10 +125,6 @@ impl FeatureWindow {
 
     pub const fn duration_ms(&self) -> u64 {
         WINDOW_MS
-    }
-
-    pub fn ended_unix_ms(&self) -> i64 {
-        self.started_unix_ms + WINDOW_MS as i64
     }
 
     /// Sequence number for upload: the 30-second slot of the window's start since

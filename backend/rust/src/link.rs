@@ -9,22 +9,25 @@
 //!   removed from the account. Nothing ever connects inbound to the PC.
 //! - Finished feature windows go to `POST /api/agent/windows` over HTTPS, the
 //!   endpoint the website already validates, rate limits, and scores.
-//! - Windows wait in a bounded queue while the website is unreachable. The oldest
-//!   is dropped when it is full, and windows too old for the server are expired.
-//!   Retries back off exponentially with jitter, from 1 second up to 1 minute.
+//! - Every finished summary is held on disk (`outbox.jsonl`) until it can be
+//!   sent: while offline, across restarts, and while not yet connected to an
+//!   account. Nothing expires. Retries back off exponentially with jitter, from
+//!   1 second up to 1 minute.
 //! - Fail closed: a 401 or 403, or a `revoked` message, stops uploads, clears the
-//!   queue, and deletes the stored credential. The tray shows Disconnected.
+//!   held summaries, and deletes the stored credential. The tray shows Disconnected.
 //!
 //! Only aggregate numeric windows and the pause flag leave the PC.
 
 use std::collections::VecDeque;
 use std::ffi::c_void;
-use std::path::PathBuf;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
@@ -39,9 +42,9 @@ pub const WM_LINK: u32 = WM_APP + 2;
 
 const PROTOCOL: u32 = 1;
 const HEARTBEAT: Duration = Duration::from_secs(30);
-const QUEUE_CAP: usize = 120;
-// The server refuses windows that ended more than a day ago; leave an hour spare.
-const QUEUE_MAX_AGE_MS: i64 = 23 * 60 * 60 * 1000;
+// Held summaries never expire. This only bounds the file: 100,000 summaries is
+// about a month of non-stop activity, around 70 MB.
+const OUTBOX_CAP: usize = 100_000;
 const BACKOFF_MAX_SECS: u64 = 60;
 const PAIRING_ALPHABET: &str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const PAIRING_CODE_LEN: usize = 8;
@@ -132,49 +135,130 @@ fn jitter() -> f64 {
     f64::from(nanos % 1000) / 1000.0
 }
 
-/// One window ready to upload, already serialized with its device, session, and mode.
-pub struct Queued {
-    pub body: Vec<u8>,
-    pub ended_unix_ms: i64,
+/// What a held summary is for, decided when it was made.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "purpose", rename_all = "lowercase")]
+pub enum Purpose {
+    /// Made while the website was collecting enrollment for this game round.
+    Enrollment { session_id: String },
+    /// Made while monitoring, or while unpaired, offline before the website said
+    /// what to collect, or not collecting. Sent as monitoring once a model exists.
+    Monitoring,
 }
 
-/// Bounded offline queue (#98).
-pub struct Queue {
-    items: VecDeque<Queued>,
-    cap: usize,
+/// One finished summary waiting to be sent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Held {
+    pub window: FeatureWindow,
+    #[serde(flatten)]
+    pub purpose: Purpose,
 }
 
-impl Queue {
-    pub fn new(cap: usize) -> Self {
+impl Held {
+    /// Enrollment summaries go whenever the PC is connected (the website refuses
+    /// them once their round has ended). Monitoring ones wait for a trained model,
+    /// so a summary made before the user connected is not refused for arriving early.
+    fn sendable(&self, mode: &Mode) -> bool {
+        matches!(self.purpose, Purpose::Enrollment { .. }) || *mode == Mode::Monitoring
+    }
+}
+
+/// `%APPDATA%\inquisitor\outbox.jsonl`, next to the device credential.
+pub fn outbox_path() -> PathBuf {
+    credential::default_path().with_file_name("outbox.jsonl")
+}
+
+/// Summaries held until they can be sent, kept on disk so they survive offline
+/// spells and restarts. One JSON object per line: the same aggregate numbers that
+/// are uploaded, never key or event data. Nothing expires; the cap only guards the
+/// disk (about a month of non-stop activity), dropping the oldest beyond it.
+pub struct Outbox {
+    items: VecDeque<Held>,
+    path: PathBuf,
+    /// The file no longer matches `items` and must be rewritten.
+    dirty: bool,
+}
+
+impl Outbox {
+    /// Read held summaries back. Unreadable lines are skipped.
+    pub fn load(path: PathBuf) -> Self {
+        let items = fs::read_to_string(&path)
+            .map(|text| {
+                text.lines()
+                    .filter_map(|line| serde_json::from_str(line).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
         Self {
-            items: VecDeque::new(),
-            cap,
+            items,
+            path,
+            dirty: false,
         }
     }
 
-    pub fn push(&mut self, item: Queued) {
-        if self.items.len() == self.cap {
+    pub fn push(&mut self, item: Held) {
+        if self.items.len() >= OUTBOX_CAP {
             self.items.pop_front();
+            self.dirty = true;
+        }
+        if !self.dirty {
+            // Append rather than rewrite; a failed append rewrites the file later.
+            let line = serde_json::to_string(&item).unwrap_or_default();
+            let appended = fs::create_dir_all(self.path.parent().unwrap_or(Path::new(".")))
+                .and_then(|()| {
+                    let mut file = OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&self.path)?;
+                    writeln!(file, "{line}")
+                });
+            self.dirty = appended.is_err();
         }
         self.items.push_back(item);
     }
 
-    /// Drop windows the server would refuse as too old.
-    pub fn expire(&mut self, now_unix_ms: i64) {
-        self.items
-            .retain(|item| now_unix_ms - item.ended_unix_ms <= QUEUE_MAX_AGE_MS);
+    /// Index of the oldest summary that can be sent in `mode`.
+    pub fn next_sendable(&self, mode: &Mode) -> Option<usize> {
+        self.items.iter().position(|item| item.sendable(mode))
     }
 
-    pub fn front(&self) -> Option<&Queued> {
-        self.items.front()
+    pub fn get(&self, index: usize) -> Option<&Held> {
+        self.items.get(index)
     }
 
-    pub fn pop(&mut self) {
-        self.items.pop_front();
+    pub fn remove(&mut self, index: usize) {
+        if self.items.remove(index).is_some() {
+            self.dirty = true;
+        }
     }
 
+    /// Rewrite the file after removals. A crash before this only means a summary
+    /// is sent twice, which the website refuses as a duplicate.
+    pub fn save(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        if self.is_empty() {
+            self.dirty = credential::delete_at(&self.path).is_err();
+            return;
+        }
+        let mut text = String::new();
+        for item in &self.items {
+            text.push_str(&serde_json::to_string(item).unwrap_or_default());
+            text.push('\n');
+        }
+        let staging = self.path.with_extension("jsonl.tmp");
+        let written = fs::create_dir_all(self.path.parent().unwrap_or(Path::new(".")))
+            .and_then(|()| fs::write(&staging, text))
+            .and_then(|()| fs::rename(&staging, &self.path));
+        self.dirty = written.is_err();
+    }
+
+    /// Forget everything held, on disconnect or revocation.
     pub fn clear(&mut self) {
         self.items.clear();
+        self.dirty = true;
+        self.save();
     }
 
     pub fn len(&self) -> usize {
@@ -187,15 +271,11 @@ impl Queue {
 }
 
 /// The JSON body for `POST /api/agent/windows`.
-pub fn window_body(
-    window: &FeatureWindow,
-    device_id: &str,
-    mode: &Mode,
-    monitoring: &str,
-) -> Vec<u8> {
-    let (mode_name, session) = match mode {
-        Mode::Enrollment(id) => ("enrollment", id.as_str()),
-        _ => ("monitoring", monitoring),
+pub fn window_body(held: &Held, device_id: &str, monitoring_session: &str) -> Vec<u8> {
+    let window = &held.window;
+    let (mode_name, session) = match &held.purpose {
+        Purpose::Enrollment { session_id } => ("enrollment", session_id.as_str()),
+        Purpose::Monitoring => ("monitoring", monitoring_session),
     };
     json!({
         "schema_version": window.schema_version(),
@@ -390,7 +470,7 @@ struct Worker {
     mode: Mode,
     /// Session id for monitoring windows: one per tray run.
     monitoring_session: String,
-    queue: Queue,
+    outbox: Outbox,
     upload_backoff: Backoff,
     upload_at: Instant,
     connect_backoff: Backoff,
@@ -405,6 +485,9 @@ impl Worker {
         notify: isize,
         credential_path: PathBuf,
     ) -> Self {
+        // Held summaries live next to the credential, so tests using a temporary
+        // credential path get a temporary outbox too.
+        let outbox = Outbox::load(credential_path.with_file_name("outbox.jsonl"));
         Self {
             tx,
             status,
@@ -418,7 +501,7 @@ impl Worker {
             paused: false,
             mode: Mode::Idle,
             monitoring_session: format!("tray-{:x}-{:x}", unix_ms_now(), std::process::id()),
-            queue: Queue::new(QUEUE_CAP),
+            outbox,
             upload_backoff: Backoff::default(),
             upload_at: Instant::now(),
             connect_backoff: Backoff::default(),
@@ -451,7 +534,7 @@ impl Worker {
         if let Some(at) = self.connect_at {
             next = next.min(at);
         }
-        if !self.queue.is_empty() && self.credential.is_some() {
+        if self.credential.is_some() && self.outbox.next_sendable(&self.mode).is_some() {
             next = next.min(self.upload_at);
         }
         next
@@ -466,8 +549,8 @@ impl Worker {
                 self.heartbeat_at = Instant::now();
             }
             Command::Connect(server, credential) => {
+                // Summaries held from before pairing are kept and sent once monitoring starts.
                 self.close_socket();
-                self.queue.clear();
                 self.connect_to(server, credential);
             }
             Command::Disconnect => {
@@ -510,14 +593,15 @@ impl Worker {
         if self.socket.is_some() && self.heartbeat_at <= Instant::now() {
             self.send_presence("heartbeat");
         }
-        while !self.queue.is_empty()
-            && self.upload_at <= Instant::now()
-            && self.credential.is_some()
-        {
-            if !self.upload_one() {
+        while self.credential.is_some() && self.upload_at <= Instant::now() {
+            let Some(index) = self.outbox.next_sendable(&self.mode) else {
+                break;
+            };
+            if !self.upload_one(index) {
                 break;
             }
         }
+        self.outbox.save();
     }
 
     fn open_socket(&mut self) {
@@ -601,49 +685,49 @@ impl Worker {
         self.connect_at = Some(Instant::now() + self.connect_backoff.next(jitter()));
     }
 
+    /// Hold every finished summary. Its purpose is fixed now: enrollment for the
+    /// active round if the website is collecting one, otherwise monitoring, which
+    /// also covers summaries made while unpaired or offline before any status.
     fn enqueue(&mut self, window: &FeatureWindow) {
-        // Nothing is uploaded unless paired and the website asked for this kind of window.
-        let Some(credential) = &self.credential else {
-            return;
-        };
-        if self.paused || self.mode == Mode::Idle {
+        if self.paused {
             return;
         }
-        self.queue.push(Queued {
-            body: window_body(
-                window,
-                &credential.device_id,
-                &self.mode,
-                &self.monitoring_session,
-            ),
-            ended_unix_ms: window.ended_unix_ms(),
+        let purpose = match (&self.mode, &self.credential) {
+            (Mode::Enrollment(session_id), Some(_)) => Purpose::Enrollment {
+                session_id: session_id.clone(),
+            },
+            _ => Purpose::Monitoring,
+        };
+        self.outbox.push(Held {
+            window: window.clone(),
+            purpose,
         });
     }
 
-    /// Upload the oldest queued window. Returns false when uploads should pause.
-    fn upload_one(&mut self) -> bool {
-        self.queue.expire(unix_ms_now());
-        let (Some(client), Some(credential), Some(item)) =
-            (&self.client, &self.credential, self.queue.front())
+    /// Upload one held summary. Returns false when uploads should pause.
+    fn upload_one(&mut self, index: usize) -> bool {
+        let (Some(client), Some(credential), Some(held)) =
+            (&self.client, &self.credential, self.outbox.get(index))
         else {
             return false;
         };
+        let body = window_body(held, &credential.device_id, &self.monitoring_session);
         let outcome = match client.request(
             "POST",
             "/api/agent/windows",
             Some(&credential.token),
-            Some(&item.body),
+            Some(&body),
         ) {
             Ok(response) => classify(response.status),
             Err(_) => UploadOutcome::Retry,
         };
-        self.apply_upload(outcome)
+        self.apply_upload(index, outcome)
     }
 
-    fn apply_upload(&mut self, outcome: UploadOutcome) -> bool {
+    fn apply_upload(&mut self, index: usize, outcome: UploadOutcome) -> bool {
         match outcome {
             UploadOutcome::Sent | UploadOutcome::Drop => {
-                self.queue.pop();
+                self.outbox.remove(index);
                 self.upload_backoff.reset();
                 true
             }
@@ -657,7 +741,6 @@ impl Worker {
             }
         }
     }
-
     /// The website no longer accepts this device (#99).
     fn fail_closed(&mut self) {
         self.forget();
@@ -667,7 +750,7 @@ impl Worker {
     /// Stop everything and delete the stored credential.
     fn forget(&mut self) {
         self.close_socket();
-        self.queue.clear();
+        self.outbox.clear();
         self.client = None;
         self.credential = None;
         self.connect_at = None;
@@ -689,7 +772,7 @@ impl Worker {
             state: self.state.clone(),
             server: self.client.as_ref().map(|c| c.endpoint().display()),
             mode: self.mode.clone(),
-            queued: self.queue.len(),
+            queued: self.outbox.len(),
         };
         let changed = {
             let mut shared = self.status.lock().unwrap_or_else(|e| e.into_inner());
@@ -716,24 +799,71 @@ impl Worker {
 mod tests {
     use super::*;
 
-    fn queued(ended_unix_ms: i64) -> Queued {
-        Queued {
-            body: Vec::new(),
-            ended_unix_ms,
+    fn held(started_unix_ms: i64, purpose: Purpose) -> Held {
+        Held {
+            window: FeatureWindow {
+                index: 0,
+                started_unix_ms,
+                features: crate::features::sample_features(),
+            },
+            purpose,
         }
     }
 
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("inquisitor-test-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
     #[test]
-    fn queue_is_bounded_and_drops_expired_windows() {
-        let mut queue = Queue::new(3);
-        for ended in [1, 2, 3, 4] {
-            queue.push(queued(ended));
-        }
-        assert_eq!(queue.len(), 3);
-        assert_eq!(queue.front().unwrap().ended_unix_ms, 2);
-        queue.expire(3 + QUEUE_MAX_AGE_MS);
-        assert_eq!(queue.len(), 2);
-        assert_eq!(queue.front().unwrap().ended_unix_ms, 3);
+    fn held_summaries_survive_a_restart_and_never_expire() {
+        let dir = temp_dir("outbox");
+        let path = dir.join("outbox.jsonl");
+        let year_old = unix_ms_now() - 365 * 24 * 60 * 60 * 1000;
+        let mut outbox = Outbox::load(path.clone());
+        outbox.push(held(year_old, Purpose::Monitoring));
+        outbox.push(held(
+            year_old + 30_000,
+            Purpose::Enrollment {
+                session_id: "round-1".into(),
+            },
+        ));
+        outbox.push(held(year_old + 60_000, Purpose::Monitoring));
+
+        // A new tray process reads them back in order, however old they are.
+        let mut reloaded = Outbox::load(path.clone());
+        assert_eq!(reloaded.len(), 3);
+        assert_eq!(reloaded.get(0).unwrap().window.started_unix_ms, year_old);
+
+        // Monitoring summaries wait for a trained model; enrollment ones do not.
+        assert_eq!(reloaded.next_sendable(&Mode::Idle), Some(1));
+        assert_eq!(
+            reloaded.next_sendable(&Mode::Enrollment("round-2".into())),
+            Some(1)
+        );
+        assert_eq!(reloaded.next_sendable(&Mode::Monitoring), Some(0));
+
+        // Sent summaries are removed from the file too.
+        reloaded.remove(1);
+        reloaded.save();
+        let after = Outbox::load(path.clone());
+        assert_eq!(after.len(), 2);
+        assert_eq!(after.next_sendable(&Mode::Idle), None);
+
+        // A damaged line is skipped instead of losing the rest.
+        fs::write(
+            &path,
+            format!("not json\n{}", fs::read_to_string(&path).unwrap()),
+        )
+        .unwrap();
+        assert_eq!(Outbox::load(path.clone()).len(), 2);
+
+        let mut cleared = Outbox::load(path.clone());
+        cleared.clear();
+        assert!(!path.exists());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -789,8 +919,8 @@ mod tests {
     }
 
     #[test]
-    fn rejected_upload_fails_closed_clearing_queue_and_credential() {
-        let dir = std::env::temp_dir().join(format!("inquisitor-test-{}-link", std::process::id()));
+    fn rejected_upload_fails_closed_clearing_held_summaries_and_credential() {
+        let dir = temp_dir("link");
         let path = dir.join("device.bin");
         let saved = Credential {
             device_id: "device-1".into(),
@@ -809,16 +939,19 @@ mod tests {
         worker.credential = Some(saved);
         worker.state = State::Connected;
         worker.mode = Mode::Monitoring;
-        worker.queue.push(queued(unix_ms_now()));
-        worker.queue.push(queued(unix_ms_now()));
+        worker.outbox.push(held(unix_ms_now(), Purpose::Monitoring));
+        worker.outbox.push(held(unix_ms_now(), Purpose::Monitoring));
+        let outbox = dir.join("outbox.jsonl");
+        assert!(outbox.exists());
 
         // A retryable failure keeps everything.
-        assert!(!worker.apply_upload(UploadOutcome::Retry));
-        assert_eq!(worker.queue.len(), 2);
+        assert!(!worker.apply_upload(0, UploadOutcome::Retry));
+        assert_eq!(worker.outbox.len(), 2);
         assert!(path.exists());
 
-        assert!(!worker.apply_upload(UploadOutcome::FailClosed));
-        assert!(worker.queue.is_empty());
+        assert!(!worker.apply_upload(0, UploadOutcome::FailClosed));
+        assert!(worker.outbox.is_empty());
+        assert!(!outbox.exists());
         assert!(worker.credential.is_none());
         assert!(!path.exists());
         assert!(matches!(worker.state, State::Disconnected(_)));
@@ -829,14 +962,13 @@ mod tests {
             State::Disconnected(_)
         ));
 
-        // Nothing is queued once disconnected.
-        let window = crate::features::FeatureWindow {
-            index: 0,
-            started_unix_ms: unix_ms_now(),
-            features: crate::features::sample_features(),
-        };
-        worker.enqueue(&window);
-        assert!(worker.queue.is_empty());
+        // New summaries are held again for a future pairing, as monitoring.
+        worker.enqueue(&held(unix_ms_now(), Purpose::Monitoring).window);
+        assert_eq!(worker.outbox.get(0).unwrap().purpose, Purpose::Monitoring);
+        // Paused input is never held.
+        worker.paused = true;
+        worker.enqueue(&held(unix_ms_now(), Purpose::Monitoring).window);
+        assert_eq!(worker.outbox.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -900,7 +1032,11 @@ mod tests {
             started_unix_ms: unix_ms_now() - 60_000,
             features: crate::features::sample_features(),
         };
-        let body = window_body(&window, &credential.device_id, &mode, "tray-live-test");
+        let held = Held {
+            window,
+            purpose: Purpose::Monitoring,
+        };
+        let body = window_body(&held, &credential.device_id, "tray-live-test");
         let upload = |body: &[u8]| {
             client
                 .request(
@@ -1005,20 +1141,89 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Summaries made while unpaired and while offline are held on disk, survive a
+    /// restart, and are sent once the PC reaches the website and a model exists,
+    /// even when they are days old. Needs a fresh test server.
+    /// `INQUISITOR_TEST_SERVER=http://127.0.0.1:5077 cargo test -- --ignored live_hold`
     #[test]
-    fn window_body_carries_mode_session_and_slot_sequence() {
-        let window = crate::features::FeatureWindow {
-            index: 3,
-            started_unix_ms: 1_767_225_600_250,
+    #[ignore = "needs a local test server; set INQUISITOR_TEST_SERVER"]
+    fn live_hold_summaries_until_connected() {
+        use serde_json::Value;
+        let url = std::env::var("INQUISITOR_TEST_SERVER").expect("INQUISITOR_TEST_SERVER");
+        let endpoint = Endpoint::parse(&url).unwrap();
+        let credential = pair(&endpoint, "ABCD2345").unwrap();
+        let client = Client::new(endpoint.clone()).unwrap();
+        let get = |path: &str| -> Value {
+            serde_json::from_slice(&client.request("GET", path, None, None).unwrap().body).unwrap()
+        };
+        let device = format!("/__test/device/{}", credential.device_id);
+        let wait_for = |what: &str, check: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !check() {
+                assert!(Instant::now() < deadline, "timed out waiting for {what}");
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        };
+        let dir = temp_dir("live-hold");
+        let path = dir.join("device.bin");
+        let summary = |minutes_ago: i64| FeatureWindow {
+            index: 0,
+            started_unix_ms: unix_ms_now() - minutes_ago * 60_000,
             features: crate::features::sample_features(),
         };
-        let body: serde_json::Value = serde_json::from_slice(&window_body(
-            &window,
-            "device-1",
-            &Mode::Enrollment("round-9".into()),
-            "tray-run",
-        ))
-        .unwrap();
+
+        // Not paired yet: the summary is held, not dropped.
+        let link = Link::start_with(HWND::default(), None, None, false, path.clone());
+        link.send_window(summary(3 * 24 * 60));
+        wait_for("held while unpaired", &|| link.status().queued == 1);
+        // Paired but the website is unreachable (nothing listens on port 9).
+        let dead = Endpoint::parse("http://127.0.0.1:9").unwrap();
+        link.connect(dead, credential.clone());
+        link.send_window(summary(2 * 24 * 60));
+        wait_for("held while offline", &|| {
+            link.status().queued == 2 && link.status().state == State::Offline
+        });
+        drop(link);
+        assert_eq!(get(&device)["monitoring"], 0);
+
+        // Back online after a restart, with a trained model: both are sent.
+        assert_eq!(
+            client
+                .request(
+                    "POST",
+                    &format!("/__test/ready/{}", credential.device_id),
+                    None,
+                    None
+                )
+                .unwrap()
+                .status,
+            200
+        );
+        credential::save_to(&path, &credential).unwrap();
+        let link = Link::start_with(
+            HWND::default(),
+            Some(endpoint),
+            Some(credential.clone()),
+            false,
+            path.clone(),
+        );
+        wait_for("held summaries sent", &|| get(&device)["monitoring"] == 2);
+        wait_for("outbox emptied", &|| link.status().queued == 0);
+        assert!(!dir.join("outbox.jsonl").exists());
+        drop(link);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn window_body_carries_mode_session_and_slot_sequence() {
+        let enrollment = held(
+            1_767_225_600_250,
+            Purpose::Enrollment {
+                session_id: "round-9".into(),
+            },
+        );
+        let body: serde_json::Value =
+            serde_json::from_slice(&window_body(&enrollment, "device-1", "tray-run")).unwrap();
         assert_eq!(body["mode"], "enrollment");
         assert_eq!(body["session_id"], "round-9");
         assert_eq!(body["schema_version"], 4);
@@ -1027,9 +1232,8 @@ mod tests {
         assert_eq!(body["features"]["key_count"], 40);
         assert_eq!(body["features"]["mouse_sample_count"], 12);
         let monitoring: serde_json::Value = serde_json::from_slice(&window_body(
-            &window,
+            &held(1_767_225_600_250, Purpose::Monitoring),
             "device-1",
-            &Mode::Monitoring,
             "tray-run",
         ))
         .unwrap();

@@ -105,8 +105,9 @@ that changes each session.\r\n\r\n\
 These records are saved as CSV files in the data folder on this PC \
 (%APPDATA%\\inquisitor unless you change it). They are not uploaded.\r\n\r\n\
 WHAT IS SENT TO YOUR ACCOUNT\r\n\
-Only after you connect this PC to your account from the tray, and only while \
-the website is collecting for enrollment or monitoring.\r\n\r\n\
+Only to an account you connect this PC to from the tray. Inquisitor also \
+works without an account: then nothing is sent, and the CSV files above are \
+the only record.\r\n\r\n\
 - One summary per 30 seconds of activity. Keyboard: how many keys were \
 pressed, the average and spread of how long keys were held, and of the time \
 between presses.\r\n\
@@ -117,6 +118,12 @@ averages for the 30 seconds.\r\n\
 - When connecting: this PC's name, so you can tell your devices apart.\r\n\
 Individual key presses, mouse movements, controllers, touch, and pen input \
 are never sent.\r\n\r\n\
+Summaries are held on this PC until they can be sent: while offline, across \
+restarts, and before you connect an account (in \
+%APPDATA%\\inquisitor\\outbox.jsonl, the same numbers that are sent). \
+Once connected, summaries from an enrollment round go to that round, and all \
+others are sent for monitoring after your model is trained, however old they \
+are. Nothing is held while paused.\r\n\r\n\
 WHAT IS NEVER COLLECTED\r\n\
 - Which keys you press, or any text you type, including passwords\r\n\
 - What you click on, or which window or app you are using\r\n\
@@ -133,8 +140,9 @@ YOUR CONTROLS\r\n\
 - Pause or quit at any time from the tray icon, and choose which devices are \
 recorded.\r\n\
 - Disconnect from account in the tray stops all sending and deletes this \
-PC's connection.\r\n\
-- Remove in setup can delete the data recorded on this PC.";
+PC's connection and the summaries held for it.\r\n\
+- Remove in setup deletes held summaries and can delete the data recorded on \
+this PC.";
 
 /// Which page the wizard opens on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -232,8 +232,10 @@ pub fn remove(delete_data: bool) -> Result<Removed, String> {
     stop_running_trays();
     startup::disable().map_err(|e| format!("Could not remove Start with Windows: {e}"))?;
     let _ = fs::remove_file(shortcut_path());
-    // The account connection goes with the app, whether or not data is kept.
+    // The account connection and anything still waiting to be sent go with the app,
+    // whether or not the captured data is kept.
     credential::delete().map_err(|e| format!("Could not remove the account connection: {e}"))?;
+    let _ = fs::remove_file(crate::link::outbox_path());
     delete_key(UNINSTALL_KEY).map_err(|e| format!("Could not unregister the app: {e}"))?;
 
     if delete_data {

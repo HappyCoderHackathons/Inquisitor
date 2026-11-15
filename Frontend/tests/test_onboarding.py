@@ -484,6 +484,18 @@ class OnboardingTests(unittest.TestCase):
         self.sign_in("user-b")
         self.assertEqual(self.client.get("/api/onboarding").status_code, 404)
 
+    def test_held_agent_windows_have_no_age_limit_but_future_ones_are_refused(self):
+        device_id, agent = self.ready_monitor()
+        held = window(device_id, "tray-held", 1)
+        held.update(mode="monitoring", started_at=(datetime.now(timezone.utc) - timedelta(days=10)).isoformat())
+        response = self.client.post("/api/agent/windows", headers=agent, json=held)
+        self.assertEqual(response.status_code, 201, response.get_json())
+        # Sending the same held window again is still refused, so the age limit is not what stops replay.
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=held).status_code, 409)
+        future = {**held, "sequence": 2,
+                  "started_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()}
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=future).status_code, 422)
+
     def test_agent_windows_must_be_schema_v4(self):
         device_id, agent = self.pair()
         session_id = self.client.post("/api/onboarding/rounds", json={"game": "typing"}).get_json()["session_id"]
@@ -1399,6 +1411,7 @@ class OnboardingTests(unittest.TestCase):
                                   "collection": "active"}])
         device = self.database.devices.find_one({"_id": device_id})
         self.assertTrue(device["ws_connected"])
+        self.assertEqual(device["status"], "online")
         self.assertEqual(device["last_heartbeat_at"], self.clock)
         self.assertEqual(self.client.get("/api/devices").get_json()["devices"][0]["stale"], False)
         active = self.client.get("/api/monitoring/status").get_json()

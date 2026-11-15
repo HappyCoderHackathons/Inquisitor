@@ -122,10 +122,12 @@ def agent_feature_window_error(value: object) -> str | None:
     )
 
 
-def started_at_error(window: dict[str, object], now: datetime) -> str | None:
+def started_at_error(
+    window: dict[str, object], now: datetime, max_age: timedelta | None = timedelta(days=1),
+) -> str | None:
     # The schema's RFC 3339 format check guarantees a UTC offset here.
     ended = datetime.fromisoformat(cast(str, window["started_at"])) +timedelta(milliseconds=cast(int, window["duration_ms"]))
-    if ended > now + timedelta(minutes=5) or ended < now - timedelta(days=1):
+    if ended > now + timedelta(minutes=5) or (max_age is not None and ended < now - max_age):
         return "started_at is outside the accepted ingestion window"
     return None
 
@@ -334,7 +336,9 @@ def purge_retention():
 
 
 def onboarding_window_error(window: dict[str, object]) -> str | None:
-    return agent_feature_window_error(window) or started_at_error(window, datetime.now(timezone.utc))
+    # The tray holds summaries while offline and sends them when it reconnects, so agent windows have
+    # no age limit. Replays are still refused by the device/session/sequence uniqueness check.
+    return agent_feature_window_error(window) or started_at_error(window, datetime.now(timezone.utc), max_age=None)
 
 
 if hosted.configured():

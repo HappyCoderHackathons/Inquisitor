@@ -552,19 +552,22 @@ fn status_label(status: &link::Status) -> String {
                 .trim_start_matches("http://")
         })
         .unwrap_or("the website");
-    match &status.state {
-        State::NotPaired => "Not connected to an account".into(),
+    let label = match &status.state {
+        State::NotPaired => "Not connected to an account".to_string(),
         State::Connecting => format!("Connecting to {server}..."),
         State::Connected => match status.mode {
             Mode::Enrollment(_) => format!("Connected to {server}: enrolling"),
             Mode::Monitoring => format!("Connected to {server}: monitoring"),
             Mode::Idle => format!("Connected to {server}"),
         },
-        State::Offline if status.queued > 0 => {
-            format!("Offline, retrying ({} waiting to send)", status.queued)
-        }
-        State::Offline => "Offline, retrying".into(),
+        State::Offline => "Offline, retrying".to_string(),
         State::Disconnected(reason) => format!("Disconnected. {reason}"),
+    };
+    // Summaries are held on this PC until they can be sent.
+    match status.queued {
+        0 => label,
+        1 => format!("{label} (1 summary held)"),
+        n => format!("{label} ({n} summaries held)"),
     }
 }
 
