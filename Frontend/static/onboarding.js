@@ -32,10 +32,67 @@
     toggle.textContent = signingUp ? "I already have an account" : "Create an account";
     status.textContent = "";
   }
-  element("authToggle")?.addEventListener("click", () => {
-    showSignUp(!signingUp);
-  });
   if (new URLSearchParams(window.location.search).get("mode") === "signup") showSignUp(true);
+  function showFieldError(inputId, errorId, message) {
+    const input = element(inputId);
+    const error = element(errorId);
+    if (!input || !error) return;
+    input.setAttribute("aria-invalid", message ? "true" : "false");
+    error.textContent = message;
+  }
+  function emailMessage(value) {
+    const email = value.trim();
+    if (!email) return "Enter an email address.";
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return "Enter an email address like name@example.com.";
+    }
+    return "";
+  }
+  function passwordMessage(value) {
+    if (!value) return "Enter a password.";
+    if (value.length < 8) return "Use at least 8 characters.";
+    if (value.length > 128) return "Use at most 128 characters.";
+    return "";
+  }
+  function nameMessage(value) {
+    const name = value.trim();
+    if (!name) return "Enter your name.";
+    if (name.length > 100) return "Use at most 100 characters.";
+    return "";
+  }
+  function validateAuth() {
+    const email = element("authEmail");
+    const password = element("authPassword");
+    const name = element("authName");
+    if (!email || !password) return false;
+    const emailError = emailMessage(email.value);
+    const passwordError = passwordMessage(password.value);
+    const nameError = signingUp && name ? nameMessage(name.value) : "";
+    showFieldError("authEmail", "emailError", emailError);
+    showFieldError("authPassword", "passwordError", passwordError);
+    if (signingUp) showFieldError("authName", "nameError", nameError);
+    const firstInvalid = nameError ? name : emailError ? email : passwordError ? password : null;
+    firstInvalid?.focus();
+    return !emailError && !passwordError && !nameError;
+  }
+  for (const [inputId, errorId, message] of [
+    ["authEmail", "emailError", emailMessage],
+    ["authPassword", "passwordError", passwordMessage],
+    ["authName", "nameError", nameMessage]
+  ]) {
+    element(inputId)?.addEventListener("blur", () => {
+      if (inputId === "authName" && !signingUp) return;
+      const input = element(inputId);
+      if (input) showFieldError(inputId, errorId, message(input.value));
+    });
+  }
+  function afterAuth(path) {
+    if (path === "sign-out") {
+      window.location.assign("/onboarding");
+      return;
+    }
+    window.location.assign(authForm?.dataset.next === "/dashboard" ? "/dashboard" : "/onboarding");
+  }
   async function authenticate(path, body, button) {
     const status = element("authStatus");
     button.disabled = true;
@@ -52,7 +109,7 @@
         status.textContent = response.status === 429 ? "Too many attempts. Wait a minute and try again." : response.status >= 500 ? "Sign-in is unavailable. Try again later." : "Could not complete the request. Check your details and try again.";
         return;
       }
-      window.location.assign("/onboarding");
+      afterAuth(path);
     } catch {
       status.classList.add("error");
       status.textContent = "Could not connect. Check your connection and try again.";
@@ -62,11 +119,12 @@
   }
   authForm?.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (!validateAuth() || !authForm) return;
     const fields = new FormData(authForm);
-    const body = { email: String(fields.get("email")), password: String(fields.get("password")) };
+    const body = { email: String(fields.get("email")).trim(), password: String(fields.get("password")) };
     void authenticate(
       signingUp ? "sign-up/email" : "sign-in/email",
-      signingUp ? { ...body, name: String(fields.get("name")) } : body,
+      signingUp ? { ...body, name: String(fields.get("name")).trim() } : body,
       element("authSubmit")
     );
   });

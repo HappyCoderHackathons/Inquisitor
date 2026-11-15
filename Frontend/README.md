@@ -58,7 +58,11 @@ the auth service binds to `127.0.0.1:3001` and Flask forwards the required `/api
 Use the exact same hostname in the browser and `BETTER_AUTH_URL`, including during local development.
 
 At `/onboarding`, choose **Create an account** for a new email/password account or
-**Sign in** for an existing one. Better Auth handles password hashing. No SMTP sender,
+**Sign in** for an existing one. `/login` and `/register` open those same pages.
+Empty fields, a malformed email, a missing name, and a password shorter than 8
+characters are shown next to the field. `/dashboard` redirects to `/login` until
+a session exists. `/`, `/arcade`, and `/privacy` stay available without an account.
+Better Auth handles password hashing. No SMTP sender,
 enterprise connection, or hosted login dashboard is required. Social SSO is not configured.
 Email ownership is not verified and password reset is unavailable until email delivery is added.
 Do not use email addresses as verified organization membership or link legacy accounts by email.

@@ -11,6 +11,7 @@ import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
+from urllib.parse import urlencode
 from uuid import uuid4
 
 import requests
@@ -269,6 +270,26 @@ def register(
             abort(401)
         return user_id
 
+    account_pages = {"/dashboard"}
+
+    def safe_next() -> str:
+        value = request.args.get("next", "")
+        return value if value in account_pages else ""
+
+    def auth_query(*, signup: bool, nxt: str) -> str:
+        params: dict[str, str] = {}
+        if signup:
+            params["mode"] = "signup"
+        if nxt:
+            params["next"] = nxt
+        return urlencode(params)
+
+    @app.before_request
+    def redirect_anonymous_account_pages():
+        if request.method != "GET" or request.path not in account_pages or signed_in_user() is not None:
+            return None
+        return redirect(url_for("hosted.login", next=request.path))
+
     def json_body() -> Document:
         # JSON-only bodies plus SameSite=Lax cookies block cross-site form posts.
         if request.headers.get("Origin") not in (None, public_origin) \
@@ -302,7 +323,22 @@ def register(
 
     @blueprint.get("/login")
     def login():
-        return redirect(url_for("hosted.onboarding_page"))
+        nxt = safe_next()
+        return redirect(url_for("hosted.onboarding_page", **({"next": nxt} if nxt else {})))
+
+    @blueprint.get("/register")
+    def register_page():
+        params = {"mode": "signup"}
+        nxt = safe_next()
+        if nxt:
+            params["next"] = nxt
+        return redirect(url_for("hosted.onboarding_page", **params))
+
+    @blueprint.get("/dashboard")
+    def account_dashboard():
+        if signed_in_user() is None:
+            return redirect(url_for("hosted.login", next="/dashboard"))
+        return render_template("dashboard.html")
 
     def auth_request(method: str, path: str) -> requests.Response:
         headers = {name: request.headers[name] for name in ("Cookie", "Content-Type", "Origin", "Sec-Fetch-Site")
@@ -333,7 +369,15 @@ def register(
 
     @blueprint.get("/onboarding")
     def onboarding_page():
-        return render_template("onboarding.html", signed_in=signed_in_user() is not None)
+        nxt = safe_next()
+        signup = request.args.get("mode") == "signup"
+        return render_template(
+            "onboarding.html",
+            signed_in=signed_in_user() is not None,
+            mode="signup" if signup else "login",
+            next_path=nxt,
+            toggle_query=auth_query(signup=not signup, nxt=nxt),
+        )
 
     @blueprint.get("/api/me")
     def me():
