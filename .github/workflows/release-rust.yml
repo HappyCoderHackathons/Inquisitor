@@ -61,6 +61,8 @@ jobs:
         run: |
           asset="Inquisitor-$VERSION-windows-x64.exe"
           mv dist/Inquisitor.exe "dist/$asset"
+          # A fixed name too, so the website can link to releases/latest/download/Inquisitor-windows-x64.exe.
+          cp "dist/$asset" dist/Inquisitor-windows-x64.exe
           (cd dist && sha256sum "$asset" > "$asset.sha256")
           cat "dist/$asset.sha256"
 
@@ -69,7 +71,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          assets=("dist/Inquisitor-$VERSION-windows-x64.exe" "dist/Inquisitor-$VERSION-windows-x64.exe.sha256")
+          assets=("dist/Inquisitor-$VERSION-windows-x64.exe" "dist/Inquisitor-$VERSION-windows-x64.exe.sha256" dist/Inquisitor-windows-x64.exe)
           # A release made by hand on GitHub creates the tag first; attach the
           # build to it (replacing any earlier upload) instead of failing.
           if gh release view "$TAG" >/dev/null 2>&1; then
