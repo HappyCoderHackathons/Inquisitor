@@ -45,11 +45,74 @@ function showSignUp(next: boolean) {
   status.textContent = "";
 }
 
-element("authToggle")?.addEventListener("click", () => {
-  showSignUp(!signingUp);
-});
-
 if (new URLSearchParams(window.location.search).get("mode") === "signup") showSignUp(true);
+
+function showFieldError(inputId: string, errorId: string, message: string) {
+  const input = element(inputId) as HTMLInputElement | null;
+  const error = element(errorId);
+  if (!input || !error) return;
+  input.setAttribute("aria-invalid", message ? "true" : "false");
+  error.textContent = message;
+}
+
+function emailMessage(value: string) {
+  const email = value.trim();
+  if (!email) return "Enter an email address.";
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return "Enter an email address like name@example.com.";
+  }
+  return "";
+}
+
+function passwordMessage(value: string) {
+  if (!value) return "Enter a password.";
+  if (value.length < 8) return "Use at least 8 characters.";
+  if (value.length > 128) return "Use at most 128 characters.";
+  return "";
+}
+
+function nameMessage(value: string) {
+  const name = value.trim();
+  if (!name) return "Enter your name.";
+  if (name.length > 100) return "Use at most 100 characters.";
+  return "";
+}
+
+function validateAuth() {
+  const email = element("authEmail") as HTMLInputElement | null;
+  const password = element("authPassword") as HTMLInputElement | null;
+  const name = element("authName") as HTMLInputElement | null;
+  if (!email || !password) return false;
+  const emailError = emailMessage(email.value);
+  const passwordError = passwordMessage(password.value);
+  const nameError = signingUp && name ? nameMessage(name.value) : "";
+  showFieldError("authEmail", "emailError", emailError);
+  showFieldError("authPassword", "passwordError", passwordError);
+  if (signingUp) showFieldError("authName", "nameError", nameError);
+  const firstInvalid = nameError ? name : emailError ? email : passwordError ? password : null;
+  firstInvalid?.focus();
+  return !emailError && !passwordError && !nameError;
+}
+
+for (const [inputId, errorId, message] of [
+  ["authEmail", "emailError", emailMessage],
+  ["authPassword", "passwordError", passwordMessage],
+  ["authName", "nameError", nameMessage],
+] as const) {
+  element(inputId)?.addEventListener("blur", () => {
+    if (inputId === "authName" && !signingUp) return;
+    const input = element(inputId) as HTMLInputElement | null;
+    if (input) showFieldError(inputId, errorId, message(input.value));
+  });
+}
+
+function afterAuth(path: string) {
+  if (path === "sign-out") {
+    window.location.assign("/onboarding");
+    return;
+  }
+  window.location.assign(authForm?.dataset.next === "/dashboard" ? "/dashboard" : "/onboarding");
+}
 
 async function authenticate(path: string, body: Record<string, string>, button: HTMLButtonElement) {
   const status = element("authStatus")!;
@@ -72,7 +135,7 @@ async function authenticate(path: string, body: Record<string, string>, button: 
             : "Could not complete the request. Check your details and try again.";
       return;
     }
-    window.location.assign("/onboarding");
+    afterAuth(path);
   } catch {
     status.classList.add("error");
     status.textContent = "Could not connect. Check your connection and try again.";
@@ -83,11 +146,12 @@ async function authenticate(path: string, body: Record<string, string>, button: 
 
 authForm?.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (!validateAuth() || !authForm) return;
   const fields = new FormData(authForm);
-  const body = { email: String(fields.get("email")), password: String(fields.get("password")) };
+  const body = { email: String(fields.get("email")).trim(), password: String(fields.get("password")) };
   void authenticate(
     signingUp ? "sign-up/email" : "sign-in/email",
-    signingUp ? { ...body, name: String(fields.get("name")) } : body,
+    signingUp ? { ...body, name: String(fields.get("name")).trim() } : body,
     element("authSubmit") as HTMLButtonElement,
   );
 });

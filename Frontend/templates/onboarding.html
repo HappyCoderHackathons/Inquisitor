@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="theme-color" content="#09070D">
     <meta name="description" content="Sign in, pair the Inquisitor agent, and complete calibration games.">
-    <title>Inquisitor | Setup</title>
+    <title>Inquisitor | {% if signed_in %}Setup{% elif mode|default('login') == 'signup' %}Create account{% else %}Log in{% endif %}</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="/static/onboarding.js" defer></script>
   </head>
@@ -17,38 +17,41 @@
           <a href="/">Home</a>
           <a href="/privacy">Privacy</a>
           <a href="/arcade">Activities</a>
-          <a href="/onboarding" aria-current="page">Setup</a>
+          <a href="/onboarding" aria-current="page">{% if signed_in %}Setup{% elif mode|default('login') == 'signup' %}Create account{% else %}Log in{% endif %}</a>
         </nav>
       </header>
 
       <main class="dashboard-main">
         <section class="dashboard-heading">
-          <p class="eyebrow"><span class="eyebrow-line"></span> SETUP</p>
-          <h1>Set up your model</h1>
-          <p>Sign in, connect the Windows agent, then play each of the four games for 2.5 minutes. The agent measures aggregate keyboard and mouse timing while you play; your model trains when enough data is collected.</p>
+          <p class="eyebrow"><span class="eyebrow-line"></span> {% if signed_in %}SETUP{% elif mode|default('login') == 'signup' %}CREATE ACCOUNT{% else %}LOG IN{% endif %}</p>
+          <h1>{% if signed_in %}Set up your model{% elif mode|default('login') == 'signup' %}Create an account{% else %}Sign in{% endif %}</h1>
+          <p>{% if signed_in %}Sign in, connect the Windows agent, then play each of the four games for 2.5 minutes. The agent measures aggregate keyboard and mouse timing while you play; your model trains when enough data is collected.{% elif mode|default('login') == 'signup' %}Create an account to pair the Windows agent and keep this PC's calibration with you. A password needs at least 8 characters.{% else %}Sign in to link the agent and your calibration data to your account.{% endif %}</p>
         </section>
 
         <section class="dashboard-panel" aria-labelledby="signInTitle">
-          <h2 id="signInTitle">1. Sign in</h2>
+          <h2 id="signInTitle">{% if not signed_in and mode|default('login') == 'signup' %}1. Create an account{% else %}1. Sign in{% endif %}</h2>
           {% if signed_in %}
             <p class="dashboard-panel-copy">You are signed in.</p>
             <button id="signOut" class="button secondary-button" type="button">Sign out</button>
             <p id="authStatus" class="action-status" role="status" aria-live="polite"></p>
           {% else %}
-            <p class="dashboard-panel-copy">Sign in to link the agent and your calibration data to your account.</p>
-            <form id="authForm" class="auth-form">
-              <label id="authNameLabel" class="mode-label" hidden>Name
-                <input id="authName" name="name" autocomplete="name" maxlength="100">
+            <p class="dashboard-panel-copy">{% if mode|default('login') == 'signup' %}Use your email and a password of at least 8 characters.{% else %}Use the email and password for your account.{% endif %}</p>
+            <form id="authForm" class="auth-form" data-next="{{ next_path|default('') }}" novalidate>
+              <label id="authNameLabel" class="mode-label" {% if mode|default('login') != 'signup' %}hidden{% endif %}>Name
+                <input id="authName" name="name" autocomplete="name" maxlength="100" {% if mode|default('login') == 'signup' %}required{% endif %} aria-describedby="nameError">
+                <span id="nameError" class="field-error" aria-live="polite"></span>
               </label>
               <label class="mode-label">Email
-                <input name="email" type="email" autocomplete="username" required>
+                <input id="authEmail" name="email" type="email" autocomplete="username" maxlength="254" required aria-describedby="emailError">
+                <span id="emailError" class="field-error" aria-live="polite"></span>
               </label>
               <label class="mode-label">Password
-                <input id="authPassword" name="password" type="password" autocomplete="current-password" minlength="8" maxlength="128" required>
+                <input id="authPassword" name="password" type="password" autocomplete="{{ 'new-password' if mode|default('login') == 'signup' else 'current-password' }}" minlength="8" maxlength="128" required aria-describedby="passwordError">
+                <span id="passwordError" class="field-error" aria-live="polite"></span>
               </label>
               <div class="auth-actions">
-                <button id="authSubmit" class="button primary" type="submit">Sign in</button>
-                <button id="authToggle" class="text-button" type="button">Create an account</button>
+                <button id="authSubmit" class="button primary" type="submit">{% if mode|default('login') == 'signup' %}Create account{% else %}Sign in{% endif %}</button>
+                <a id="authToggle" class="text-button" href="/onboarding{% if toggle_query|default('') %}?{{ toggle_query }}{% endif %}">{% if mode|default('login') == 'signup' %}I already have an account{% else %}Create an account{% endif %}</a>
               </div>
               <p id="authStatus" class="action-status" role="status" aria-live="polite"></p>
             </form>

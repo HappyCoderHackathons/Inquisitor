@@ -220,8 +220,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,.arena-canvas:focus-vis
 .auth-form{display:grid;gap:16px;max-width:380px;margin-top:18px}
 .auth-form [hidden]{display:none}
 .auth-actions{display:flex;align-items:center;flex-wrap:wrap;gap:16px}
-.auth-actions .text-button{font-size:13px;letter-spacing:0}
+.auth-actions .text-button{font-size:13px;letter-spacing:0;text-decoration:none}
 .auth-form input{width:100%;min-width:0}
+.auth-form input[aria-invalid="true"]{border-color:#FB7185}
+.field-error{min-height:1.1em;color:#FFB4C0;font-size:12px}
 .consent-label{display:flex;align-items:center;gap:8px;min-height:36px;color:var(--text);font-size:12px}
 .consent-label input{accent-color:var(--green);width:16px;height:16px}
 .collector-surface-wrap{margin-top:16px}
