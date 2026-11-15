@@ -28,6 +28,15 @@
           <p>Review your account, the model connection, and anomaly signals.</p>
         </section>
 
+        <section id="monitoringStatusCard" class="status-card" data-state="none" aria-labelledby="monitoringStatusLabel">
+          <span id="monitoringStatusIcon" class="status-card-icon" aria-hidden="true"></span>
+          <div>
+            <p class="eyebrow">MONITORING STATUS</p>
+            <h2 id="monitoringStatusLabel">No signal</h2>
+            <p id="monitoringStatusDetail" role="status" aria-live="polite">No live monitoring status is available in this prototype.</p>
+          </div>
+        </section>
+
         <section class="connection-grid" aria-label="Connection status">
           <article class="connection-card">
             <div class="connection-card-heading"><span class="status-indicator pending"></span><span class="eyebrow">AGENT</span></div>

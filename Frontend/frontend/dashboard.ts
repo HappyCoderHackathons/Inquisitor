@@ -53,6 +53,55 @@ const exportLink = $("#exportFeatureWindows") as HTMLAnchorElement | null;
 const dataActionStatus = $("#dataActionStatus");
 const dangerForms = document.querySelectorAll<HTMLFormElement>(".typed-confirm");
 
+type MonitoringStatus = "normal" | "not_enough_activity" | "unusual" | "needs_verification" | "paused";
+
+const monitoringStatusViews: Record<MonitoringStatus | "none", { label: string; detail: string; icon: string }> = {
+  normal: {
+    label: "Normal",
+    detail: "Recent activity is consistent with this device's enrollment.",
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/>',
+  },
+  not_enough_activity: {
+    label: "Not enough activity",
+    detail: "There is too little recent input to compare, so no judgment is made.",
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  },
+  unusual: {
+    label: "Unusual",
+    detail:
+      "Recent activity differs from this device's enrollment. Treat this as a prompt to check, not a finding about any person.",
+    icon: '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>',
+  },
+  needs_verification: {
+    label: "Needs verification",
+    detail: "Please confirm it is you. This does not identify anyone.",
+    icon: '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M9.8 9.8a2.3 2.3 0 1 1 3.3 2.1c-.7.3-1.1.8-1.1 1.6M12 16.5h.01"/>',
+  },
+  paused: {
+    label: "Paused",
+    detail: "Monitoring is paused. No input is being measured.",
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/>',
+  },
+  none: {
+    label: "No signal",
+    detail: "No live monitoring status is available in this prototype.",
+    icon: '<circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/><path d="M8.5 12h7"/>',
+  },
+};
+
+function renderMonitoringStatus(status: MonitoringStatus | null) {
+  const card = $("#monitoringStatusCard");
+  const view = monitoringStatusViews[status ?? "none"];
+  if (!card) return;
+  card.dataset.state = status ?? "none";
+  const icon = $("#monitoringStatusIcon");
+  const label = $("#monitoringStatusLabel");
+  const detail = $("#monitoringStatusDetail");
+  if (icon) icon.innerHTML = `<svg viewBox="0 0 24 24" focusable="false">${view.icon}</svg>`;
+  if (label) label.textContent = view.label;
+  if (detail) detail.textContent = view.detail;
+}
+
 const collectionWindowMs = 30_000;
 const mouseSegmentMs = 20;
 const mouseStrokeGapMs = 250;
@@ -523,6 +572,8 @@ function wireDangerForm(form: HTMLFormElement) {
 dangerForms.forEach(wireDangerForm);
 
 updateControls();
+// shortcut: no status source yet, wire this to GET /monitoring/status when #125 lands.
+renderMonitoringStatus(null);
 void (async () => {
   setCollectionStatus("Loading saved windows…");
   try {
