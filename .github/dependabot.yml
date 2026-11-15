@@ -7,19 +7,16 @@ updates:
   - package-ecosystem: uv
     directories:
       - /backend
-      - /python-keylogger
     schedule:
       interval: weekly
   - package-ecosystem: pip
     directories:
       - /Frontend
-      - /test
     schedule:
       interval: weekly
   - package-ecosystem: npm
     directories:
       - /Frontend
-      - /test
     schedule:
       interval: weekly
     ignore:

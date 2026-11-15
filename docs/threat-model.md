@@ -137,9 +137,8 @@ do not hold the service token.
 ## Dependency updates
 
 [`.github/dependabot.yml`](../.github/dependabot.yml) enrolls weekly updates for
-GitHub Actions, npm and pip in `Frontend/` and `test/`, uv in `backend/` and
-`python-keylogger/`, and cargo in `backend/rust/`. A version bump still goes through
-the existing CI checks.
+GitHub Actions, npm and pip in `Frontend/`, uv in `backend/`, and cargo in
+`backend/rust/`. A version bump still goes through the existing CI checks.
 
 ## Forgery, replay, and leakage in the request path
 

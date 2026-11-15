@@ -1,5 +1,0 @@
-__pycache__/
-node_modules/
-.venv/
-*.sqlite3
-*:Zone.Identifier

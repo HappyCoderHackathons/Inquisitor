@@ -82,13 +82,11 @@ class UxStateTests(unittest.TestCase):
     def test_supported_evaluation_numbers_keep_their_limits(self):
         evaluation = (ROOT / "docs" / "model-evaluation.md").read_text(encoding="utf-8")
         handoff = (ROOT / "Frontend" / "INTEGRATION_HANDOFF.md").read_text(encoding="utf-8")
-        keylogger = (ROOT / "python-keylogger" / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("96.67%", evaluation)
         self.assertIn("not an untouched independent final test", evaluation)
         self.assertNotIn("non-user activity", handoff)
         self.assertIn("not proof of identity", handoff)
-        self.assertNotIn("privacy guarantee", keylogger.casefold())
 
     def test_visible_text_and_focus_meet_contrast(self):
         css = (ROOT / "Frontend" / "static" / "style.css").read_text(encoding="utf-8")

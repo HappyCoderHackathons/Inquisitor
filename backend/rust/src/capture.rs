@@ -1,7 +1,9 @@
 //! Raw-input capture.
 //!
-//! Registers for keyboard, mouse and generic HID (joystick/gamepad) raw input via
-//! a hidden message-only window and emits CSV rows describing each event.
+//! Registers for keyboard, mouse and generic HID (joystick/gamepad) raw input and
+//! emits CSV rows describing each event. The tray front end drives this via
+//! `Capture::process_wm_input`; a standalone message pump is available through
+//! `run()` for the CLI `capture` subcommand.
 //!
 //! Privacy: for keyboards we never emit the key identity or any ordered character
 //! stream. Only press/release events with timing are recorded. See AGENTS.md.
@@ -12,10 +14,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::mem::size_of;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use windows::core::{PCWSTR, w};
 use windows::Win32::Devices::HumanInterfaceDevice::{
     HID_USAGE_GENERIC_GAMEPAD, HID_USAGE_GENERIC_JOYSTICK, HID_USAGE_GENERIC_KEYBOARD,
     HID_USAGE_GENERIC_MOUSE, HID_USAGE_GENERIC_MULTI_AXIS_CONTROLLER, HID_USAGE_PAGE_GENERIC,
@@ -27,12 +27,14 @@ use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::{
     GetRawInputData, GetRawInputDeviceInfoW, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER, RAWKEYBOARD,
-    RAWMOUSE, RID_INPUT, RIDEV_INPUTSINK, RIDI_PREPARSEDDATA, RegisterRawInputDevices,
+    RAWMOUSE, RID_INPUT, RIDEV_INPUTSINK, RIDEV_PAGEONLY, RIDI_DEVICENAME, RIDI_PREPARSEDDATA,
+    RegisterRawInputDevices,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, HWND_MESSAGE, MSG,
     RegisterClassExW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_INPUT, WNDCLASSEXW,
 };
+use windows::core::{PCWSTR, w};
 
 // Mouse flag constants (not re-exported by the windows crate at every path).
 const RI_MOUSE_LEFT_BUTTON_DOWN: u16 = 0x0001;
@@ -66,6 +68,23 @@ struct HidCaps {
     data: Vec<u8>,
     button_caps: Vec<HIDP_BUTTON_CAPS>,
     value_caps: Vec<HIDP_VALUE_CAPS>,
+    /// CSV `io_type` for this device, derived from its top-level HID usage.
+    io_type: &'static str,
+}
+
+/// CSV `io_type` for a HID device's top-level usage. Controllers share one label;
+/// digitizers and media keys get their own so rows are easy to filter.
+fn hid_io_type(usage_page: u16, usage: u16) -> &'static str {
+    match (usage_page, usage) {
+        (0x01, 0x04 | 0x05 | 0x08) => "gamepad",
+        (0x01, 0x07) => "keypad",
+        (0x0C, _) => "consumer",
+        (0x0D, 0x02) => "pen",
+        (0x0D, 0x04) => "touchscreen",
+        (0x0D, 0x05) => "touchpad",
+        (0x0D, _) => "digitizer",
+        _ => "hid",
+    }
 }
 
 /// Previous HID state used for change detection.
@@ -92,10 +111,16 @@ pub enum CaptureOutput {
     Stdout,
 }
 
-struct Capture {
+/// Columns: iso_time,monotonic_s,io_type,device_id,event,control,hold_ms,flight_ms,dx,dy,value
+const CSV_HEADER: &str =
+    "iso_time,monotonic_s,io_type,device_id,event,control,hold_ms,flight_ms,dx,dy,value";
+
+pub struct Capture {
     start: Instant,
     /// Maps raw HANDLE values to stable short ids like "kbd0", "mouse0", "hid0".
     device_ids: HashMap<isize, String>,
+    /// Cached system device path per HANDLE, used for filtering by the tray.
+    device_paths: HashMap<isize, String>,
     next_kbd: u32,
     next_mouse: u32,
     next_hid: u32,
@@ -103,27 +128,16 @@ struct Capture {
     hid_caps: HashMap<isize, HidCaps>,
     hid_prev: HashMap<isize, HidPrev>,
     writer: io::BufWriter<Box<dyn Write>>,
+    /// Instance-level header flag so swapping the writer re-emits the header.
+    header_written: bool,
 }
-
-static mut CAPTURE: Option<Capture> = None;
-static HEADER_WRITTEN: OnceLock<()> = OnceLock::new();
-
-/// Returns a mutable pointer to the single Capture. Safe because the window
-/// proc that reads this only runs on the same thread as `run()`, after
-/// initialization in `run()` and before the message loop exits.
-fn capture_ptr() -> *mut Option<Capture> {
-    &raw mut CAPTURE
-}
-
-/// Columns: iso_time,monotonic_s,io_type,device_id,event,control,hold_ms,flight_ms,dx,dy,value
-const CSV_HEADER: &str =
-    "iso_time,monotonic_s,io_type,device_id,event,control,hold_ms,flight_ms,dx,dy,value";
 
 impl Capture {
-    fn new(writer: Box<dyn Write>) -> Self {
+    pub fn new(writer: Box<dyn Write>) -> Self {
         Self {
             start: Instant::now(),
             device_ids: HashMap::new(),
+            device_paths: HashMap::new(),
             next_kbd: 0,
             next_mouse: 0,
             next_hid: 0,
@@ -131,6 +145,80 @@ impl Capture {
             hid_caps: HashMap::new(),
             hid_prev: HashMap::new(),
             writer: io::BufWriter::new(writer),
+            header_written: false,
+        }
+    }
+
+    /// Replace the output writer. The next event row will be preceded by a fresh
+    /// CSV header, so swapping files mid-session produces a self-describing output.
+    pub fn set_writer(&mut self, writer: Box<dyn Write>) {
+        let _ = self.writer.flush();
+        self.writer = io::BufWriter::new(writer);
+        self.header_written = false;
+    }
+
+    /// Return the cached system device path for a HANDLE, reading it from Windows on
+    /// first use. Returns an empty string if the lookup fails.
+    pub fn device_path(&mut self, handle: HANDLE) -> String {
+        let key = handle.0 as isize;
+        if let Some(p) = self.device_paths.get(&key) {
+            return p.clone();
+        }
+        let path = read_device_path(handle).unwrap_or_default();
+        self.device_paths.insert(key, path.clone());
+        path
+    }
+
+    /// Process a `WM_INPUT` message. `filter` is called once with the device path;
+    /// when it returns false the event is dropped without emitting a row.
+    pub fn process_wm_input<F: FnOnce(&str) -> bool>(&mut self, lparam: LPARAM, filter: F) {
+        let handle = windows::Win32::UI::Input::HRAWINPUT(lparam.0 as *mut c_void);
+        let mut size = 0u32;
+        let hdr_size = size_of::<RAWINPUTHEADER>() as u32;
+        unsafe {
+            GetRawInputData(handle, RID_INPUT, None, &mut size, hdr_size);
+        }
+        if size == 0 {
+            return;
+        }
+        let mut buf = vec![0u8; size as usize];
+        let read = unsafe {
+            GetRawInputData(
+                handle,
+                RID_INPUT,
+                Some(buf.as_mut_ptr().cast()),
+                &mut size,
+                hdr_size,
+            )
+        };
+        if read == u32::MAX || (read as usize) < size_of::<RAWINPUTHEADER>() {
+            return;
+        }
+        let raw = unsafe { &*(buf.as_ptr() as *const RAWINPUT) };
+        let dev = raw.header.hDevice;
+
+        // Caller decides whether this device is currently allowed to produce rows.
+        let path = self.device_path(dev);
+        if !filter(&path) {
+            return;
+        }
+
+        match raw.header.dwType {
+            0 => {
+                // RIM_TYPEMOUSE
+                let m = unsafe { &raw.data.mouse };
+                self.handle_mouse(dev, m);
+            }
+            1 => {
+                // RIM_TYPEKEYBOARD
+                let k = unsafe { &raw.data.keyboard };
+                self.handle_keyboard(dev, k);
+            }
+            2 => {
+                // RIM_TYPEHID
+                self.handle_hid(dev, raw);
+            }
+            _ => {}
         }
     }
 
@@ -163,7 +251,9 @@ impl Capture {
 
     fn now_iso(&self) -> String {
         // RFC3339-ish without a date crate: seconds since epoch with millis.
-        let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        let d = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         let secs = d.as_secs();
         let millis = d.subsec_millis();
         // Compute Y-M-D h:m:s in UTC using a small civil-from-days calc.
@@ -176,6 +266,8 @@ impl Capture {
         format!("{y:04}-{m:02}-{d2:02}T{h:02}:{mi:02}:{s:02}.{millis:03}Z")
     }
 
+    // One parameter per CSV column keeps every call site readable as a row.
+    #[allow(clippy::too_many_arguments)]
     fn write_row(
         &mut self,
         io_type: &str,
@@ -188,8 +280,9 @@ impl Capture {
         dy: Option<i32>,
         value: Option<i32>,
     ) {
-        if HEADER_WRITTEN.set(()).is_ok() {
+        if !self.header_written {
             let _ = writeln!(self.writer, "{CSV_HEADER}");
+            self.header_written = true;
         }
         let iso = self.now_iso();
         let mono = self.start.elapsed().as_secs_f64();
@@ -338,15 +431,7 @@ impl Capture {
             (None, flight)
         };
         self.write_row(
-            "mouse",
-            &device_id.to_string(),
-            event,
-            control,
-            hold_ms,
-            flight_ms,
-            None,
-            None,
-            None,
+            "mouse", device_id, event, control, hold_ms, flight_ms, None, None, None,
         );
     }
 
@@ -370,30 +455,32 @@ impl Capture {
             return;
         }
 
+        let io_type = self.hid_caps[&key].io_type;
         let base = hid.bRawData.as_ptr() as *mut u8;
         for i in 0..count {
-            let report =
-                unsafe { std::slice::from_raw_parts_mut(base.add(i * size), size) };
+            let report = unsafe { std::slice::from_raw_parts_mut(base.add(i * size), size) };
             let events = {
                 let caps = self.hid_caps.get(&key).unwrap();
                 let prev = self.hid_prev.get_mut(&key).unwrap();
                 collect_hid_events(caps, prev, report)
             };
             for ev in events {
-                self.emit_hid_event(&device_id, ev);
+                self.emit_hid_event(io_type, &device_id, ev);
             }
         }
     }
 
-    fn emit_hid_event(&mut self, device_id: &str, ev: HidEvent) {
+    fn emit_hid_event(&mut self, io_type: &str, device_id: &str, ev: HidEvent) {
         let now = Instant::now();
         match ev {
             HidEvent::ButtonPress(control) => {
                 let state = self.state.entry(device_id.to_string()).or_default();
-                let flight = state.last_release.map(|t| now.duration_since(t).as_millis());
+                let flight = state
+                    .last_release
+                    .map(|t| now.duration_since(t).as_millis());
                 state.press_times.insert(control.clone(), now);
                 self.write_row(
-                    "gamepad", device_id, "press", &control, None, flight, None, None, None,
+                    io_type, device_id, "press", &control, None, flight, None, None, None,
                 );
             }
             HidEvent::ButtonRelease(control) => {
@@ -404,12 +491,12 @@ impl Capture {
                     .map(|t| now.duration_since(t).as_millis());
                 state.last_release = Some(now);
                 self.write_row(
-                    "gamepad", device_id, "release", &control, hold, None, None, None, None,
+                    io_type, device_id, "release", &control, hold, None, None, None, None,
                 );
             }
             HidEvent::Value { control, value } => {
                 self.write_row(
-                    "gamepad",
+                    io_type,
                     device_id,
                     "axis",
                     &control,
@@ -454,14 +541,20 @@ fn load_hid_caps(handle: HANDLE) -> Option<HidCaps> {
 
     let mut button_caps = Vec::new();
     if caps.NumberInputButtonCaps > 0 {
-        button_caps.resize(caps.NumberInputButtonCaps as usize, HIDP_BUTTON_CAPS::default());
+        button_caps.resize(
+            caps.NumberInputButtonCaps as usize,
+            HIDP_BUTTON_CAPS::default(),
+        );
         let mut len = caps.NumberInputButtonCaps;
         let _ = unsafe { HidP_GetButtonCaps(HidP_Input, button_caps.as_mut_ptr(), &mut len, prep) };
     }
 
     let mut value_caps = Vec::new();
     if caps.NumberInputValueCaps > 0 {
-        value_caps.resize(caps.NumberInputValueCaps as usize, HIDP_VALUE_CAPS::default());
+        value_caps.resize(
+            caps.NumberInputValueCaps as usize,
+            HIDP_VALUE_CAPS::default(),
+        );
         let mut len = caps.NumberInputValueCaps;
         let _ = unsafe { HidP_GetValueCaps(HidP_Input, value_caps.as_mut_ptr(), &mut len, prep) };
     }
@@ -470,6 +563,7 @@ fn load_hid_caps(handle: HANDLE) -> Option<HidCaps> {
         data,
         button_caps,
         value_caps,
+        io_type: hid_io_type(caps.UsagePage, caps.Usage),
     })
 }
 
@@ -533,13 +627,7 @@ fn collect_hid_events(caps: &HidCaps, prev: &mut HidPrev, report: &mut [u8]) -> 
             let mut value = 0u32;
             let status = unsafe {
                 HidP_GetUsageValue(
-                    HidP_Input,
-                    usage_page,
-                    None,
-                    usage,
-                    &mut value,
-                    prep,
-                    &*report,
+                    HidP_Input, usage_page, None, usage, &mut value, prep, &*report,
                 )
             };
             if status == HIDP_STATUS_SUCCESS {
@@ -582,112 +670,67 @@ fn value_name(page: u16, usage: u16) -> String {
     }
 }
 
-fn open_output(output: CaptureOutput) -> (Box<dyn Write>, String) {
-    match output {
-        CaptureOutput::Stdout => (Box::new(io::stdout()), "<stdout>".to_string()),
-        CaptureOutput::DefaultFile => {
-            let path = default_output_path();
-            let w = open_file(&path);
-            (w, path.display().to_string())
-        }
-        CaptureOutput::File(path) => {
-            if let Some(parent) = path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            let w = open_file(&path);
-            (w, path.display().to_string())
-        }
-    }
-}
-
-fn open_file(path: &std::path::Path) -> Box<dyn Write> {
-    match fs::File::create(path) {
-        Ok(f) => Box::new(f),
-        Err(e) => {
-            eprintln!("failed to open {}: {e}", path.display());
-            std::process::exit(1);
-        }
-    }
-}
-
-/// `%APPDATA%\inquisitor\capture-<utc timestamp>.csv`, creating the directory if needed.
-pub fn default_output_path() -> PathBuf {
-    let base = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let dir = base.join("inquisitor");
-    let _ = fs::create_dir_all(&dir);
-    dir.join(format!("capture-{}.csv", utc_timestamp_compact()))
-}
-
-fn utc_timestamp_compact() -> String {
-    let d = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = d.as_secs();
-    let days = (secs / 86_400) as i64;
-    let tod = secs % 86_400;
-    let (y, m, d2) = civil_from_days(days);
-    let h = tod / 3600;
-    let mi = (tod % 3600) / 60;
-    let s = tod % 60;
-    format!("{y:04}{m:02}{d2:02}-{h:02}{mi:02}{s:02}Z")
-}
-
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    // Howard Hinnant's civil_from_days (UTC).
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
-
-/// Start the capture loop on this thread. Blocks until the message loop exits.
-pub fn run(output: CaptureOutput) -> windows::core::Result<()> {
-    let (writer, path_desc) = open_output(output);
+/// Read a device's system path by HANDLE. Public so the tray can snapshot
+/// current device paths at startup.
+pub fn read_device_path(handle: HANDLE) -> Option<String> {
+    let mut len = 0u32;
     unsafe {
-        *capture_ptr() = Some(Capture::new(writer));
+        GetRawInputDeviceInfoW(Some(handle), RIDI_DEVICENAME, None, &mut len);
     }
-
-    let hinstance = unsafe { GetModuleHandleW(PCWSTR::null())? };
-    let class_name = w!("InquisitorRawInputWnd");
-
-    let wc = WNDCLASSEXW {
-        cbSize: size_of::<WNDCLASSEXW>() as u32,
-        lpfnWndProc: Some(wnd_proc),
-        hInstance: hinstance.into(),
-        lpszClassName: class_name,
-        ..Default::default()
+    if len == 0 {
+        return None;
+    }
+    let mut buffer = vec![0u16; len as usize];
+    let copied = unsafe {
+        GetRawInputDeviceInfoW(
+            Some(handle),
+            RIDI_DEVICENAME,
+            Some(buffer.as_mut_ptr().cast()),
+            &mut len,
+        )
     };
-    unsafe { RegisterClassExW(&wc) };
+    if copied == u32::MAX {
+        return None;
+    }
+    let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+    Some(String::from_utf16_lossy(&buffer[..end]))
+}
 
-    let hwnd = unsafe {
-        CreateWindowExW(
-            WINDOW_EX_STYLE(0),
-            class_name,
-            w!("inquisitor"),
-            WINDOW_STYLE(0),
-            0,
-            0,
-            0,
-            0,
-            Some(HWND_MESSAGE),
-            None,
-            Some(hinstance.into()),
-            None,
-        )?
-    };
-
-    // Register for all three raw-input categories. RIDEV_INPUTSINK means the
-    // window receives input even when it does not have focus.
+/// Subscribe the given window to raw input from every kind of user-input device:
+/// keyboards, keypads, mice, controllers (gamepad, joystick, multi-axis), media
+/// keys (whole consumer page) and digitizers (whole page: touch pads, touch
+/// screens, pens). `RIDEV_INPUTSINK` lets the hidden window receive events
+/// without focus.
+///
+/// Digitizers matter because precision touch pads and pens move the pointer as a
+/// synthesized mouse with no device handle; only their own digitizer reports
+/// identify the physical device. Subscribing does not record anything by
+/// itself: the tray drops events from devices that are not whitelisted.
+pub fn register_for_raw_input(hwnd: HWND) -> windows::core::Result<()> {
+    const HID_USAGE_GENERIC_KEYPAD: u16 = 0x07;
+    const HID_USAGE_PAGE_CONSUMER: u16 = 0x0C;
+    const HID_USAGE_PAGE_DIGITIZER: u16 = 0x0D;
     let devices = [
+        RAWINPUTDEVICE {
+            usUsagePage: HID_USAGE_PAGE_GENERIC,
+            usUsage: HID_USAGE_GENERIC_KEYPAD,
+            dwFlags: RIDEV_INPUTSINK,
+            hwndTarget: hwnd,
+        },
+        // RIDEV_PAGEONLY subscribes every top-level collection on the page; it
+        // requires usUsage = 0.
+        RAWINPUTDEVICE {
+            usUsagePage: HID_USAGE_PAGE_CONSUMER,
+            usUsage: 0,
+            dwFlags: RIDEV_INPUTSINK | RIDEV_PAGEONLY,
+            hwndTarget: hwnd,
+        },
+        RAWINPUTDEVICE {
+            usUsagePage: HID_USAGE_PAGE_DIGITIZER,
+            usUsage: 0,
+            dwFlags: RIDEV_INPUTSINK | RIDEV_PAGEONLY,
+            hwndTarget: hwnd,
+        },
         RAWINPUTDEVICE {
             usUsagePage: HID_USAGE_PAGE_GENERIC,
             usUsage: HID_USAGE_GENERIC_KEYBOARD,
@@ -719,9 +762,137 @@ pub fn run(output: CaptureOutput) -> windows::core::Result<()> {
             hwndTarget: hwnd,
         },
     ];
-    unsafe {
-        RegisterRawInputDevices(&devices, size_of::<RAWINPUTDEVICE>() as u32)?;
+    unsafe { RegisterRawInputDevices(&devices, size_of::<RAWINPUTDEVICE>() as u32) }
+}
+
+fn open_output(output: CaptureOutput) -> (Box<dyn Write>, String) {
+    match output {
+        CaptureOutput::Stdout => (Box::new(io::stdout()), "<stdout>".to_string()),
+        CaptureOutput::DefaultFile => {
+            let path = default_output_path(&default_data_dir());
+            let w = open_file(&path);
+            (w, path.display().to_string())
+        }
+        CaptureOutput::File(path) => {
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let w = open_file(&path);
+            (w, path.display().to_string())
+        }
     }
+}
+
+fn open_file(path: &std::path::Path) -> Box<dyn Write> {
+    match fs::File::create(path) {
+        Ok(f) => Box::new(f),
+        Err(e) => {
+            eprintln!("failed to open {}: {e}", path.display());
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `<data_dir>\capture-<utc timestamp>.csv`, creating the directory if needed.
+pub fn default_output_path(data_dir: &std::path::Path) -> PathBuf {
+    let _ = fs::create_dir_all(data_dir);
+    data_dir.join(format!("capture-{}.csv", utc_timestamp_compact()))
+}
+
+/// `%APPDATA%\inquisitor`, or the current directory if APPDATA is unset.
+pub fn default_data_dir() -> PathBuf {
+    let base = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("inquisitor")
+}
+
+/// Open a fresh CSV file inside `data_dir`, returning the open writer and the chosen path.
+/// Used by the tray when it starts capture or switches data directories.
+pub fn open_timestamped_file(data_dir: &std::path::Path) -> (Box<dyn Write>, PathBuf) {
+    let path = default_output_path(data_dir);
+    let w = open_file(&path);
+    (w, path)
+}
+
+fn utc_timestamp_compact() -> String {
+    let d = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = d.as_secs();
+    let days = (secs / 86_400) as i64;
+    let tod = secs % 86_400;
+    let (y, m, d2) = civil_from_days(days);
+    let h = tod / 3600;
+    let mi = (tod % 3600) / 60;
+    let s = tod % 60;
+    format!("{y:04}{m:02}{d2:02}-{h:02}{mi:02}{s:02}Z")
+}
+
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    // Howard Hinnant's civil_from_days (UTC).
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+// --- CLI capture subcommand -------------------------------------------------
+//
+// The `inquisitor capture` subcommand runs its own hidden window and message loop.
+// It uses a single global Capture with no filter and no pause; the tray has its
+// own window and its own Capture instance.
+
+static mut CLI_CAPTURE: Option<Capture> = None;
+
+fn cli_capture_ptr() -> *mut Option<Capture> {
+    &raw mut CLI_CAPTURE
+}
+
+/// Start the CLI capture loop on this thread. Blocks until the message loop exits.
+pub fn run(output: CaptureOutput) -> windows::core::Result<()> {
+    let (writer, path_desc) = open_output(output);
+    unsafe {
+        *cli_capture_ptr() = Some(Capture::new(writer));
+    }
+
+    let hinstance = unsafe { GetModuleHandleW(PCWSTR::null())? };
+    let class_name = w!("InquisitorCliCaptureWnd");
+
+    let wc = WNDCLASSEXW {
+        cbSize: size_of::<WNDCLASSEXW>() as u32,
+        lpfnWndProc: Some(cli_wnd_proc),
+        hInstance: hinstance.into(),
+        lpszClassName: class_name,
+        ..Default::default()
+    };
+    unsafe { RegisterClassExW(&wc) };
+
+    let hwnd = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            class_name,
+            w!("inquisitor"),
+            WINDOW_STYLE(0),
+            0,
+            0,
+            0,
+            0,
+            Some(HWND_MESSAGE),
+            None,
+            Some(hinstance.into()),
+            None,
+        )?
+    };
+
+    register_for_raw_input(hwnd)?;
 
     eprintln!("Capturing raw input to {path_desc}. Ctrl+C to stop.");
 
@@ -735,55 +906,249 @@ pub fn run(output: CaptureOutput) -> windows::core::Result<()> {
     Ok(())
 }
 
-extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if msg == WM_INPUT {
-        if let Some(cap) = unsafe { (*capture_ptr()).as_mut() } {
-            read_input(lparam, cap);
-        }
+extern "system" fn cli_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if msg == WM_INPUT
+        && let Some(cap) = unsafe { (*cli_capture_ptr()).as_mut() }
+    {
+        // CLI mode runs with no filter and no pause.
+        cap.process_wm_input(lparam, |_| true);
     }
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
-fn read_input(lparam: LPARAM, cap: &mut Capture) {
-    let handle = windows::Win32::UI::Input::HRAWINPUT(lparam.0 as *mut c_void);
-    let mut size = 0u32;
-    let hdr_size = size_of::<RAWINPUTHEADER>() as u32;
-    unsafe {
-        GetRawInputData(handle, RID_INPUT, None, &mut size, hdr_size);
-    }
-    if size == 0 {
-        return;
-    }
-    let mut buf = vec![0u8; size as usize];
-    let read = unsafe {
-        GetRawInputData(
-            handle,
-            RID_INPUT,
-            Some(buf.as_mut_ptr().cast()),
-            &mut size,
-            hdr_size,
-        )
-    };
-    if read == u32::MAX || (read as usize) < size_of::<RAWINPUTHEADER>() {
-        return;
-    }
-    let raw = unsafe { &*(buf.as_ptr() as *const RAWINPUT) };
-    let dev = raw.header.hDevice;
-    match raw.header.dwType {
-        0 => {
-            // RIM_TYPEMOUSE
-            let m = unsafe { &raw.data.mouse };
-            cap.handle_mouse(dev, m);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use windows::Win32::UI::Input::{RAWMOUSE_0, RAWMOUSE_0_0};
+
+    /// Writer whose bytes the test can read back after Capture writes rows.
+    #[derive(Clone, Default)]
+    struct SharedBuf(Rc<RefCell<Vec<u8>>>);
+
+    impl Write for SharedBuf {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.borrow_mut().extend_from_slice(buf);
+            Ok(buf.len())
         }
-        1 => {
-            // RIM_TYPEKEYBOARD
-            let k = unsafe { &raw.data.keyboard };
-            cap.handle_keyboard(dev, k);
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
         }
-        2 => {
-            // RIM_TYPEHID
-            cap.handle_hid(dev, raw);
+    }
+
+    impl SharedBuf {
+        fn lines(&self) -> Vec<String> {
+            String::from_utf8(self.0.borrow().clone())
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect()
         }
-        _ => {}
+    }
+
+    /// Split a CSV row into its 11 columns, asserting the shape.
+    fn cols(line: &str) -> Vec<String> {
+        let c: Vec<String> = line.split(',').map(str::to_string).collect();
+        assert_eq!(c.len(), 11, "row must have 11 columns: {line}");
+        c
+    }
+
+    fn capture() -> (Capture, SharedBuf) {
+        let buf = SharedBuf::default();
+        (Capture::new(Box::new(buf.clone())), buf)
+    }
+
+    const KBD: HANDLE = HANDLE(0x10 as *mut _);
+    const MOUSE: HANDLE = HANDLE(0x20 as *mut _);
+
+    fn key(scan: u16, up: bool) -> RAWKEYBOARD {
+        RAWKEYBOARD {
+            MakeCode: scan,
+            Flags: if up { RI_KEY_BREAK } else { 0 },
+            ..Default::default()
+        }
+    }
+
+    fn mouse(dx: i32, dy: i32, flags: u16, data: u16) -> RAWMOUSE {
+        RAWMOUSE {
+            lLastX: dx,
+            lLastY: dy,
+            Anonymous: RAWMOUSE_0 {
+                Anonymous: RAWMOUSE_0_0 {
+                    usButtonFlags: flags,
+                    usButtonData: data,
+                },
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn header_is_written_once_before_the_first_row() {
+        let (mut cap, buf) = capture();
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        cap.handle_keyboard(KBD, &key(0x1E, true));
+        let lines = buf.lines();
+        assert_eq!(lines[0], CSV_HEADER);
+        assert_eq!(lines.iter().filter(|l| *l == CSV_HEADER).count(), 1);
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn keyboard_rows_carry_timing_but_never_key_identity() {
+        let (mut cap, buf) = capture();
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        cap.handle_keyboard(KBD, &key(0x1E, true));
+        cap.handle_keyboard(KBD, &key(0x30, false));
+        cap.handle_keyboard(KBD, &key(0x30, true));
+        let lines = buf.lines();
+
+        let press = cols(&lines[1]);
+        assert_eq!(&press[2..6], ["keyboard", "kbd0", "press", "key"]);
+        assert!(
+            press[6].is_empty() && press[7].is_empty(),
+            "first press has no timing"
+        );
+
+        let release = cols(&lines[2]);
+        assert_eq!(release[4], "release");
+        assert!(
+            release[6].parse::<u128>().is_ok(),
+            "release carries hold_ms"
+        );
+
+        let second_press = cols(&lines[3]);
+        assert!(
+            second_press[7].parse::<u128>().is_ok(),
+            "press carries flight_ms"
+        );
+
+        // AGENTS.md: key identities must never be persisted.
+        let all = buf.lines().join("\n");
+        assert!(!all.contains("sc_"), "scan-code token leaked: {all}");
+        for line in &lines[1..] {
+            assert_eq!(cols(line)[5], "key");
+        }
+    }
+
+    #[test]
+    fn keyboard_auto_repeat_is_suppressed() {
+        let (mut cap, buf) = capture();
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        cap.handle_keyboard(KBD, &key(0x1E, true));
+        assert_eq!(buf.lines().len(), 3, "header + one press + one release");
+    }
+
+    #[test]
+    fn mouse_move_button_and_scroll_rows() {
+        const LEFT_DOWN: u16 = 0x0001;
+        const LEFT_UP: u16 = 0x0002;
+        let (mut cap, buf) = capture();
+        cap.handle_mouse(MOUSE, &mouse(3, -2, 0, 0));
+        cap.handle_mouse(MOUSE, &mouse(0, 0, LEFT_DOWN, 0));
+        cap.handle_mouse(MOUSE, &mouse(0, 0, LEFT_UP, 0));
+        cap.handle_mouse(MOUSE, &mouse(0, 0, RI_MOUSE_WHEEL, 120));
+        // 0xFF88 is -120 as the signed wheel delta Windows sends for scroll-down.
+        cap.handle_mouse(MOUSE, &mouse(0, 0, RI_MOUSE_HWHEEL, 0xFF88));
+        let lines = buf.lines();
+
+        let mv = cols(&lines[1]);
+        assert_eq!(&mv[2..6], ["mouse", "mouse0", "move", "motion"]);
+        assert_eq!((mv[8].as_str(), mv[9].as_str()), ("3", "-2"));
+
+        assert_eq!(&cols(&lines[2])[4..6], ["press", "button_left"]);
+        let up = cols(&lines[3]);
+        assert_eq!(&up[4..6], ["release", "button_left"]);
+        assert!(
+            up[6].parse::<u128>().is_ok(),
+            "button release carries hold_ms"
+        );
+
+        let v = cols(&lines[4]);
+        assert_eq!(
+            (&v[4][..], &v[5][..], &v[10][..]),
+            ("scroll", "wheel_v", "120")
+        );
+        let h = cols(&lines[5]);
+        assert_eq!((&h[5][..], &h[10][..]), ("wheel_h", "-120"));
+    }
+
+    #[test]
+    fn device_ids_are_stable_per_handle_and_numbered_per_kind() {
+        let (mut cap, _) = capture();
+        assert_eq!(cap.device_id(KBD, "kbd"), "kbd0");
+        assert_eq!(cap.device_id(HANDLE(0x11 as *mut _), "kbd"), "kbd1");
+        assert_eq!(cap.device_id(KBD, "kbd"), "kbd0");
+        assert_eq!(cap.device_id(MOUSE, "mouse"), "mouse0");
+    }
+
+    #[test]
+    fn set_writer_rewrites_the_header_in_the_new_output() {
+        let (mut cap, _) = capture();
+        cap.handle_keyboard(KBD, &key(0x1E, false));
+        let second = SharedBuf::default();
+        cap.set_writer(Box::new(second.clone()));
+        cap.handle_keyboard(KBD, &key(0x1E, true));
+        let lines = second.lines();
+        assert_eq!(lines[0], CSV_HEADER);
+        assert_eq!(lines.len(), 2);
+    }
+
+    #[test]
+    fn hid_control_names() {
+        assert_eq!(button_name((0x09, 3)), "button_03");
+        assert_eq!(button_name((0x0C, 0xE9)), "button_000c_e9");
+        assert_eq!(value_name(0x01, 0x30), "axis_x");
+        assert_eq!(value_name(0x01, 0x35), "axis_rz");
+        assert_eq!(value_name(0x01, 0x39), "dpad");
+        assert_eq!(value_name(0xFF00, 0x01), "value_ff00_01");
+    }
+
+    #[test]
+    fn hid_io_types() {
+        assert_eq!(hid_io_type(0x01, 0x05), "gamepad");
+        assert_eq!(hid_io_type(0x01, 0x04), "gamepad");
+        assert_eq!(hid_io_type(0x01, 0x07), "keypad");
+        assert_eq!(hid_io_type(0x0C, 0x01), "consumer");
+        assert_eq!(hid_io_type(0x0D, 0x02), "pen");
+        assert_eq!(hid_io_type(0x0D, 0x04), "touchscreen");
+        assert_eq!(hid_io_type(0x0D, 0x05), "touchpad");
+        assert_eq!(hid_io_type(0x0D, 0x01), "digitizer");
+        assert_eq!(hid_io_type(0xFF00, 0x01), "hid");
+    }
+
+    #[test]
+    fn civil_from_days_matches_known_dates() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(19_723), (2024, 1, 1));
+        assert_eq!(civil_from_days(19_723 + 31 + 28), (2024, 2, 29));
+        assert_eq!(civil_from_days(-1), (1969, 12, 31));
+    }
+
+    #[test]
+    fn timestamps_have_the_documented_shape() {
+        let (cap, _) = capture();
+        let iso = cap.now_iso();
+        assert_eq!(iso.len(), "2026-11-15T03:13:19.875Z".len(), "{iso}");
+        assert!(iso.ends_with('Z') && iso.as_bytes()[10] == b'T');
+
+        let compact = utc_timestamp_compact();
+        assert_eq!(compact.len(), "20261115-031319Z".len(), "{compact}");
+    }
+
+    #[test]
+    fn default_output_path_is_a_timestamped_csv_in_the_data_dir() {
+        let dir = std::env::temp_dir().join(format!("inquisitor-test-{}-out", std::process::id()));
+        let path = default_output_path(&dir);
+        assert_eq!(path.parent(), Some(dir.as_path()));
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(
+            name.starts_with("capture-") && name.ends_with(".csv"),
+            "{name}"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

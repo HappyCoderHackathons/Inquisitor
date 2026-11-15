@@ -16,6 +16,10 @@ from uuid import uuid4
 from .model import sufficient_activity, validate_window
 
 HEADER = ["iso_time", "monotonic_s", "io_type", "device_id", "event", "control", "hold_ms", "flight_ms", "dx", "dy", "value"]
+# Every io_type the tray writes (backend/rust/src/capture.rs). Only keyboard, and
+# mouse when opted in, feed the model; the rest are accepted and skipped.
+IO_TYPES = frozenset({"keyboard", "mouse", "gamepad", "keypad", "consumer", "touchpad", "touchscreen", "pen",
+                      "digitizer", "hid"})
 WINDOW_SECONDS = 30
 MOUSE_BIN_SECONDS = .02
 
@@ -97,7 +101,7 @@ def csv_windows(
             if not math.isfinite(now) or now < previous or now < 0:
                 raise ValueError
             previous = now
-            if row["io_type"] not in ("keyboard", "mouse", "gamepad"):
+            if row["io_type"] not in IO_TYPES:
                 raise ValueError
             if origin is None:
                 origin = now

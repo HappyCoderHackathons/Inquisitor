@@ -51,6 +51,18 @@ class TrayMultimodalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             csv_windows(io.StringIO(capture()), "pc", "session", keyboard_source="absent")
 
+    def test_other_tray_device_types_are_skipped_but_unknown_types_rejected(self) -> None:
+        lines = capture().splitlines()
+        extra = [f"2026-01-01T00:00:00Z,{index * .5 + .05},{kind},hid{index},axis,axis_x,,,,,7"
+                 for index, kind in enumerate(("touchpad", "touchscreen", "pen", "consumer", "keypad",
+                                               "digitizer", "hid", "gamepad"))]
+        rows = sorted(lines[1:] + extra, key=lambda row: float(row.split(",")[1]))
+        mixed = "\n".join([lines[0], *rows])
+        self.assertEqual(csv_windows(io.StringIO(mixed), "pc", "session"),
+                         csv_windows(io.StringIO(capture()), "pc", "session"))
+        with self.assertRaises(ValueError):
+            csv_windows(io.StringIO(mixed.replace(",pen,", ",webcam,")), "pc", "session")
+
     def test_model_inputs_do_not_change_with_uniform_mouse_resolution_scaling(self) -> None:
         windows = [csv_windows(io.StringIO(capture(scale)), "pc", "session", track_mouse=True)[0] for scale in (1, 10)]
         matrix = labeled_features(windows, "tray-multimodal")
