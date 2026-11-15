@@ -5,7 +5,6 @@
 //! menu messages against an `AppState` stored in the window's `GWLP_USERDATA`.
 
 use std::mem::size_of;
-use std::path::PathBuf;
 use std::time::Instant;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -71,7 +70,6 @@ const TICK_MS: u32 = 5_000;
 struct AppState {
     config: Config,
     capture: Capture,
-    current_path: PathBuf,
     /// If Some, capture is paused until this instant (auto-resume on first event after).
     /// If None and `paused`, capture is paused indefinitely.
     paused: bool,
@@ -89,12 +87,11 @@ struct AppState {
 }
 
 impl AppState {
-    fn new(config: Config, capture: Capture, current_path: PathBuf) -> Self {
+    fn new(config: Config, capture: Capture) -> Self {
         let startup_enabled = startup::is_enabled();
         Self {
             config,
             capture,
-            current_path,
             paused: false,
             pause_until: None,
             startup_enabled,
@@ -136,10 +133,10 @@ pub fn run() -> windows::core::Result<()> {
     // connections" and either clicks "Allow all" or ticks the devices they want
     // captured. Nothing records until at least one device is allowed.
     let config = Config::load_or_default();
-    let (writer, current_path) = capture::open_timestamped_file(&config.data_dir);
-    let mut capture = Capture::new(writer);
+    // The tray keeps only in-memory aggregate windows; ordered rows are discarded, never written.
+    let mut capture = Capture::new(Box::new(std::io::sink()));
     capture.set_windower(Some(Windower::new()));
-    let state = Box::new(AppState::new(config, capture, current_path));
+    let state = Box::new(AppState::new(config, capture));
 
     let hinstance = unsafe { GetModuleHandleW(PCWSTR::null())? };
     let class_name = CLASS_NAME;
@@ -500,9 +497,6 @@ fn handle_command(hwnd: HWND, state: &mut AppState, id: u16) {
             if let Some(new_dir) = folder_picker::pick_folder() {
                 state.config.data_dir = new_dir.clone();
                 let _ = state.config.save();
-                let (writer, path) = capture::open_timestamped_file(&new_dir);
-                state.capture.set_writer(writer);
-                state.current_path = path;
             }
         }
         ID_OPEN_DEVICES => {
@@ -687,11 +681,7 @@ mod tests {
             terms_accepted: crate::config::TERMS_VERSION,
             server_url: None,
         };
-        AppState::new(
-            config,
-            Capture::new(Box::new(std::io::sink())),
-            PathBuf::new(),
-        )
+        AppState::new(config, Capture::new(Box::new(std::io::sink())))
     }
 
     #[test]
@@ -804,12 +794,9 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("inquisitor-test-{}-fresh", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let csv = dir.join("capture.csv");
         std::fs::create_dir_all(&dir).unwrap();
         let mut s = state_allowing_test_input();
         s.config.terms_accepted = 0;
-        s.capture
-            .set_writer(Box::new(std::fs::File::create(&csv).unwrap()));
         // A remembered website but no device credential, as after disconnecting.
         let server = Endpoint::parse("http://127.0.0.1:9").ok();
         s.link = Some(Link::start_with(
@@ -829,7 +816,6 @@ mod tests {
             (State::NotPaired, None, 0)
         );
         drop(s);
-        assert_eq!(std::fs::metadata(&csv).unwrap().len(), 0);
         assert!(!dir.join("outbox.jsonl").exists());
         assert!(!dir.join("agent.log").exists());
         let _ = std::fs::remove_dir_all(&dir);

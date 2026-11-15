@@ -160,14 +160,6 @@ impl Capture {
         }
     }
 
-    /// Replace the output writer. The next event row will be preceded by a fresh
-    /// CSV header, so swapping files mid-session produces a self-describing output.
-    pub fn set_writer(&mut self, writer: Box<dyn Write>) {
-        let _ = self.writer.flush();
-        self.writer = io::BufWriter::new(writer);
-        self.header_written = false;
-    }
-
     /// Return the cached system device path for a HANDLE, reading it from Windows on
     /// first use. Returns an empty string if the lookup fails.
     pub fn device_path(&mut self, handle: HANDLE) -> String {
@@ -851,14 +843,6 @@ pub fn default_data_dir() -> PathBuf {
     base.join("inquisitor")
 }
 
-/// Open a fresh CSV file inside `data_dir`, returning the open writer and the chosen path.
-/// Used by the tray when it starts capture or switches data directories.
-pub fn open_timestamped_file(data_dir: &std::path::Path) -> (Box<dyn Write>, PathBuf) {
-    let path = default_output_path(data_dir);
-    let w = open_file(&path);
-    (w, path)
-}
-
 pub(crate) fn unix_ms_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1199,18 +1183,6 @@ mod tests {
         assert_eq!(cap.device_id(HANDLE(0x11 as *mut _), "kbd"), "kbd1");
         assert_eq!(cap.device_id(KBD, "kbd"), "kbd0");
         assert_eq!(cap.device_id(MOUSE, "mouse"), "mouse0");
-    }
-
-    #[test]
-    fn set_writer_rewrites_the_header_in_the_new_output() {
-        let (mut cap, _) = capture();
-        cap.handle_keyboard(KBD, &key(0x1E, false));
-        let second = SharedBuf::default();
-        cap.set_writer(Box::new(second.clone()));
-        cap.handle_keyboard(KBD, &key(0x1E, true));
-        let lines = second.lines();
-        assert_eq!(lines[0], CSV_HEADER);
-        assert_eq!(lines.len(), 2);
     }
 
     #[test]
