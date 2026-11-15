@@ -42,7 +42,7 @@ from models import (
 )
 from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, PyMongoError
 from werkzeug.exceptions import RequestEntityTooLarge
 
 GAMES = ("aim", "tetris", "typing", "arena")
@@ -97,22 +97,47 @@ ALGORITHM_LABELS = {
 logger = logging.getLogger(__name__)
 
 
+def audit_agent_event(
+    event: str,
+    *,
+    device_id: str,
+    outcome: str,
+    reason: str | None = None,
+    sequence: int | None = None,
+    schema_version: int | None = None,
+    mode: str | None = None,
+) -> None:
+    metadata: dict[str, str | int] = {
+        "device_id": device_id,
+        "event": event,
+        "outcome": outcome,
+    }
+    if reason is not None:
+        metadata["reason"] = reason
+    if sequence is not None:
+        metadata["sequence"] = sequence
+    if schema_version is not None:
+        metadata["schema_version"] = schema_version
+    if mode is not None:
+        metadata["mode"] = mode
+    logger.info(json.dumps(metadata, allow_nan=False, separators=(",", ":"), sort_keys=True))
+
+
 def audit_agent_window(
     device_id: str,
     outcome: str,
     reason: str | None = None,
     window: Document | None = None,
 ) -> None:
-    metadata = [f"outcome={outcome}", f"device_id={device_id}"]
-    if reason is not None:
-        metadata.append(f"reason={reason}")
-    if window is not None:
-        metadata.extend((
-            f"sequence={window['sequence']}",
-            f"schema_version={window['schema_version']}",
-            f"mode={window['mode']}",
-        ))
-    logger.info("agent_window_ingestion %s", " ".join(metadata))
+    audit_agent_event(
+        "agent_window_ingestion",
+        device_id=device_id,
+        outcome=outcome,
+        reason=reason,
+        sequence=window["sequence"] if window is not None else None,
+        schema_version=window["schema_version"] if window is not None else None,
+        mode=window["mode"] if window is not None else None,
+    )
 
 
 def configured() -> bool:
@@ -509,6 +534,19 @@ def register(
             [("device_id", ASCENDING), ("session_id", ASCENDING), ("sequence", ASCENDING)], unique=True
         )
     blueprint = Blueprint("hosted", __name__)
+
+    @blueprint.get("/health")
+    def health():
+        try:
+            database.command("ping")
+        except PyMongoError:
+            logger.warning(json.dumps({
+                "component": "database",
+                "event": "health_check",
+                "outcome": "unavailable",
+            }, separators=(",", ":"), sort_keys=True))
+            return jsonify(state="degraded", database="unavailable"), 503
+        return jsonify(state="ok", database="available")
 
     def start_training(onboarding: Document, status: Document) -> None:
         claimed = database.onboarding.find_one_and_update(
@@ -1182,6 +1220,7 @@ def register(
     @blueprint.post("/api/agent/heartbeat")
     def agent_heartbeat():
         device = device_auth()
+        audit_agent_event("agent_heartbeat", device_id=device["_id"], outcome="accepted")
         return jsonify(
             status=device["status"],
             last_seen=timestamp_text(device.get("last_heartbeat_at")),

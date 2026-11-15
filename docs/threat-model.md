@@ -85,6 +85,7 @@ There is no login. The dev server binds `127.0.0.1`. Fixed ids `local-user` and
 | `GET /`, `/arcade`, `/dashboard`, `/privacy` | Public page |
 | `GET /onboarding` when hosted auth is off | Public notice that sign-in is not configured |
 | `GET /api/summary`, `/api/feature-windows`, `/api/feature-windows/export`, `/api/retention` | The local process. Anyone who can open the port can read those aggregates |
+| `GET /health` | Public liveness status in local-only mode |
 | `POST /api/feature-windows` | The local process. `device_id` is a field of the feature window |
 | `POST /api/samples` | The local arcade sample table. No user id |
 | `DELETE /api/samples` | Clears that local sample table |
@@ -102,6 +103,7 @@ auth user id. An empty id is rejected.
 | --- | --- |
 | `POST /api/auth/sign-in/email`, `/api/auth/sign-up/email`, `/api/auth/sign-out` | The email and password, or the session being revoked. Unknown auth paths are 404 |
 | `GET /api/auth/get-session` | Proxied session read |
+| `GET /health` | Public readiness status. Reports only whether Atlas is available |
 | `GET /api/me`, `GET /api/onboarding` | The signed-in account |
 | `GET /onboarding`, `GET /login` | Page, or redirect to onboarding |
 | `POST /api/pairing-codes` | The signed-in account. The code is stored as a hash |
@@ -129,6 +131,8 @@ auth user id. An empty id is rejected.
 | `POST /api/agent/pair` | The account that owns the unused, unexpired pairing code. The token is stored only as a hash |
 | `GET /api/agent/onboarding` | The device for that bearer token. A revoked device is rejected |
 | `POST /api/agent/windows` | That device. The stored `user_id` comes from the device record. `window.device_id` must equal the device id |
+
+Hosted agent audit records are single-line JSON with allowlisted event metadata only. They may include device ID, outcome, controlled rejection reason, and validated window schema, mode, and sequence. They never include window contents, feature values, bearer tokens, or authorization headers.
 
 ### Model service bearer
 

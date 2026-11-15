@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -6,7 +7,7 @@ from unittest.mock import Mock, patch
 
 import mongomock
 from flask import Flask
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import ConnectionFailure, DuplicateKeyError
 
 import hosted
 import server
@@ -181,6 +182,32 @@ class OnboardingTests(unittest.TestCase):
         body = paired.get_json()
         return body["device_id"], {"Authorization": "Bearer " + body["token"]}
 
+    def test_health_reports_database_readiness_without_authentication(self):
+        with patch.object(self.database, "command", return_value={"ok": 1}) as ping:
+            healthy = self.client.get("/health")
+        self.assertEqual((healthy.status_code, healthy.get_json()), (200, {
+            "state": "ok",
+            "database": "available",
+        }))
+        ping.assert_called_once_with("ping")
+
+        with (
+            patch.object(self.database, "command", side_effect=ConnectionFailure("private connection detail")),
+            self.assertLogs(hosted.__name__, level="WARNING") as logs,
+        ):
+            degraded = self.client.get("/health")
+        self.assertEqual((degraded.status_code, degraded.get_json()), (503, {
+            "state": "degraded",
+            "database": "unavailable",
+        }))
+        event = json.loads(logs.records[0].getMessage())
+        self.assertEqual(event, {
+            "component": "database",
+            "event": "health_check",
+            "outcome": "unavailable",
+        })
+        self.assertNotIn("private connection detail", logs.output[0])
+
     def test_pairing_requires_sign_in_json_and_live_codes(self):
         self.assertEqual(self.client.post("/api/pairing-codes", json={}).status_code, 401)
         self.sign_in()
@@ -352,10 +379,15 @@ class OnboardingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(self.database.windows.count_documents({}), 0)
-        log_output = "\n".join(logs.output)
-        self.assertIn("reason=invalid_payload", log_output)
-        self.assertNotIn("private_field", log_output)
-        self.assertNotIn("sensitive-window-content", log_output)
+        event = json.loads(logs.records[0].getMessage())
+        self.assertEqual(event, {
+            "device_id": device_id,
+            "event": "agent_window_ingestion",
+            "outcome": "rejected",
+            "reason": "invalid_payload",
+        })
+        self.assertNotIn("private_field", logs.output[0])
+        self.assertNotIn("sensitive-window-content", logs.output[0])
 
     def test_agent_window_request_size_is_limited_before_persistence(self):
         device_id, agent = self.pair()
@@ -372,9 +404,11 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 413)
         self.assertEqual(self.database.windows.count_documents({}), 0)
         self.assertEqual(self.database.monitoring_windows.count_documents({}), 0)
-        log_output = "\n".join(logs.output)
-        self.assertIn("reason=request_too_large", log_output)
-        self.assertNotIn("x" * 100, log_output)
+        event = json.loads(logs.records[0].getMessage())
+        self.assertEqual(event["event"], "agent_window_ingestion")
+        self.assertEqual(event["outcome"], "rejected")
+        self.assertEqual(event["reason"], "request_too_large")
+        self.assertNotIn("x" * 100, logs.output[0])
 
     def test_legacy_round_documents_are_migrated_to_enrollment_sessions(self):
         device_id, _ = self.pair()
