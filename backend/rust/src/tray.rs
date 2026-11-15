@@ -14,14 +14,15 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
-    Shell_NotifyIconW,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NIM_SETVERSION, NIN_BALLOONUSERCLICK, NOTIFYICON_VERSION, NOTIFYICONDATAW, Shell_NotifyIconW,
+    ShellExecuteW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW, GetWindowLongPtrW, HMENU,
     HWND_MESSAGE, IsDialogMessageW, IsWindow, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
-    MF_STRING, MF_UNCHECKED, MSG, PostMessageW, PostQuitMessage, RegisterClassExW,
+    MF_STRING, MF_UNCHECKED, MSG, PostMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL,
     SetForegroundWindow, SetTimer, SetWindowLongPtrW, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
     TPM_RIGHTALIGN, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenu, TranslateMessage,
     WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_INPUT,
@@ -83,6 +84,8 @@ struct AppState {
     link: Option<Link>,
     /// Pause state last told to the link, so changes are sent once.
     paused_sent: bool,
+    /// Website login opened when the user clicks the re-verify balloon.
+    reverify_url: Option<String>,
 }
 
 impl AppState {
@@ -98,6 +101,7 @@ impl AppState {
             devices_hwnd: None,
             link: None,
             paused_sent: false,
+            reverify_url: None,
         }
     }
 
@@ -221,6 +225,11 @@ fn add_tray_icon(hwnd: HWND) -> windows::core::Result<()> {
         if !Shell_NotifyIconW(NIM_ADD, &nid).as_bool() {
             return Err(windows::core::Error::from_thread());
         }
+        // Version 3 delivers NIN_BALLOONUSERCLICK. Version 4 would repack mouse
+        // messages and break the left-click menu.
+        let mut version = nid;
+        version.Anonymous.uVersion = NOTIFYICON_VERSION;
+        let _ = Shell_NotifyIconW(NIM_SETVERSION, &version);
     }
     Ok(())
 }
@@ -278,6 +287,13 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 }
                 LRESULT(0)
             }
+            m if m == link::WM_REVERIFY => {
+                if let Some(server) = state.link.as_ref().and_then(|link| link.status().server) {
+                    state.reverify_url = Some(link::login_url(&server));
+                    show_reverify_balloon(hwnd);
+                }
+                LRESULT(0)
+            }
             m if m == pair_window::WM_PAIRED => {
                 if let Some((endpoint, credential)) = pair_window::take_paired() {
                     state.config.server_url = Some(endpoint.display());
@@ -293,7 +309,11 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 // menu on left-click (user preference) and also on WM_CONTEXTMENU,
                 // which fires for keyboard-driven access (Shift+F10, apps key).
                 let event = (lparam.0 as u32) & 0xFFFF;
-                if event == WM_LBUTTONUP || event == WM_CONTEXTMENU {
+                if event == NIN_BALLOONUSERCLICK {
+                    if let Some(url) = state.reverify_url.clone() {
+                        open_url(&url);
+                    }
+                } else if event == WM_LBUTTONUP || event == WM_CONTEXTMENU {
                     show_menu(hwnd, state);
                 }
                 LRESULT(0)
@@ -580,6 +600,54 @@ fn tooltip(status: &link::Status) -> String {
         State::Disconnected(_) => "disconnected",
     };
     format!("Inquisitor: {short}")
+}
+
+const REVERIFY_BODY: &str = "Please confirm it is you. Click to sign in on the website and re-verify. This does not lock Windows.";
+
+fn write_utf16(dest: &mut [u16], text: &str) {
+    let limit = dest.len().saturating_sub(1);
+    for (slot, unit) in dest.iter_mut().take(limit).zip(text.encode_utf16()) {
+        *slot = unit;
+    }
+}
+
+/// Balloon only. It does not take focus, lock the session, or block input.
+fn show_reverify_balloon(hwnd: HWND) {
+    let mut info = [0u16; 256];
+    let mut title = [0u16; 64];
+    write_utf16(&mut info, REVERIFY_BODY);
+    write_utf16(&mut title, "Inquisitor");
+    let nid = NOTIFYICONDATAW {
+        cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: 1,
+        uFlags: NIF_INFO,
+        szInfo: info,
+        szInfoTitle: title,
+        dwInfoFlags: NIIF_INFO,
+        ..Default::default()
+    };
+    unsafe {
+        let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+}
+
+/// Open `url` in the default browser. Only the paired site's login page is passed.
+fn open_url(url: &str) {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return;
+    }
+    let wide = to_wide(url);
+    unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(wide.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        );
+    }
 }
 
 fn set_tooltip(hwnd: HWND, text: &str) {

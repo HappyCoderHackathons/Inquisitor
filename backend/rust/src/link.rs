@@ -15,6 +15,9 @@
 //!   1 second up to 1 minute.
 //! - Fail closed: a 401 or 403, or a `revoked` message, stops uploads, clears the
 //!   held summaries, and deletes the stored credential. The tray shows Disconnected.
+//! - A monitoring report whose state is `needs_verification` asks the tray to
+//!   show one balloon. The tray opens the website login if that balloon is
+//!   clicked. The agent never locks Windows or blocks input.
 //!
 //! Only aggregate numeric windows and the pause flag leave the PC.
 
@@ -39,6 +42,9 @@ use crate::http::{Client, Endpoint, WebSocket};
 
 /// Posted to the tray window whenever the link's status changes.
 pub const WM_LINK: u32 = WM_APP + 2;
+/// Posted once when monitoring enters `needs_verification`. `WM_APP + 3` and
+/// `+ 4` belong to the pairing window.
+pub const WM_REVERIFY: u32 = WM_APP + 5;
 
 const PROTOCOL: u32 = 1;
 const HEARTBEAT: Duration = Duration::from_secs(30);
@@ -75,6 +81,61 @@ pub struct Status {
     pub server: Option<String>,
     pub mode: Mode,
     pub queued: usize,
+}
+
+/// Sign-in page on the paired website. The re-verify balloon opens this.
+pub fn login_url(server: &str) -> String {
+    format!("{}/login", server.trim_end_matches('/'))
+}
+
+/// Whether `text` is a monitoring report, and whether that report is
+/// `needs_verification`.
+///
+/// `monitoring_state` in the hosted service uses `needs_verification` (the spec
+/// name `NEEDS_VERIFICATION` is the same state). `stream_payload` sends it as
+/// `{"state": "needs_verification", ...}`. The socket may deliver that object
+/// alone or as `{"v": 1, "type": "monitoring", ...}`. An onboarding `status`
+/// message also has `state`, but those values are `collecting`, `ready`, and
+/// so on, so it is not a monitoring report.
+fn verification_needed(text: &str) -> Option<bool> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let kind = value.get("type").and_then(|item| item.as_str());
+    if !matches!(kind, None | Some("monitoring")) {
+        return None;
+    }
+    let state = value.get("state").and_then(|item| item.as_str())?;
+    let needs = state.eq_ignore_ascii_case("needs_verification");
+    const CLEAR: &[&str] = &[
+        "normal",
+        "not_enough_activity",
+        "unusual",
+        "paused",
+        "offline",
+    ];
+    if needs || kind == Some("monitoring") || CLEAR.contains(&state) {
+        Some(needs)
+    } else {
+        None
+    }
+}
+
+/// Remembers the last monitoring report so the balloon fires once per entry
+/// into `needs_verification`, not on every heartbeat that repeats it.
+#[derive(Debug, Default)]
+struct VerificationNotice {
+    active: bool,
+}
+
+impl VerificationNotice {
+    /// `true` only on the transition into `needs_verification`.
+    fn observe(&mut self, text: &str) -> bool {
+        let Some(needed) = verification_needed(text) else {
+            return false;
+        };
+        let entered = needed && !self.active;
+        self.active = needed;
+        entered
+    }
 }
 
 /// Map the server's onboarding fields to what the tray should upload.
@@ -470,6 +531,9 @@ struct Worker {
     mode: Mode,
     /// Session id for monitoring windows: one per tray run.
     monitoring_session: String,
+    verification: VerificationNotice,
+    /// The UI thread has not yet been told about a new needs-verification state.
+    reverify_pending: bool,
     outbox: Outbox,
     upload_backoff: Backoff,
     upload_at: Instant,
@@ -501,6 +565,8 @@ impl Worker {
             paused: false,
             mode: Mode::Idle,
             monitoring_session: format!("tray-{:x}-{:x}", unix_ms_now(), std::process::id()),
+            verification: VerificationNotice::default(),
+            reverify_pending: false,
             outbox,
             upload_backoff: Backoff::default(),
             upload_at: Instant::now(),
@@ -649,6 +715,9 @@ impl Worker {
     }
 
     fn on_message(&mut self, text: &str) {
+        if self.verification.observe(text) {
+            self.reverify_pending = true;
+        }
         #[derive(Deserialize)]
         struct Message {
             v: u32,
@@ -755,6 +824,8 @@ impl Worker {
         self.credential = None;
         self.connect_at = None;
         self.mode = Mode::Idle;
+        self.verification = VerificationNotice::default();
+        self.reverify_pending = false;
         let _ = credential::delete_at(&self.credential_path);
     }
 
@@ -767,7 +838,9 @@ impl Worker {
     }
 
     /// Share the status with the UI thread and wake it when something changed.
-    fn publish(&self) {
+    fn publish(&mut self) {
+        let reverify = self.reverify_pending;
+        self.reverify_pending = false;
         let status = Status {
             state: self.state.clone(),
             server: self.client.as_ref().map(|c| c.endpoint().display()),
@@ -782,14 +855,16 @@ impl Worker {
             *shared = status;
             changed
         };
-        if changed && self.notify != 0 {
-            unsafe {
-                let _ = PostMessageW(
-                    Some(HWND(self.notify as *mut c_void)),
-                    WM_LINK,
-                    WPARAM(0),
-                    LPARAM(0),
-                );
+        if self.notify == 0 {
+            return;
+        }
+        unsafe {
+            let hwnd = Some(HWND(self.notify as *mut c_void));
+            if changed {
+                let _ = PostMessageW(hwnd, WM_LINK, WPARAM(0), LPARAM(0));
+            }
+            if reverify {
+                let _ = PostMessageW(hwnd, WM_REVERIFY, WPARAM(0), LPARAM(0));
             }
         }
     }
@@ -885,6 +960,67 @@ mod tests {
         assert_eq!(classify(502), UploadOutcome::Retry);
         assert_eq!(classify(409), UploadOutcome::Drop);
         assert_eq!(classify(422), UploadOutcome::Drop);
+    }
+
+    #[test]
+    fn reverify_balloon_is_once_per_transition() {
+        assert_eq!(
+            login_url("https://app.example.test"),
+            "https://app.example.test/login"
+        );
+        assert_eq!(
+            login_url("https://app.example.test:8443/inquisitor/"),
+            "https://app.example.test:8443/inquisitor/login"
+        );
+
+        let alert = r#"{"state":"needs_verification","agent":"active","alerts":[]}"#;
+        let mut notice = VerificationNotice::default();
+        assert!(notice.observe(alert));
+        assert!(!notice.observe(alert));
+        // The spec spelling, and a protocol wrapper, are the same state.
+        assert!(!notice.observe(r#"{"v":1,"type":"monitoring","state":"NEEDS_VERIFICATION"}"#));
+        // Onboarding status uses `state` for a different vocabulary.
+        assert!(!notice.observe(
+            r#"{"v":1,"type":"status","state":"ready","session_id":null,"collection":"active"}"#
+        ));
+        assert!(!notice.observe(r#"{"v":1,"type":"revoked"}"#));
+        assert!(!notice.observe("not json"));
+        // Still latched, so a repeated alert does not ask again.
+        assert!(!notice.observe(alert));
+        // Leaving the state arms the next entry.
+        assert!(!notice.observe(r#"{"state":"normal","agent":"active"}"#));
+        assert!(notice.observe(r#"{"v":1,"type":"monitoring","state":"needs_verification"}"#));
+        assert!(!notice.observe(r#"{"state":"unusual"}"#));
+        assert!(notice.observe(alert));
+        // A bare onboarding-shaped object is not a monitoring report.
+        assert_eq!(
+            verification_needed(r#"{"state":"ready","collection":"active"}"#),
+            None
+        );
+
+        let dir = temp_dir("reverify");
+        let (tx, _rx) = mpsc::channel();
+        let status = Arc::new(Mutex::new(Status {
+            state: State::NotPaired,
+            server: None,
+            mode: Mode::Idle,
+            queued: 0,
+        }));
+        let mut worker = Worker::new(tx, status, 0, dir.join("device.bin"));
+        worker.on_message(alert);
+        assert!(worker.reverify_pending);
+        worker.publish();
+        assert!(!worker.reverify_pending);
+        worker.on_message(alert);
+        assert!(!worker.reverify_pending);
+        worker.on_message(r#"{"state":"paused","agent":"paused"}"#);
+        worker.on_message(alert);
+        assert!(worker.reverify_pending);
+        worker.forget();
+        assert!(!worker.reverify_pending);
+        worker.on_message(alert);
+        assert!(worker.reverify_pending);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
