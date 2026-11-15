@@ -211,7 +211,12 @@
     return created;
   }
   async function refreshCollectionSummary() {
-    const response = await fetch("/api/feature-windows");
+    let response;
+    try {
+      response = await fetch("/api/feature-windows");
+    } catch {
+      throw new Error("Could not load saved windows. The server did not respond.");
+    }
     if (!response.ok) throw new Error(`Could not load feature-window summary (${response.status}).`);
     const data = await response.json();
     if (windowCount) windowCount.textContent = String(data.windows);
@@ -255,7 +260,10 @@
     } catch (error) {
       resumeAfterRetry = collectionActive && !collectionPaused;
       collectionPaused = true;
-      setCollectionStatus(error instanceof Error ? error.message : "Could not save feature window.", true);
+      setCollectionStatus(
+        error instanceof TypeError ? "Could not save feature window. The server did not respond." : error instanceof Error ? error.message : "Could not save feature window.",
+        true
+      );
     } finally {
       updateControls();
     }
@@ -407,7 +415,10 @@
       event.preventDefault();
       if (!input || input.value !== phrase || !submit) return;
       submit.disabled = true;
-      if (dataActionStatus) dataActionStatus.textContent = "";
+      if (dataActionStatus) {
+        dataActionStatus.classList.remove("error");
+        dataActionStatus.textContent = "Please wait.";
+      }
       void fetch(path, {
         method,
         headers: { "Content-Type": "application/json" },
@@ -419,11 +430,18 @@
           dataActionStatus.classList.remove("error");
           dataActionStatus.textContent = success;
         }
-        await refreshCollectionSummary();
+        try {
+          await refreshCollectionSummary();
+        } catch (error) {
+          if (dataActionStatus) {
+            dataActionStatus.classList.add("error");
+            dataActionStatus.textContent = error instanceof Error ? error.message : "The action finished, but saved windows could not be reloaded.";
+          }
+        }
       }).catch((error) => {
         if (dataActionStatus) {
           dataActionStatus.classList.add("error");
-          dataActionStatus.textContent = error instanceof Error ? error.message : "Could not complete that action.";
+          dataActionStatus.textContent = error instanceof TypeError ? "Could not reach the server. Nothing was changed." : error instanceof Error ? error.message : "Could not complete that action.";
         }
         if (submit) submit.disabled = !input || input.value !== phrase;
       });
@@ -431,7 +449,16 @@
   }
   dangerForms.forEach(wireDangerForm);
   updateControls();
-  void refreshCollectionSummary().catch((error) => {
-    setCollectionStatus(error instanceof Error ? error.message : "Could not load saved windows.", true);
-  });
+  void (async () => {
+    setCollectionStatus("Loading saved windows\u2026");
+    try {
+      await refreshCollectionSummary();
+      if (!collectionActive) setCollectionStatus("Collection is off. Choose a mode and opt in to begin.");
+    } catch (error) {
+      setCollectionStatus(
+        error instanceof Error ? error.message : "Could not load saved windows. The server did not respond.",
+        true
+      );
+    }
+  })();
 })();

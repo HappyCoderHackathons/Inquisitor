@@ -58,7 +58,7 @@ A small, **opt-in** keyboard-capture tool for the InputPrint project. It writes 
 
 | Mode | Flag | What it records |
 |------|------|-----------------|
-| **Timing-only** (default) | *(none)* | Press/release timestamps, key-hold duration, and flight time between keys. **Key identity is masked** into coarse categories (`alpha`, `digit`, `space`, …). No characters, key names, or ordered sequences — matching InputPrint's privacy guarantee. |
+| **Timing-only** (default) | *(none)* | Press/release timestamps, key-hold duration, and flight time between keys. **Key identity is masked** into coarse categories (`alpha`, `digit`, `space`, …). Characters, key names, and ordered sequences are not stored. |
 | **Raw** | `--raw` | Everything above **plus the actual key** that was pressed. Stores typed content; use only for local learning/debugging. |
 
 ## Setup

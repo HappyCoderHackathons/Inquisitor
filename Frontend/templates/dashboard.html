@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="theme-color" content="#09070D">
-    <meta name="description" content="Account, model, and agent connection dashboard for Inquisitor.">
+    <meta name="description" content="Account, model connection, and anomaly signals for Inquisitor. A signal is a prompt to verify, not a named person.">
     <title>Inquisitor | User Dashboard</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="/static/dashboard.js" defer></script>
@@ -25,7 +25,7 @@
         <section class="dashboard-heading">
           <p class="eyebrow"><span class="eyebrow-line"></span> PERSONAL OVERVIEW</p>
           <h1>Your dashboard</h1>
-          <p>Review your account, model connection, and activity detections.</p>
+          <p>Review your account, the model connection, and anomaly signals.</p>
         </section>
 
         <section class="connection-grid" aria-label="Connection status">
@@ -87,15 +87,15 @@
         <section class="dashboard-panel detection-panel" aria-labelledby="detectionTitle">
           <div class="dashboard-panel-heading">
             <div>
-              <p class="eyebrow">DETECTION ACTIVITY</p>
-              <h2 id="detectionTitle">Non-user activity</h2>
+              <p class="eyebrow">ANOMALY SIGNAL</p>
+              <h2 id="detectionTitle">Needs verification</h2>
             </div>
             <span id="detectionConnectionStatus" class="status-label pending-label">NO LIVE SIGNAL</span>
           </div>
-          <p class="dashboard-panel-copy">This area is reserved for agent/model alerts when activity differs from the enrolled user's baseline. The prototype cannot currently identify or confirm another person.</p>
+          <p class="dashboard-panel-copy">This area is reserved for an alert when a window differs from this device's enrollment. An alert asks you to verify. It does not name a person, and this prototype has no live model connection.</p>
           <div class="detection-empty">
             <span class="empty-mark" aria-hidden="true">—</span>
-            <div><strong>No detection data</strong><span>Agent and model connections are not configured.</span></div>
+            <div><strong>No anomaly signal</strong><span>Agent and model connections are not configured.</span></div>
           </div>
           <p class="dashboard-footnote">Any future alert should be treated as a prompt to verify, not proof of identity. The user must remain in control of pause and exit actions.</p>
         </section>

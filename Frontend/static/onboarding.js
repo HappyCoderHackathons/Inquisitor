@@ -102,8 +102,20 @@
     return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   }
   async function refresh() {
-    const response = await fetch("/api/onboarding");
-    if (response.status === 404) return;
+    let response;
+    try {
+      response = await fetch("/api/onboarding");
+    } catch {
+      throw new Error("Could not load setup status. The server did not respond.");
+    }
+    const stateLabel = element("onboardingState");
+    if (response.status === 404) {
+      if (stateLabel?.textContent === "Loading setup status\u2026") {
+        stateLabel.classList.remove("error");
+        stateLabel.textContent = "Waiting for the agent to connect.";
+      }
+      return;
+    }
     if (!response.ok) throw new Error(`Could not load setup status (${response.status}).`);
     const status = await response.json();
     if (waitingForPair && status.device_id !== deviceBeforeCode) {
@@ -115,7 +127,6 @@
       if (expiry) expiry.textContent = "";
     }
     currentDevice = status.device_id;
-    const stateLabel = element("onboardingState");
     if (stateLabel) {
       stateLabel.textContent = status.error ? `${stateText[status.state]} ${status.error}` : stateText[status.state];
       stateLabel.classList.toggle("error", status.state === "failed");
@@ -143,33 +154,74 @@
     }
   }
   element("createCode")?.addEventListener("click", async () => {
-    const response = await post("/api/pairing-codes");
+    const button = element("createCode");
     const target = element("pairingCode");
-    if (!target) return;
-    if (!response.ok) {
-      target.textContent = `Could not create a code (${response.status}).`;
-      return;
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Creating code\u2026";
     }
-    const created = await response.json();
-    target.textContent = created.code;
-    deviceBeforeCode = currentDevice;
-    waitingForPair = true;
-    startCountdown(Date.parse(created.expires_at));
+    try {
+      const response = await post("/api/pairing-codes");
+      if (!target) return;
+      if (!response.ok) {
+        target.textContent = response.status >= 500 ? "Could not create a code. The server is unavailable." : `Could not create a code (${response.status}).`;
+        return;
+      }
+      const created = await response.json();
+      target.textContent = created.code;
+      deviceBeforeCode = currentDevice;
+      waitingForPair = true;
+      startCountdown(Date.parse(created.expires_at));
+    } catch {
+      if (target) target.textContent = "Could not create a code. The server did not respond.";
+    } finally {
+      if (button) {
+        button.disabled = false;
+        if (button.textContent === "Creating code\u2026") button.textContent = "Get pairing code";
+      }
+    }
   });
   element("trainModel")?.addEventListener("click", async () => {
     const button = element("trainModel");
+    const label = element("onboardingState");
     button.disabled = true;
-    const response = await post("/api/onboarding/train");
-    if (!response.ok) {
-      const label = element("onboardingState");
-      if (label) label.textContent = `Could not start training (${response.status}).`;
+    if (label) {
+      label.classList.remove("error");
+      label.textContent = "Starting training\u2026";
     }
-    await refresh();
+    try {
+      const response = await post("/api/onboarding/train");
+      if (!response.ok) {
+        if (label) {
+          label.classList.add("error");
+          label.textContent = response.status >= 500 ? "Could not start training. The server is unavailable." : `Could not start training (${response.status}).`;
+        }
+        button.disabled = false;
+        return;
+      }
+    } catch {
+      if (label) {
+        label.classList.add("error");
+        label.textContent = "Could not start training. The server did not respond.";
+      }
+      button.disabled = false;
+      return;
+    }
+    try {
+      await refresh();
+    } catch (error) {
+      if (label) {
+        label.classList.add("error");
+        label.textContent = error instanceof Error ? error.message : "Could not load setup status.";
+      }
+    }
   });
   if (element("gameProgress")) {
     const tick = () => refresh().catch((error) => {
       const label = element("onboardingState");
-      if (label) label.textContent = error instanceof Error ? error.message : "Could not load setup status.";
+      if (!label) return;
+      label.classList.add("error");
+      label.textContent = error instanceof Error ? error.message : "Could not load setup status. The server did not respond.";
     });
     void tick();
     window.setInterval(tick, 5e3);

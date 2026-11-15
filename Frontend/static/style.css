@@ -195,6 +195,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,.arena-canvas:focus-vis
 .danger-note{margin-top:8px}
 .data-action{display:flex;flex-direction:column;padding:14px 0;border-top:1px solid var(--line)}
 .data-action-row{display:flex;justify-content:space-between;align-items:center;gap:15px}
+.data-action-row>div{min-width:0}
+.profile-list dd,.data-action p{overflow-wrap:anywhere}
 .data-action strong{font-size:13px}
 .data-action p{margin:5px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
 .typed-confirm{display:grid;gap:8px;margin-top:12px}
@@ -206,7 +208,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,.arena-canvas:focus-vis
 .dashboard-main .button{flex:0 0 auto;padding:9px 12px;font:500 12px var(--sans);letter-spacing:0}
 .danger-button{border:1px solid #6B3443;background:#2B1720;color:#FFB4C0;cursor:pointer}
 .danger-button:hover{background:#47202D;border-color:#FB7185}
-.disabled-button{border:1px solid var(--line);background:var(--panel2);color:#827B8C;cursor:not-allowed}
+.disabled-button{border:1px solid var(--line);background:var(--panel2);color:#948D9E;cursor:not-allowed}
 .action-status{min-height:1.2em;margin:10px 0 0;color:var(--green);font-size:12px}
 .action-status.error{color:#FFB4C0}
 .dashboard-main button:focus-visible{outline:2px solid var(--green);outline-offset:3px}
@@ -223,7 +225,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,.arena-canvas:focus-vis
 .consent-label{display:flex;align-items:center;gap:8px;min-height:36px;color:var(--text);font-size:12px}
 .consent-label input{accent-color:var(--green);width:16px;height:16px}
 .collector-surface-wrap{margin-top:16px}
-.collector-surface{min-height:84px;display:grid;place-items:center;padding:18px;border:1px dashed #66548A;border-radius:6px;background:radial-gradient(ellipse at center,#201B2A,#100D14);color:var(--purple);font-size:14px;text-align:center;cursor:text;outline:none}
+.collector-surface{min-height:84px;display:grid;place-items:center;padding:18px;border:1px dashed #7E6C9A;border-radius:6px;background:radial-gradient(ellipse at center,#201B2A,#100D14);color:var(--purple);font-size:14px;text-align:center;cursor:text;outline:none}
 .collector-surface:focus-visible{border-style:solid;border-color:var(--green);box-shadow:0 0 0 2px #A3E63533}
 .collection-panel .dashboard-footnote{margin-top:8px}
 .collector-progress-row{display:flex;align-items:center;gap:12px;margin-top:18px}
@@ -250,13 +252,14 @@ button:focus-visible,a:focus-visible,input:focus-visible,.arena-canvas:focus-vis
   .dashboard-panel-heading{align-items:flex-start;flex-direction:column}
   .data-action-row{align-items:flex-start;flex-direction:column}
   .collector-progress-row{align-items:flex-start;flex-direction:column}
+  .collector-progress-row progress{flex:0 0 auto;width:100%;height:8px}
   .collector-progress-row span{min-width:0}
   .collection-actions .button{flex:1 1 42%;text-align:center}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
 .arcade-layout{min-height:100vh;background:var(--bg)}
 body{background:var(--bg);font-family:var(--sans)}
-.arcade-header{height:68px;max-width:1040px;margin:auto;padding:0 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+.arcade-header{height:auto;min-height:68px;max-width:1040px;margin:auto;padding:14px 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:10px}
 .arcade-header .brand{font:600 18px var(--sans);letter-spacing:0}
 .arcade-nav{display:flex;flex-wrap:wrap;gap:22px}
 .arcade-nav a{color:var(--muted);font-size:14px;text-decoration:none}
@@ -347,4 +350,9 @@ body{background:radial-gradient(ellipse at 75% 0%,#211B2A 0,transparent 38%),var
 .tetris-board .color-5{background:#4D7C0F;border-color:#A3E635;box-shadow:inset 0 0 8px #283F0A}
 .tetris-board .color-6{background:#65A30D;border-color:#BEF264;box-shadow:inset 0 0 8px #365314}
 .tetris-board .color-7{background:#A3E635;border-color:#D9F99D;box-shadow:inset 0 0 8px #3E7352}
-button:focus-visible,a:focus-visible,input:focus-visible,.arena-canvas:focus-visible{outline:2px solid var(--green);outline-offset:3px}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,.arena-canvas:focus-visible,.game-stage:focus-visible,.target:focus-visible{outline:2px solid var(--green);outline-offset:3px}
+@media(max-height:740px),(max-width:620px){
+  .overlay{align-items:start;overflow:auto}
+  .game-stage{height:min(310px,46vh)}
+  .game-meta{flex-wrap:wrap;row-gap:8px}
+}
