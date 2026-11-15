@@ -232,9 +232,10 @@ Offline, or Disconnected.
    location. At 256 KiB it moves to `agent.log.1`, replacing the older one.
    It never holds input data. Removing the app with its data deletes both.
 
-Without an account the tray works fully offline: it captures to the CSV files
-in the data folder (**Open data location** in the menu), which are never
-uploaded, and holds summaries in case a PC is connected later.
+The tray never writes input events to disk. It keeps only the in-memory
+aggregate feature windows, and without an account it holds those summaries in
+case a PC is connected later. Only the explicit `Inquisitor capture` command
+writes event CSV files, for local research.
 
 Transport is WinHTTP, the HTTP stack built into Windows, so TLS uses the
 Windows certificate store and system proxy settings, and certificate checks
