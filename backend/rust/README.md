@@ -29,6 +29,9 @@ cargo build            # debug
 cargo build --release  # release exe at target/release/Inquisitor.exe
 ```
 
+[`.cargo/config.toml`](.cargo/config.toml) links the C runtime statically, so the
+exe depends only on system DLLs and needs no Visual C++ redistributable.
+
 ## Release
 
 Pushing a version tag publishes a GitHub release
