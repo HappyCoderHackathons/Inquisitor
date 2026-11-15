@@ -1332,6 +1332,7 @@ def register(
             "model_id": onboarding["previous_model_id"], "previous_model_id": onboarding["model_id"],
         })
 
+    @blueprint.delete("/api/devices/<device_id>")
     @blueprint.post("/api/devices/<device_id>/revoke")
     def revoke_device(device_id: str):
         user_id = current_user()

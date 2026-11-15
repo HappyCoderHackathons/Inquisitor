@@ -2,6 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import mongomock
+
 import server
 
 SAMPLE = {
@@ -21,14 +23,17 @@ SAMPLE = {
 class SecurityHeaderTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
+        self.previous_database = server._arcade_database
         self.previous = server.DB_PATH
         self.previous_account = server.account
-        server.DB_PATH = Path(self.temporary.name) / "test.sqlite3"
+        server.set_arcade_database(mongomock.MongoClient(tz_aware=True).db)
+        server.DB_PATH = Path(self.temporary.name) / "inputprint.sqlite3"
         server.account = None
         server.initialize()
         self.client = server.app.test_client()
 
     def tearDown(self):
+        server.set_arcade_database(self.previous_database)
         server.DB_PATH = self.previous
         server.account = self.previous_account
         self.temporary.cleanup()
@@ -74,3 +79,4 @@ class SecurityHeaderTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 403)
         self.assertEqual(blocked.headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(self.client.get("/api/summary").get_json()["samples"], 2)
+

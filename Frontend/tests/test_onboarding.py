@@ -1364,6 +1364,32 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn("Revoke", page)
         self.assertNotIn("%", page)
 
+    def test_delete_device_revokes_it_and_rejects_its_uploads(self):
+        device_id, agent = self.ready_monitor()
+        monitoring = window(device_id, "monitor-1", 0) | {"mode": "monitoring"}
+        self.sign_in("user-b")
+        self.assertEqual(self.client.delete(f"/api/devices/{device_id}", json={}).status_code, 404)
+        self.sign_in()
+        self.assertEqual(
+            self.client.delete(f"/api/devices/{device_id}", json={}, headers={"Origin": "https://evil.example"})
+            .status_code, 403,
+        )
+        self.assertEqual(self.client.delete(f"/api/devices/{device_id}", json={}).status_code, 200)
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=monitoring).status_code, 401)
+        self.assertEqual(self.client.post("/agent/heartbeat", headers=agent).status_code, 401)
+        self.assertEqual(self.database.monitoring_windows.count_documents({}), 0)
+        self.assertEqual(self.scored, [])
+
+    def test_low_activity_windows_report_insufficient_data_without_alerts(self):
+        device_id, agent = self.ready_monitor()
+        self.upload_scores(device_id, agent, ["INSUFFICIENT_DATA"] * 4)
+        status = self.client.get("/api/monitoring/status").get_json()
+        self.assertEqual((status["state"], status["window_state"], status["score"]),
+                         ("not_enough_activity", "INSUFFICIENT_DATA", None))
+        points = self.client.get("/api/monitoring/history").get_json()["points"]
+        self.assertEqual([(point["state"], point["score"]) for point in points], [("INSUFFICIENT_DATA", None)] * 4)
+        self.assertEqual(self.client.get("/api/alerts").get_json()["alerts"], [])
+
     def test_demo_switch_marker_stores_time_and_plots_baseline_score(self):
         anonymous = self.client.get("/demo")
         self.assertEqual(anonymous.status_code, 302)

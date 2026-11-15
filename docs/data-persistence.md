@@ -1,10 +1,11 @@
 # Data persistence
 
-The hosted stack uses MongoDB Atlas collections. The ML service and local arcade prototype
-use SQLite through `backend/account/store.py`. Account, device, window, score, alert,
-and model rows are scoped to `user_id` and `device_id`. The monitoring retention period
-is one process-wide row. A purge deletes monitoring rows older than that period for every
-account on that store.
+The hosted stack uses MongoDB Atlas collections. Arcade game rounds and browser-collected
+feature windows live in `arcade_samples` and `arcade_feature_windows`. The local prototype
+account store in `backend/account/store.py` still uses SQLite until that migration lands.
+Account, device, window, score, alert, and model rows are scoped to `user_id` and
+`device_id`. The monitoring retention period is one process-wide row. A purge deletes
+monitoring rows older than that period for every account on that store.
 
 ## Model versions
 
@@ -44,7 +45,7 @@ On Atlas, `delete_device_records` in `Frontend/atlas_persistence.py` applies the
 `model_versions`, `inference_results`, `alerts`, `windows`, and `monitoring_windows`. The hosted
 `DELETE /api/me/data` route deletes the account on the ML service first, then runs that cascade for
 each paired device, removes onboarding rounds, and revokes every device credential. If the ML service
-is unavailable it returns 502 and deletes nothing. `POST /api/devices/<id>/revoke` revokes one device
+is unavailable it returns 502 and deletes nothing. `POST /api/devices/<id>/revoke` (or `DELETE /api/devices/<id>`) revokes one device
 without deleting data. Both are on the setup page.
 
 Enrollment windows stay until reset or account deletion. Model artifact files on the ML

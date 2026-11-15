@@ -122,7 +122,7 @@ auth user id. An empty id is rejected.
 | `POST /api/models/deactivate` | Requires `DEACTIVATE`. Deactivates that account's active model and keeps its windows |
 | `GET /api/devices` | The signed-in account's devices, including last check-in. Tokens are not returned |
 | `POST /api/demo/switches` and `GET /api/demo/switches` | The signed-in account. A `device_id` must belong to that account. The body is an empty object |
-| `POST /api/devices/<device_id>/revoke` | The signed-in account, and only a device row whose `user_id` matches that account |
+| `POST /api/devices/<device_id>/revoke`, `DELETE /api/devices/<device_id>` | The signed-in account, and only a device row whose `user_id` matches that account |
 | `DELETE /api/me/data` | The signed-in account. Device ids come from that account's device records |
 
 ### Agent bearer

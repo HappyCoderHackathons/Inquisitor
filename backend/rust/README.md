@@ -29,6 +29,9 @@ cargo build            # debug
 cargo build --release  # release exe at target/release/Inquisitor.exe
 ```
 
+[`.cargo/config.toml`](.cargo/config.toml) links the C runtime statically, so the
+exe depends only on system DLLs and needs no Visual C++ redistributable.
+
 ## Release
 
 Pushing a version tag publishes a GitHub release
@@ -38,18 +41,21 @@ Pushing a version tag publishes a GitHub release
 2. Tag that commit and push the tag:
 
    ```sh
-   git tag v0.2.0
-   git push origin v0.2.0
+   git tag 0.2.0
+   git push origin 0.2.0
    ```
 
+   `v0.2.0` works too.
+
 The workflow runs the same format, lint, and test checks as CI, then builds
-the release exe and checks its embedded manifest. It fails if the tag is not
-exactly `v` plus the `Cargo.toml` version, since the setup wizard reports that
-version.
+the release exe and checks its embedded manifest. It fails if the tag, without
+any leading `v`, is not exactly the `Cargo.toml` version, since the setup
+wizard reports that version. The workflow that runs is the one in the tagged
+commit, so tag a commit that already has the version set.
 
 The release gets `Inquisitor-<version>-windows-x64.exe` and its `.sha256`
 checksum, with notes generated from the merged pull requests. A tag with a
-hyphen, such as `v0.2.0-rc.1`, is published as a prerelease; put the same
+hyphen, such as `0.2.0-rc.1`, is published as a prerelease; put the same
 suffix in `Cargo.toml`. The exe is not code-signed, so Windows SmartScreen may
 warn on first run.
 
@@ -220,6 +226,11 @@ Offline, or Disconnected.
    - **Disconnect from account** does the same locally. The device stays on
      the website's device list, shown offline, until it is revoked there.
    - Removing the app also deletes the credential and the held windows.
+6. **Local log.** `%APPDATA%\inquisitor\agent.log` records state changes
+   (pairing, connect and disconnect, pause and resume, revocation) and errors,
+   as fixed messages with a timestamp. Panics record only their source
+   location. At 256 KiB it moves to `agent.log.1`, replacing the older one.
+   It never holds input data. Removing the app with its data deletes both.
 
 Without an account the tray works fully offline: it captures to the CSV files
 in the data folder (**Open data location** in the menu), which are never
