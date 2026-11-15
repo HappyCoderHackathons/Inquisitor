@@ -122,7 +122,7 @@ auth user id. An empty id is rejected.
 | `POST /api/models/deactivate` | Requires `DEACTIVATE`. Deactivates that account's active model and keeps its windows |
 | `GET /api/devices` | The signed-in account's devices, including last check-in. Tokens are not returned |
 | `POST /api/demo/switches` and `GET /api/demo/switches` | The signed-in account. A `device_id` must belong to that account. The body is an empty object |
-| `POST /api/devices/<device_id>/revoke` | The signed-in account, and only a device row whose `user_id` matches that account |
+| `POST /api/devices/<device_id>/revoke`, `DELETE /api/devices/<device_id>` | The signed-in account, and only a device row whose `user_id` matches that account |
 | `DELETE /api/me/data` | The signed-in account. Device ids come from that account's device records |
 
 ### Agent bearer
@@ -140,6 +140,7 @@ The agent socket carries presence only, as JSON text frames with `"v": 1`:
 | --- | --- | --- |
 | Agent to server | `hello {paused, agent_version?}`, then `heartbeat {paused}` every 30 seconds | Sets `status: "online"`, `last_heartbeat_at`, `ws_connected`, and `agent_paused` on the device; publishes an updated owner-scoped monitoring snapshot |
 | Server to agent | `status {state, collection, session_id}` | Sent after `hello` and whenever it changes. The same fields as `GET /api/agent/onboarding` |
+| Server to agent | `monitoring {state}` | Sent whenever the monitoring state changes (no score). On `needs_verification` the tray shows one balloon that opens the website login; it never locks Windows or blocks input |
 | Server to agent | `revoked` | The device was revoked. The agent deletes its credential and stops |
 
 Any other message, an extra field, or a message over 4 KiB closes the socket with 1008. A socket silent for
@@ -189,7 +190,7 @@ feature values and request bodies. Pairing attempts are limited to 10 per 10 min
 IP. A stolen device token works until that device is revoked. Score requests have no
 separate nonce. The service token stays in server configuration.
 
-Local files are ordinary SQLite databases, model artifacts, and token files. The operator
+Local files are model artifacts and token files. The operator
 of the host can edit them. Header and origin checks do not make those files tamper-evident.
 Hosted account data stays in MongoDB Atlas. The model token is not in browser JavaScript.
 

@@ -1,0 +1,29 @@
+# Set app and primary_region with `fly launch --no-deploy` or edit them here.
+app = "inquisitor-web"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  ML_SERVICE_URL = "http://127.0.0.1:18765"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # One always-on machine: the agent WebSocket and the in-process monitoring stream need it.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

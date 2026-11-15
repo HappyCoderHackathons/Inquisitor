@@ -3,12 +3,13 @@ from __future__ import annotations
 import os
 import re
 import secrets
-import sqlite3
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import Flask, g, jsonify, request
+from pymongo import MongoClient
+from pymongo.errors import PyMongoError
 
 from backend.account.store import AccountStore, retention_seconds_from_env
 from backend.http_security import API_CSP, apply_security_headers
@@ -24,7 +25,8 @@ def create_app() -> Flask:
         raise RuntimeError("ML_TOKEN_FILE must contain a dedicated token of at least 32 URL-safe characters")
     data_dir = Path(os.environ["ML_DATA_DIR"])
     store = ModelStore(data_dir)
-    account = AccountStore(data_dir / "account.sqlite3", data_dir / "account-artifacts", retention_seconds_from_env())
+    database = MongoClient(os.environ["MONGODB_URI"], tz_aware=True)[os.environ["MONGODB_DB"]]
+    account = AccountStore(database, "ml_", data_dir / "account-artifacts", retention_seconds_from_env())
     published_path = os.environ.get("ML_PUBLISHED_MODEL_FILE")
     published = PublishedModel(Path(published_path)) if published_path else None
     published_user = os.environ.get("ML_PUBLISHED_USER_ID")
@@ -80,7 +82,7 @@ def create_app() -> Flask:
         for name, check in (("database", account.check_available), ("model_store", store.check_available)):
             try:
                 check()
-            except (OSError, sqlite3.Error):
+            except (OSError, PyMongoError):
                 checks[name] = "unavailable"
             else:
                 checks[name] = "available"

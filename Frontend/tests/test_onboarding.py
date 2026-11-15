@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1364,6 +1365,32 @@ class OnboardingTests(unittest.TestCase):
         self.assertIn("Revoke", page)
         self.assertNotIn("%", page)
 
+    def test_delete_device_revokes_it_and_rejects_its_uploads(self):
+        device_id, agent = self.ready_monitor()
+        monitoring = window(device_id, "monitor-1", 0) | {"mode": "monitoring"}
+        self.sign_in("user-b")
+        self.assertEqual(self.client.delete(f"/api/devices/{device_id}", json={}).status_code, 404)
+        self.sign_in()
+        self.assertEqual(
+            self.client.delete(f"/api/devices/{device_id}", json={}, headers={"Origin": "https://evil.example"})
+            .status_code, 403,
+        )
+        self.assertEqual(self.client.delete(f"/api/devices/{device_id}", json={}).status_code, 200)
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=monitoring).status_code, 401)
+        self.assertEqual(self.client.post("/agent/heartbeat", headers=agent).status_code, 401)
+        self.assertEqual(self.database.monitoring_windows.count_documents({}), 0)
+        self.assertEqual(self.scored, [])
+
+    def test_low_activity_windows_report_insufficient_data_without_alerts(self):
+        device_id, agent = self.ready_monitor()
+        self.upload_scores(device_id, agent, ["INSUFFICIENT_DATA"] * 4)
+        status = self.client.get("/api/monitoring/status").get_json()
+        self.assertEqual((status["state"], status["window_state"], status["score"]),
+                         ("not_enough_activity", "INSUFFICIENT_DATA", None))
+        points = self.client.get("/api/monitoring/history").get_json()["points"]
+        self.assertEqual([(point["state"], point["score"]) for point in points], [("INSUFFICIENT_DATA", None)] * 4)
+        self.assertEqual(self.client.get("/api/alerts").get_json()["alerts"], [])
+
     def test_demo_switch_marker_stores_time_and_plots_baseline_score(self):
         anonymous = self.client.get("/demo")
         self.assertEqual(anonymous.status_code, 302)
@@ -1434,6 +1461,17 @@ class OnboardingTests(unittest.TestCase):
                          [{"v": 1, "type": "revoked"}])
         self.assertTrue(again.done)
 
+    def test_agent_socket_sends_monitoring_state_only_when_it_changes(self):
+        device_id, _agent = self.ready_monitor()
+        states = iter(["normal", "needs_verification", "needs_verification", "normal"])
+        link = hosted.AgentLink(self.database, device_id, lambda device: next(states))
+        heartbeat = '{"v": 1, "type": "heartbeat", "paused": false}'
+        self.assertIn({"v": 1, "type": "monitoring", "state": "normal"},
+                      link.receive('{"v": 1, "type": "hello", "paused": false}'))
+        self.assertEqual(link.receive(heartbeat), [{"v": 1, "type": "monitoring", "state": "needs_verification"}])
+        self.assertEqual(link.receive(heartbeat), [])
+        self.assertEqual(link.receive(heartbeat), [{"v": 1, "type": "monitoring", "state": "normal"}])
+
     def test_agent_socket_closes_on_malformed_messages(self):
         device_id, _agent = self.pair()
         for raw in ("not json", "[]", '{"v": 2, "type": "hello", "paused": false}',
@@ -1444,6 +1482,26 @@ class OnboardingTests(unittest.TestCase):
             self.assertEqual(link.receive(raw), [], raw)
             self.assertTrue(link.done)
             self.assertEqual(link.close_code, hosted.POLICY_VIOLATION)
+
+    def test_ml_tunnel_needs_the_ml_token_and_no_origin(self):
+        with tempfile.TemporaryDirectory() as folder:
+            token_file = Path(folder) / "token"
+            token_file.write_text("tunnel-token\n")
+            app = Flask(__name__)
+            env = ENV | {"ML_TOKEN_FILE": str(token_file), "ML_TUNNEL_HOST_KEY": "key"}
+            with patch.dict(os.environ, env):
+                hosted.register(
+                    app, mongomock.MongoClient(tz_aware=True).db, self.trainer, self.score,
+                    server.onboarding_window_error, self.deleter, self.activate, self.compare,
+                )
+                client = app.test_client()
+                upgrade = {"Connection": "Upgrade", "Upgrade": "websocket"}
+                self.assertEqual(client.get("/api/ml-tunnel", headers=upgrade).status_code, 401)
+                wrong = upgrade | {"Authorization": "Bearer nope"}
+                self.assertEqual(client.get("/api/ml-tunnel", headers=wrong).status_code, 401)
+                browser = upgrade | {"Authorization": "Bearer tunnel-token", "Origin": "https://app.example.test"}
+                self.assertEqual(client.get("/api/ml-tunnel", headers=browser).status_code, 403)
+        self.assertEqual(self.client.get("/api/ml-tunnel").status_code, 404)
 
     def test_agent_socket_handshake_needs_a_token_and_no_foreign_origin(self):
         _device_id, agent = self.pair()

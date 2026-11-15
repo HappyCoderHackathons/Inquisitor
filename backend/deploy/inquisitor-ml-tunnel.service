@@ -1,0 +1,19 @@
+[Unit]
+Description=Inquisitor reverse tunnel from the private model API to the hosted site
+After=network-online.target inquisitor-ml.service
+
+[Service]
+# tunnel.env sets ML_TUNNEL_URL (wss://<site>/api/ml-tunnel) and ML_TOKEN_FILE (see README.md).
+EnvironmentFile=%h/inquisitor-model/tunnel.env
+ExecStart=/usr/bin/ssh -N -T -i %h/inquisitor-model/tunnel/id -o IdentitiesOnly=yes \
+    -o UserKnownHostsFile=%h/inquisitor-model/tunnel/known_hosts -o StrictHostKeyChecking=yes \
+    -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 \
+    -o "ProxyCommand=%h/inquisitor-model/tunnel/venv/bin/python %h/inquisitor-model/app/scripts/ml_tunnel_proxy.py" \
+    -R 127.0.0.1:18765:127.0.0.1:8765 inquisitor@inquisitor-tunnel
+Restart=always
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

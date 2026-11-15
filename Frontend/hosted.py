@@ -7,11 +7,13 @@ import logging
 import os
 import queue
 import secrets
+import socket
 import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -532,13 +534,18 @@ class AgentLink:
 
     Agent to server: `{"v": 1, "type": "hello" | "heartbeat", "paused": bool}`; hello may add
     `agent_version`. Server to agent: `status` with the onboarding fields after hello and whenever
-    they change, or `revoked` once the device is revoked. Anything else closes the socket (1008).
+    they change, `monitoring` with only the monitoring state whenever it changes, or `revoked` once
+    the device is revoked. Anything else closes the socket (1008).
     """
 
-    def __init__(self, database: Database, device_id: str) -> None:
+    def __init__(
+        self, database: Database, device_id: str, monitoring: Callable[[Document], str | None] | None = None,
+    ) -> None:
         self.database = database
         self.device_id = device_id
+        self.monitoring = monitoring
         self.last_status: Document | None = None
+        self.last_monitoring: str | None = None
         self.done = False
         self.close_code: int | None = None
 
@@ -571,10 +578,15 @@ class AgentLink:
         status = agent_onboarding_status(self.database, self.device_id) or {
             "state": None, "session_id": None, "collection": None,
         }
+        replies: list[Document] = []
         if message["type"] == "hello" or status != self.last_status:
             self.last_status = status
-            return [{"v": AGENT_PROTOCOL, "type": "status", **status}]
-        return []
+            replies.append({"v": AGENT_PROTOCOL, "type": "status", **status})
+        state = self.monitoring(device) if self.monitoring is not None else None
+        if state is not None and state != self.last_monitoring:
+            self.last_monitoring = state
+            replies.append({"v": AGENT_PROTOCOL, "type": "monitoring", "state": state})
+        return replies
 
     def closed(self) -> None:
         self.database.devices.update_one({"_id": self.device_id}, {"$set": {"ws_connected": False}})
@@ -1322,6 +1334,7 @@ def register(
             "model_id": onboarding["previous_model_id"], "previous_model_id": onboarding["model_id"],
         })
 
+    @blueprint.delete("/api/devices/<device_id>")
     @blueprint.post("/api/devices/<device_id>/revoke")
     def revoke_device(device_id: str):
         user_id = current_user()
@@ -1447,7 +1460,10 @@ def register(
 
     @sock.route("/api/agent/ws", bp=blueprint)
     def agent_socket(ws):
-        link = AgentLink(database, g.agent_device["_id"])
+        link = AgentLink(
+            database, g.agent_device["_id"],
+            lambda device: monitoring_state(device["user_id"], device, agent_state(device)[0]),
+        )
         try:
             while not link.done:
                 raw = ws.receive(timeout=AGENT_SOCKET_IDLE.total_seconds())
@@ -1460,6 +1476,46 @@ def register(
         finally:
             link.closed()
             publish_device_monitoring(g.agent_device["_id"])
+
+    if os.environ.get("ML_TUNNEL_HOST_KEY"):
+        # The private ML host cannot be reached from here, so it dials in: SSH over this WebSocket to the
+        # loopback sshd, which only lets its key open the 127.0.0.1:18765 forward. The ML token gates it.
+        @blueprint.before_request
+        def authorize_ml_tunnel():
+            if request.path != "/api/ml-tunnel":
+                return None
+            if request.headers.get("Origin") is not None:
+                abort(403)
+            token = Path(os.environ["ML_TOKEN_FILE"]).read_text().strip()
+            supplied = request.headers.get("Authorization", "").removeprefix("Bearer ")
+            if not token or not secrets.compare_digest(supplied.encode(), token.encode()):
+                abort(401)
+            return None
+
+        @sock.route("/api/ml-tunnel", bp=blueprint)
+        def ml_tunnel(ws):
+            try:
+                upstream = socket.create_connection(("127.0.0.1", 2222), timeout=10)
+            except OSError:
+                logger.warning(json.dumps({"component": "ml_tunnel", "outcome": "endpoint_unavailable"}))
+                return
+            with upstream:
+                upstream.settimeout(None)
+
+                def pump() -> None:
+                    try:
+                        while data := upstream.recv(65536):
+                            ws.send(data)
+                    except OSError:
+                        pass
+                    ws.close()
+
+                threading.Thread(target=pump, daemon=True).start()
+                try:
+                    while (data := ws.receive()) is not None:
+                        upstream.sendall(data if isinstance(data, bytes) else data.encode())
+                except (OSError, ConnectionError):
+                    pass
 
     @blueprint.post("/api/agent/windows")
     def upload_window():

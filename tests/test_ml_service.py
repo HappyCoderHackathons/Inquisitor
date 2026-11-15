@@ -1,12 +1,14 @@
 import copy
 import json
 import os
-import sqlite3
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+import mongomock
+from pymongo.errors import ConnectionFailure
 
 from backend.ml.app import create_app
 from backend.ml.model import ModelStore, validate_window
@@ -24,9 +26,14 @@ class ModelServiceTests(unittest.TestCase):
         self.environment = patch.dict(os.environ, {
             "ML_TOKEN_FILE": str(token_file),
             "ML_DATA_DIR": str(directory / "models"),
+            "MONGODB_URI": "mongodb://synthetic",
+            "MONGODB_DB": "inquisitor-test",
         })
         self.environment.start()
         self.addCleanup(self.environment.stop)
+        mongo = patch("backend.ml.app.MongoClient", return_value=mongomock.MongoClient(tz_aware=True))
+        mongo.start()
+        self.addCleanup(mongo.stop)
         self.client = create_app().test_client()
         self.headers = {
             "Authorization": "Bearer " + token_file.read_text(encoding="utf-8"),
@@ -45,9 +52,12 @@ class ModelServiceTests(unittest.TestCase):
             self.assertRaises(FileNotFoundError),
         ):
             create_app()
+        os.environ.pop("MONGODB_URI")
+        with self.assertRaises(KeyError):
+            create_app()
 
     def test_health_reports_each_dependency_failure(self) -> None:
-        with patch("backend.ml.app.AccountStore.check_available", side_effect=sqlite3.OperationalError("offline")):
+        with patch("backend.ml.app.AccountStore.check_available", side_effect=ConnectionFailure("offline")):
             response = create_app().test_client().get("/health", headers=self.headers)
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json, {

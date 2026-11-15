@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import mongomock
 import numpy as np
 
 from backend.ml.app import create_app
@@ -140,7 +141,8 @@ class TrayMultimodalTests(unittest.TestCase):
             (folder / "token").write_text("test-only-" + "a" * 32)
             with patch.dict(os.environ, {"ML_TOKEN_FILE": str(folder / "token"), "ML_DATA_DIR": str(folder / "models"),
                                          "ML_PUBLISHED_MODEL_FILE": str(artifact), "ML_PUBLISHED_USER_ID": "synthetic-user",
-                                         "ML_PUBLISHED_DEVICE_ID": "pc-1", "ML_PUBLISHED_MODEL_ID": metadata["model_id"]}):
+                                         "ML_PUBLISHED_DEVICE_ID": "pc-1", "ML_PUBLISHED_MODEL_ID": metadata["model_id"],
+                                         "MONGODB_URI": "mongodb://synthetic", "MONGODB_DB": "inquisitor-test"}),                     patch("backend.ml.app.MongoClient", return_value=mongomock.MongoClient(tz_aware=True)):
                 client = create_app().test_client()
                 for device in ("pc-1", "pc-2"):
                     headers = {"Authorization": "Bearer test-only-" + "a" * 32,

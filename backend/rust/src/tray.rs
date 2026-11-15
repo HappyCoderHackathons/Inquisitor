@@ -14,14 +14,15 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
-    Shell_NotifyIconW,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NIM_SETVERSION, NIN_BALLOONUSERCLICK, NOTIFYICON_VERSION, NOTIFYICONDATAW, Shell_NotifyIconW,
+    ShellExecuteW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW, GetWindowLongPtrW, HMENU,
     HWND_MESSAGE, IsDialogMessageW, IsWindow, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
-    MF_STRING, MF_UNCHECKED, MSG, PostMessageW, PostQuitMessage, RegisterClassExW,
+    MF_STRING, MF_UNCHECKED, MSG, PostMessageW, PostQuitMessage, RegisterClassExW, SW_SHOWNORMAL,
     SetForegroundWindow, SetTimer, SetWindowLongPtrW, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
     TPM_RIGHTALIGN, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenu, TranslateMessage,
     WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_INPUT,
@@ -83,6 +84,8 @@ struct AppState {
     link: Option<Link>,
     /// Pause state last told to the link, so changes are sent once.
     paused_sent: bool,
+    /// Website login opened when the user clicks the re-verify balloon.
+    reverify_url: Option<String>,
 }
 
 impl AppState {
@@ -98,6 +101,7 @@ impl AppState {
             devices_hwnd: None,
             link: None,
             paused_sent: false,
+            reverify_url: None,
         }
     }
 
@@ -221,6 +225,11 @@ fn add_tray_icon(hwnd: HWND) -> windows::core::Result<()> {
         if !Shell_NotifyIconW(NIM_ADD, &nid).as_bool() {
             return Err(windows::core::Error::from_thread());
         }
+        // Version 3 delivers NIN_BALLOONUSERCLICK. Version 4 would repack mouse
+        // messages and break the left-click menu.
+        let mut version = nid;
+        version.Anonymous.uVersion = NOTIFYICON_VERSION;
+        let _ = Shell_NotifyIconW(NIM_SETVERSION, &version);
     }
     Ok(())
 }
@@ -278,6 +287,13 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 }
                 LRESULT(0)
             }
+            m if m == link::WM_REVERIFY => {
+                if let Some(server) = state.link.as_ref().and_then(|link| link.status().server) {
+                    state.reverify_url = Some(link::login_url(&server));
+                    show_reverify_balloon(hwnd);
+                }
+                LRESULT(0)
+            }
             m if m == pair_window::WM_PAIRED => {
                 if let Some((endpoint, credential)) = pair_window::take_paired() {
                     state.config.server_url = Some(endpoint.display());
@@ -293,7 +309,11 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 // menu on left-click (user preference) and also on WM_CONTEXTMENU,
                 // which fires for keyboard-driven access (Shift+F10, apps key).
                 let event = (lparam.0 as u32) & 0xFFFF;
-                if event == WM_LBUTTONUP || event == WM_CONTEXTMENU {
+                if event == NIN_BALLOONUSERCLICK {
+                    if let Some(url) = state.reverify_url.clone() {
+                        open_url(&url);
+                    }
+                } else if event == WM_LBUTTONUP || event == WM_CONTEXTMENU {
                     show_menu(hwnd, state);
                 }
                 LRESULT(0)
@@ -582,6 +602,54 @@ fn tooltip(status: &link::Status) -> String {
     format!("Inquisitor: {short}")
 }
 
+const REVERIFY_BODY: &str = "Please confirm it is you. Click to sign in on the website and re-verify. This does not lock Windows.";
+
+fn write_utf16(dest: &mut [u16], text: &str) {
+    let limit = dest.len().saturating_sub(1);
+    for (slot, unit) in dest.iter_mut().take(limit).zip(text.encode_utf16()) {
+        *slot = unit;
+    }
+}
+
+/// Balloon only. It does not take focus, lock the session, or block input.
+fn show_reverify_balloon(hwnd: HWND) {
+    let mut info = [0u16; 256];
+    let mut title = [0u16; 64];
+    write_utf16(&mut info, REVERIFY_BODY);
+    write_utf16(&mut title, "Inquisitor");
+    let nid = NOTIFYICONDATAW {
+        cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: 1,
+        uFlags: NIF_INFO,
+        szInfo: info,
+        szInfoTitle: title,
+        dwInfoFlags: NIIF_INFO,
+        ..Default::default()
+    };
+    unsafe {
+        let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+}
+
+/// Open `url` in the default browser. Only the paired site's login page is passed.
+fn open_url(url: &str) {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return;
+    }
+    let wide = to_wide(url);
+    unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(wide.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        );
+    }
+}
+
 fn set_tooltip(hwnd: HWND, text: &str) {
     let mut tip = [0u16; 128];
     for (i, c) in text.encode_utf16().enumerate().take(127) {
@@ -604,6 +672,8 @@ fn set_tooltip(hwnd: HWND, text: &str) {
 mod tests {
     use super::*;
     use std::time::Duration;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::UI::Input::{RAWINPUT, RAWINPUT_0, RAWINPUTHEADER, RAWKEYBOARD, RAWMOUSE};
 
     const ALLOWED: &str =
         r"\\?\HID#VID_046D&PID_C52B&MI_00#7&TEST#{884b96c3-56ef-11d1-bc8c-00a0c91405dd}";
@@ -665,6 +735,104 @@ mod tests {
         let mut s = state();
         s.config.terms_accepted = 0;
         assert!(s.drop_event(ALLOWED));
+    }
+
+    fn raw(kind: u32, data: RAWINPUT_0) -> RAWINPUT {
+        RAWINPUT {
+            header: RAWINPUTHEADER {
+                dwType: kind,
+                dwSize: size_of::<RAWINPUT>() as u32,
+                hDevice: HANDLE(0x10 as *mut _),
+                wParam: WPARAM(0),
+            },
+            data,
+        }
+    }
+
+    /// Typing and mouse motion through the same filter and capture as WM_INPUT,
+    /// then 30 seconds later: the feature windows that would go to the link.
+    fn type_and_wait(s: &mut AppState) -> Vec<crate::features::FeatureWindow> {
+        let p: *mut AppState = s;
+        for scan in [0x1E, 0x30, 0x2E] {
+            for flags in [0, 1] {
+                let keyboard = RAWKEYBOARD {
+                    MakeCode: scan,
+                    Flags: flags,
+                    ..Default::default()
+                };
+                let event = raw(1, RAWINPUT_0 { keyboard });
+                s.capture
+                    .process_raw(&event, |path| unsafe { !(*p).drop_event(path) });
+            }
+            let mouse = RAWMOUSE {
+                lLastX: 4,
+                lLastY: -3,
+                ..Default::default()
+            };
+            let event = raw(0, RAWINPUT_0 { mouse });
+            s.capture
+                .process_raw(&event, |path| unsafe { !(*p).drop_event(path) });
+        }
+        let now = s.capture.monotonic_s();
+        let windower = s.capture.windower_mut().unwrap();
+        windower.tick(now + 30.0);
+        windower.take_ready()
+    }
+
+    /// Input from a fake handle has no device path; allowing "" leaves only the
+    /// terms and pause rules to stop it.
+    fn state_allowing_test_input() -> AppState {
+        let mut s = state();
+        s.config.allowed_devices.insert(String::new());
+        s.capture.set_windower(Some(Windower::new()));
+        s
+    }
+
+    #[test]
+    fn paused_input_produces_no_windows() {
+        let mut s = state_allowing_test_input();
+        s.paused = true;
+        assert!(type_and_wait(&mut s).is_empty());
+        s.paused = false;
+        let windows = type_and_wait(&mut s);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].features.keyboard.key_count, 3);
+    }
+
+    #[test]
+    fn fresh_install_captures_queues_and_sends_nothing() {
+        let dir =
+            std::env::temp_dir().join(format!("inquisitor-test-{}-fresh", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let csv = dir.join("capture.csv");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = state_allowing_test_input();
+        s.config.terms_accepted = 0;
+        s.capture
+            .set_writer(Box::new(std::fs::File::create(&csv).unwrap()));
+        // A remembered website but no device credential, as after disconnecting.
+        let server = Endpoint::parse("http://127.0.0.1:9").ok();
+        s.link = Some(Link::start_with(
+            HWND::default(),
+            server,
+            None,
+            false,
+            dir.join("device.bin"),
+        ));
+
+        assert!(type_and_wait(&mut s).is_empty());
+        forward_windows(&mut s);
+        let status = s.link.as_ref().unwrap().status();
+        // No client was made, so nothing can be sent.
+        assert_eq!(
+            (status.state, status.server, status.queued),
+            (State::NotPaired, None, 0)
+        );
+        drop(s);
+        assert_eq!(std::fs::metadata(&csv).unwrap().len(), 0);
+        assert!(!dir.join("outbox.jsonl").exists());
+        assert!(!dir.join("agent.log").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
