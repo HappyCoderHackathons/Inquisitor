@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
+import mongomock
+
 import server
 
 
@@ -37,12 +39,16 @@ def valid_window():
 class FeatureWindowApiTests(unittest.TestCase):
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
+        self.previous_database = server._arcade_database
         self.previous_database_path = server.DB_PATH
-        server.DB_PATH = Path(self.temporary_directory.name) / "test.sqlite3"
+        server.set_arcade_database(mongomock.MongoClient(tz_aware=True).db)
+        server.DB_PATH = Path(self.temporary_directory.name) / "inputprint.sqlite3"
+        server.account = None
         server.initialize()
         self.client = server.app.test_client()
 
     def tearDown(self):
+        server.set_arcade_database(self.previous_database)
         server.DB_PATH = self.previous_database_path
         self.temporary_directory.cleanup()
 
@@ -106,15 +112,11 @@ class FeatureWindowApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/feature-windows", json={**window, "schema_version": 3}).status_code, 422)
 
     def stored_counts(self):
-        with server.db() as conn:
-            samples = conn.execute("SELECT COUNT(*) n FROM samples").fetchone()["n"]
-            windows = conn.execute("SELECT COUNT(*) n FROM feature_windows").fetchone()["n"]
-            enrollment = conn.execute(
-                "SELECT COUNT(*) n FROM feature_windows WHERE mode = 'enrollment'"
-            ).fetchone()["n"]
-            monitoring = conn.execute(
-                "SELECT COUNT(*) n FROM feature_windows WHERE mode = 'monitoring'"
-            ).fetchone()["n"]
+        database = server.arcade_database()
+        samples = database.arcade_samples.count_documents({})
+        windows = database.arcade_feature_windows.count_documents({})
+        enrollment = database.arcade_feature_windows.count_documents({"mode": "enrollment"})
+        monitoring = database.arcade_feature_windows.count_documents({"mode": "monitoring"})
         return samples, windows, enrollment, monitoring
 
     def save_sample_and_windows(self):
@@ -218,10 +220,10 @@ class FeatureWindowApiTests(unittest.TestCase):
         store = self.account()
         old = datetime.now(timezone.utc) - timedelta(hours=2)
         recent = datetime.now(timezone.utc)
-        with server.db() as conn:
-            conn.execute(
-                "UPDATE feature_windows SET created_at = ? WHERE mode = 'monitoring'", (old.isoformat(),),
-            )
+        server.arcade_database().arcade_feature_windows.update_many(
+            {"mode": "monitoring"},
+            {"$set": {"created_at": old.isoformat()}},
+        )
         self.assertTrue(store.save_window(
             server.LOCAL_USER_ID, server.LOCAL_DEVICE_ID,
             {**valid_window(), "session_id": "old-monitor", "sequence": 4, "mode": "monitoring"}, created_at=old,
@@ -253,4 +255,4 @@ class FeatureWindowApiTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main()

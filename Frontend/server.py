@@ -4,16 +4,18 @@ from __future__ import annotations
 import json
 import math
 import os
-import sqlite3
 import sys
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterator, cast
+from typing import cast
 
 from flask import Flask, jsonify, render_template, request
 from jsonschema import Draft202012Validator, FormatChecker
+from pymongo import MongoClient
+from pymongo.database import Database
+from pymongo.errors import DuplicateKeyError
 
+import arcade_persistence
 import hosted
 
 ROOT = Path(__file__).parent
@@ -26,6 +28,7 @@ import security
 LOCAL_USER_ID = "local-user"
 LOCAL_DEVICE_ID = "local-device"
 DB_PATH = Path(os.environ.get("INPUTPRINT_DB", ROOT / "inputprint.sqlite3"))
+_arcade_database: Database | None = None
 AGENT_FEATURE_VALIDATORS = {
     version: Draft202012Validator(
         json.loads((ROOT.parent / "shared" / f"feature-window-v{version}.schema.json").read_text(encoding="utf-8")),
@@ -42,18 +45,22 @@ security.install(app)
 account: AccountStore | None = None
 
 
-@contextmanager
-def db() -> Iterator[sqlite3.Connection]:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+def set_arcade_database(database: Database) -> None:
+    global _arcade_database
+    _arcade_database = database
+
+
+def arcade_database() -> Database:
+    if _arcade_database is not None:
+        return _arcade_database
+    client = MongoClient(
+        os.environ.get("MONGODB_URI", "mongodb://127.0.0.1:27017"),
+        tz_aware=True,
+    )
+    name = os.environ.get("MONGODB_DB", "inquisitor")
+    database = client[name]
+    set_arcade_database(database)
+    return database
 
 
 def open_account() -> AccountStore:
@@ -65,19 +72,7 @@ def open_account() -> AccountStore:
 
 def initialize():
     open_account()
-    with db() as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS samples (
-            id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, game TEXT NOT NULL,
-            duration_ms INTEGER NOT NULL, input_count INTEGER NOT NULL,
-            keyboard_count INTEGER NOT NULL, controller_count INTEGER NOT NULL,
-            mean_interval_ms REAL NOT NULL, interval_std_ms REAL NOT NULL,
-            mean_hold_ms REAL NOT NULL, score INTEGER NOT NULL, source TEXT NOT NULL
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS feature_windows (
-            id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, device_id TEXT NOT NULL,
-            session_id TEXT NOT NULL, sequence INTEGER NOT NULL, mode TEXT NOT NULL,
-            window_json TEXT NOT NULL, UNIQUE(device_id, session_id, sequence)
-        )""")
+    arcade_persistence.ensure_indexes(arcade_database())
 
 
 def _validated_feature_window_error(
@@ -164,27 +159,36 @@ def privacy():
 
 @app.get("/api/summary")
 def summary():
-    with db() as conn:
-        total = conn.execute("SELECT COUNT(*) n FROM samples").fetchone()["n"]
-        recent = conn.execute("SELECT game, score, created_at, input_count FROM samples ORDER BY id DESC LIMIT 8").fetchall()
-        games = conn.execute("SELECT game, COUNT(*) n FROM samples GROUP BY game").fetchall()
-    return jsonify({"samples": total, "recent": [dict(x) for x in recent], "games": {x["game"]: x["n"] for x in games}})
+    collection = arcade_database().arcade_samples
+    total = collection.count_documents({})
+    recent = list(
+        collection.find({}, {"_id": False, "game": True, "score": True, "created_at": True, "input_count": True})
+        .sort("_id", -1)
+        .limit(8)
+    )
+    games = {
+        row["_id"]: row["n"]
+        for row in collection.aggregate([{"$group": {"_id": "$game", "n": {"$sum": 1}}}])
+    }
+    return jsonify({"samples": total, "recent": recent, "games": games})
 
 
 @app.get("/api/feature-windows")
 def feature_window_summary():
-    with db() as conn:
-        total = conn.execute("SELECT COUNT(*) n FROM feature_windows").fetchone()["n"]
-        sessions = conn.execute("SELECT COUNT(DISTINCT session_id) n FROM feature_windows").fetchone()["n"]
-        modes = conn.execute("SELECT mode, COUNT(*) n FROM feature_windows GROUP BY mode").fetchall()
-    return jsonify({"windows": total, "sessions": sessions, "modes": {row["mode"]: row["n"] for row in modes}})
+    collection = arcade_database().arcade_feature_windows
+    total = collection.count_documents({})
+    sessions = len(collection.distinct("session_id"))
+    modes = {
+        row["_id"]: row["n"]
+        for row in collection.aggregate([{"$group": {"_id": "$mode", "n": {"$sum": 1}}}])
+    }
+    return jsonify({"windows": total, "sessions": sessions, "modes": modes})
 
 
 @app.get("/api/feature-windows/export")
 def export_feature_windows():
-    with db() as conn:
-        rows = conn.execute("SELECT window_json FROM feature_windows ORDER BY id").fetchall()
-    payload = "".join(f"{row['window_json']}\n" for row in rows)
+    rows = arcade_database().arcade_feature_windows.find().sort("_id", 1)
+    payload = "".join(f"{arcade_persistence.export_window_line(row)}\n" for row in rows)
     response = app.response_class(payload, mimetype="application/x-ndjson")
     response.headers["Content-Disposition"] = "attachment; filename=feature-windows-v1.jsonl"
     response.headers["Cache-Control"] = "no-store"
@@ -199,23 +203,11 @@ def save_feature_window():
     error = feature_window_error(data) or started_at_error(data, datetime.now(timezone.utc))
     if error:
         return jsonify(error=error), 422
-    with db() as conn:
-        try:
-            conn.execute(
-                """INSERT INTO feature_windows
-                (created_at, device_id, session_id, sequence, mode, window_json)
-                VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    datetime.now(timezone.utc).isoformat(),
-                    data["device_id"],
-                    data["session_id"],
-                    data["sequence"],
-                    data["mode"],
-                    json.dumps(data, allow_nan=False, separators=(",", ":")),
-                ),
-            )
-        except sqlite3.IntegrityError:
-            return jsonify(error="This device/session/sequence window already exists"), 409
+    document = {"created_at": datetime.now(timezone.utc).isoformat(), **data}
+    try:
+        arcade_database().arcade_feature_windows.insert_one(document)
+    except DuplicateKeyError:
+        return jsonify(error="This device/session/sequence window already exists"), 409
     return jsonify(ok=True), 201
 
 
@@ -235,17 +227,25 @@ def save_sample():
             raise ValueError
     except (TypeError, ValueError):
         return jsonify(error="Invalid aggregate values"), 400
-    with db() as conn:
-        conn.execute("INSERT INTO samples VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?)", (
-            datetime.now(timezone.utc).isoformat(), data["game"], *values[:4], *floats, values[4], str(data["source"])[:20]
-        ))
+    arcade_database().arcade_samples.insert_one({
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "game": data["game"],
+        "duration_ms": values[0],
+        "input_count": values[1],
+        "keyboard_count": values[2],
+        "controller_count": values[3],
+        "mean_interval_ms": floats[0],
+        "interval_std_ms": floats[1],
+        "mean_hold_ms": floats[2],
+        "score": values[4],
+        "source": str(data["source"])[:20],
+    })
     return jsonify(ok=True), 201
 
 
 @app.delete("/api/samples")
 def delete_samples():
-    with db() as conn:
-        conn.execute("DELETE FROM samples")
+    arcade_database().arcade_samples.delete_many({})
     return jsonify(ok=True)
 
 
@@ -261,9 +261,9 @@ def current_account() -> AccountStore:
 
 
 def erase_local_account() -> None:
-    with db() as conn:
-        conn.execute("DELETE FROM samples")
-        conn.execute("DELETE FROM feature_windows")
+    database = arcade_database()
+    database.arcade_samples.delete_many({})
+    database.arcade_feature_windows.delete_many({})
     current_account().delete_user(LOCAL_USER_ID)
 
 
@@ -272,12 +272,13 @@ def purge_monitoring_data(now: datetime | None = None) -> dict[str, int]:
     store = current_account()
     removed = store.purge_monitoring(moment)
     cutoff = moment - timedelta(seconds=store.retention_seconds())
-    with db() as conn:
-        rows = conn.execute("SELECT id, created_at FROM feature_windows WHERE mode = 'monitoring'").fetchall()
-        stale = [row["id"] for row in rows if datetime.fromisoformat(row["created_at"]) < cutoff]
-        if stale:
-            conn.executemany("DELETE FROM feature_windows WHERE id = ?", [(row_id,) for row_id in stale])
-        removed["collector_windows"] = len(stale)
+    collection = arcade_database().arcade_feature_windows
+    stale = 0
+    for row in collection.find({"mode": "monitoring"}, {"_id": True, "created_at": True}):
+        if arcade_persistence.parse_created_at(row["created_at"]) < cutoff:
+            collection.delete_one({"_id": row["_id"]})
+            stale += 1
+    removed["collector_windows"] = stale
     return removed
 
 
@@ -296,8 +297,7 @@ def reset_enrollment():
     rejected = confirmation_rejected("RESET")
     if rejected:
         return rejected
-    with db() as conn:
-        deleted = conn.execute("DELETE FROM feature_windows WHERE mode = 'enrollment'").rowcount
+    deleted = arcade_database().arcade_feature_windows.delete_many({"mode": "enrollment"}).deleted_count
     deleted += current_account().reset_enrollment(LOCAL_USER_ID, LOCAL_DEVICE_ID)
     return jsonify(ok=True, deleted=deleted)
 
@@ -342,15 +342,15 @@ def onboarding_window_error(window: dict[str, object]) -> str | None:
 
 
 if hosted.configured():
-    from pymongo import MongoClient
-
     ml_token = Path(os.environ["ML_TOKEN_FILE"]).read_text().strip()
     trainer, scorer, deleter, activator, comparer, resetter, deactivator = hosted.ml_client(
         os.environ["ML_SERVICE_URL"], ml_token,
     )
+    hosted_database = MongoClient(os.environ["MONGODB_URI"], tz_aware=True)[os.environ["MONGODB_DB"]]
+    set_arcade_database(hosted_database)
     hosted.register(
         app,
-        MongoClient(os.environ["MONGODB_URI"], tz_aware=True)[os.environ["MONGODB_DB"]],
+        hosted_database,
         trainer,
         scorer,
         onboarding_window_error,
