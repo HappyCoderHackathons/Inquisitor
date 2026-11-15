@@ -67,12 +67,16 @@ class ModelServiceTests(unittest.TestCase):
                 store.train([], "user", "device", "validation")
 
     def test_published_api_auth_ownership_and_score_contract(self) -> None:
-        artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v1.json"
+        artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v2.json"
         with patch.dict(os.environ, {"ML_PUBLISHED_MODEL_FILE": str(artifact),
                                     "ML_PUBLISHED_USER_ID": "synthetic-user", "ML_PUBLISHED_DEVICE_ID": "synthetic-device"}):
             client = create_app().test_client()
         self.assertEqual(client.get("/model").status_code, 401)
-        self.assertEqual(client.get("/model", headers=self.headers).json["model_version"], "labeled-overlap-v1")
+        self.assertEqual(client.get("/model", headers=self.headers).json["model_version"], "labeled-overlap-v2")
+        unusual = generate_windows(49, 1)[0]
+        unusual["features"]["press_overlap_fraction"] = 0.9
+        explanation = client.post("/score", headers=self.headers, json={"window": unusual}).json["explanation"]
+        self.assertIsNotNone(explanation["features"][0]["baseline_z"])
         window = generate_windows(49, 1)[0]
         response = client.post("/score", headers=self.headers, json={"window": window})
         self.assertEqual(response.status_code, 200, response.json)

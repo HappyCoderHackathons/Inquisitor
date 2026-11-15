@@ -1,0 +1,50 @@
+{
+  "format_version": 1,
+  "model_version": "labeled-overlap-v2",
+  "algorithm": "LogisticRegression",
+  "schema_version": 1,
+  "schema_sha256": "56a5ceeb31e0d2ef3b3257c752bea37898c0364591fa8d62c2a85a14b3091304",
+  "feature_names": [
+    "hold_cv",
+    "press_overlap_fraction"
+  ],
+  "feature_transform": "hold_cv=hold_std_ms/max(hold_mean_ms,1e-8); log1p; standard scaling",
+  "scaler_mean": [
+    0.6057850851040378,
+    0.12369020388783654
+  ],
+  "scaler_scale": [
+    0.34306241171051804,
+    0.07874322266459224
+  ],
+  "coefficient": [
+    -0.40215438086063565,
+    1.3404433273552898
+  ],
+  "intercept": -0.412067909716762,
+  "threshold": 0.14981062610403284,
+  "threshold_percentile": 98,
+  "parameters": {
+    "C": 0.1,
+    "class_weight": "balanced",
+    "random_state": 49,
+    "max_iter": 1000
+  },
+  "training_summary": {
+    "genuine_windows": 60,
+    "impostor_windows": 30,
+    "genuine_sessions": 4,
+    "impostor_sessions": 2
+  },
+  "genuine_baseline": {
+    "median": [
+      0.9714841278562099,
+      0.07142857142857142
+    ],
+    "scale": [
+      0.8760936982964461,
+      0.037456107954545445
+    ]
+  },
+  "limitations": "Per-user labeled pilot. Model-selection CV is not an independent final test. No performance guarantee for other users or devices."
+}

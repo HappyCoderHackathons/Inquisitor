@@ -6,7 +6,7 @@ Training and inference belong on the designated remote model host. Hostnames,
 accounts, and credentials must stay in local/server configuration.
 
 The trained numeric weights are checked in at
-[`artifacts/labeled-overlap-v1.json`](artifacts/labeled-overlap-v1.json).
+[`artifacts/labeled-overlap-v2.json`](artifacts/labeled-overlap-v2.json).
 For inference without retraining, follow the [published API deployment guide](deploy/README.md).
 
 From the repository root, install the locked environment:
@@ -83,8 +83,8 @@ UNUSUAL results from labeled-overlap models include an `explanation`. Each featu
 ranked by how much they pushed the score toward the second-user class. Models trained
 with this version also save a `genuine_baseline` (median and 1.4826 x MAD of genuine
 training windows) and add each feature's `baseline_z`. The published
-`labeled-overlap-v1` artifact predates the baseline, so it reports contributions only
-until it is re-exported. Isolation Forest models do not return explanations.
+`labeled-overlap-v2` artifact includes the baseline; v1 predates it and reports
+contributions only. Isolation Forest models do not return explanations.
 Explanations describe the model's decision, not the cause of a user's behavior.
 
 The default minimum is 20 training windows and 10 validation windows from a
