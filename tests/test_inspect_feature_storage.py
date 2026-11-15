@@ -7,7 +7,11 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from scripts.inspect_feature_storage import InspectionError, inspect_mongodb_database, inspect_sqlite_database
+from scripts.inspect_feature_storage import (
+    InspectionError,
+    inspect_mongodb_database,
+    inspect_sqlite_database,
+)
 
 
 class FakeCollection:
