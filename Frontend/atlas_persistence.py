@@ -87,18 +87,7 @@ def record_inference(
         "result": result,
         "created_at": created_at,
     })
-    if result.get("state") == "UNUSUAL":
-        database.alerts.insert_one({
-            "_id": uuid4().hex,
-            "user_id": user_id,
-            "device_id": device_id,
-            "inference_id": inference_id,
-            "status": "open",
-            "severity": "medium",
-            "result": result,
-            "created_at": created_at,
-            "acknowledged_at": None,
-        })
+    # A single unusual window is not an alert. The caller applies the persistence rule.
     return inference_id
 
 
