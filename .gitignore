@@ -1,3 +1,10 @@
 # Superpowers-generated artifacts
 superpowers/
 .superpowers/
+
+# Python
+__pycache__/
+.venv/
+
+# Local credentials and real enrollment data
+/.private/

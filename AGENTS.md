@@ -18,8 +18,12 @@
 - Follow [docs/architecture.md](docs/architecture.md) for the selected stack and
   component boundaries. It supersedes open options in the original project spec.
 - Windows client: Rust owns native keyboard I/O, local orchestration, and transport.
-- ML: Python 3.13+ with PyTorch. Training and inference run locally through the Rust
-  client's aggregate JSON process boundary. Keep model artifacts on the PC.
+- ML: Python 3.13+ with scikit-learn. The current labeled pilot uses logistic
+  regression on hold-time variability and press overlap; Isolation Forest artifacts
+  remain supported for comparison and rollback. Training and inference run
+  on the designated remote host behind an authenticated Flask service. Keep model
+  artifacts there; keep deployment identities and credentials out of the repository.
+  Training is disabled by default and must only be enabled on that host.
 - Web: SvelteKit, TypeScript, Vite, Tailwind CSS, Iconify, and Prettier at 120 columns.
   SvelteKit hosts account, pairing, persistence, and status endpoints, with a
   persistent WebSocket relay for the desktop connection.
@@ -56,3 +60,12 @@
   dates, links, or unverified success claims.
 - At handoff, briefly state what changed, material assumptions, verification, and
   known risks. Distinguish architecture decisions from working integrations.
+
+## Testing
+
+- Keep tests simple and concise. Cover normal behavior and specific, meaningful
+  edge cases that could cause real failures.
+- Do not add tests just to increase test count or coverage. Reuse existing checks
+  and add only what is needed to verify the change.
+- Skip redundant tests and tests that merely mirror the implementation. No new
+  tests are needed for documentation-only or trivial changes.
