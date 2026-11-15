@@ -73,9 +73,8 @@
           <p id="agentStatus" class="collection-status" role="status">Agent status: offline</p>
           <nav class="wizard-steps" aria-label="Enrollment steps">
             <button class="wizard-step" type="button" data-step-tab="warmup" aria-current="step">1. Warm-up</button>
-            <button class="wizard-step" type="button" data-step-tab="typing" disabled>2. Typing Sample</button>
-            <button class="wizard-step" type="button" data-step-tab="activity" disabled>3. Natural Activity</button>
-            <button class="wizard-step" type="button" data-step-tab="train" disabled>4. Train Model</button>
+            <button class="wizard-step" type="button" data-step-tab="activity" disabled>2. Natural Activity</button>
+            <button class="wizard-step" type="button" data-step-tab="train" disabled>3. Train Model</button>
           </nav>
 
           <div class="wizard-panel" data-step-panel="warmup">
@@ -97,20 +96,10 @@
                   <li>Typed text, passwords, key names, and the order of individual keys.</li>
                   <li>Screenshots, application names, and page addresses.</li>
                   <li>The pointer path and absolute pointer position.</li>
-                  <li>The practice text on Typing Sample. It stays in this browser.</li>
                 </ul>
               </div>
             </div>
             <p class="dashboard-footnote">The field names and units are on the <a href="/privacy">privacy page</a>.</p>
-          </div>
-
-          <div class="wizard-panel" data-step-panel="typing" hidden>
-            <h3>Typing Sample</h3>
-            <p class="dashboard-panel-copy">Type in the box if you want a neutral passage to practice on. The words stay in this browser. The page does not save them and does not send them. The agent, when it is running, can send only timing summaries.</p>
-            <label class="practice-field">Practice text
-              <textarea id="practiceText" maxlength="500" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="practiceNote"></textarea>
-            </label>
-            <p id="practiceNote" class="dashboard-footnote">Nothing you type here is included in a request.</p>
           </div>
 
           <div class="wizard-panel" data-step-panel="activity" hidden>
@@ -122,7 +111,7 @@
 
           <div class="wizard-panel" data-step-panel="train" hidden>
             <h3>Train Model</h3>
-            <p class="dashboard-panel-copy">Train stays off until each game has its time and the usable windows cover training and calibration. Training uses those summaries, not the practice text.</p>
+            <p class="dashboard-panel-copy">Train stays off until each game has its time and the usable windows cover training and calibration. Training uses only those summaries.</p>
             <button id="trainModel" class="button primary" type="button" disabled>Train my model</button>
           </div>
 

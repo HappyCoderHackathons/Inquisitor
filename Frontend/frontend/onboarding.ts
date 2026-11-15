@@ -50,7 +50,7 @@ const authForm = element("authForm") as HTMLFormElement | null;
 let signingUp = false;
 let agentOffline = true;
 let wizardStep = 0;
-const wizardSteps = ["warmup", "typing", "activity", "train"] as const;
+const wizardSteps = ["warmup", "activity", "train"] as const;
 
 function showWizard(index: number, announce = false) {
   if (agentOffline && index > 0) {
