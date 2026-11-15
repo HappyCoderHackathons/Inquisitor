@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#09070D">
+    <meta name="description" content="Sign in, pair the Inquisitor agent, and complete calibration games.">
+    <title>Inquisitor | Setup</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <div class="arcade-layout">
+      <header class="arcade-header">
+        <a class="brand" href="/">Inquisitor</a>
+        <nav class="arcade-nav" aria-label="Main navigation">
+          <a href="/">Home</a>
+          <a href="/arcade">Activities</a>
+          <a href="/onboarding" aria-current="page">Setup</a>
+        </nav>
+      </header>
+
+      <main class="dashboard-main">
+        <section class="dashboard-heading">
+          <p class="eyebrow"><span class="eyebrow-line"></span> SETUP</p>
+          <h1>Set up your model</h1>
+          <p>Sign in, connect the Windows agent, then play each of the four games for 2.5 minutes. The agent measures aggregate keyboard and mouse timing while you play; your model trains when enough data is collected.</p>
+        </section>
+
+        <section class="dashboard-panel" aria-labelledby="signInTitle">
+          <h2 id="signInTitle">1. Sign in</h2>
+          {% if signed_in %}
+            <p class="dashboard-panel-copy">You are signed in.</p>
+            <form method="post" action="/logout"><button class="button secondary-button" type="submit">Sign out</button></form>
+          {% else %}
+            <p class="dashboard-panel-copy">Sign in with SSOJet to link the agent and your calibration data to your account.</p>
+            <a class="button primary" href="/login">Sign in</a>
+          {% endif %}
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
