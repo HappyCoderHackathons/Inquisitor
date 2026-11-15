@@ -22,7 +22,10 @@ A local Flask + TypeScript arcade prototype for collecting opt-in behavioral inp
 
 - The home page (`/`) introduces the prototype, its four games, and its privacy scope.
 - The arcade (`/arcade`) contains the playable games and recent round summaries.
-- Use the navigation on either page to move between the introduction and arcade.
+- The user dashboard (`/dashboard`) shows the planned account, model, and agent status areas. SSOJet and agent/model connections are not integrated yet.
+- Use the navigation on each page to move between home, activities, and the dashboard.
+
+See [INTEGRATION_HANDOFF.md](INTEGRATION_HANDOFF.md) for dashboard code locations and the remaining authenticated WebSocket, SSOJet, model-status, and account-deletion work.
 
 Xbox and Nintendo controllers work through the browser Gamepad API. Connect the controller and press a button once so the browser can recognize it. Keyboard controls are shown in each game. The arcade sprint rotates through four one-minute rounds; each game can also be played on its own.
 

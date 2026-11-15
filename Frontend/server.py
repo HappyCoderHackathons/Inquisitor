@@ -41,6 +41,11 @@ def arcade():
     return render_template("arcade.html")
 
 
+@app.get("/dashboard")
+def dashboard():
+    return render_template("dashboard.html")
+
+
 @app.get("/api/summary")
 def summary():
     with db() as conn:
