@@ -115,7 +115,7 @@ auth user id. An empty id is rejected.
 | `GET /api/model` | The signed-in account's active model. An optional `device_id` must belong to that account. Counts and evaluation come from that model's stored metadata |
 | `GET /api/monitoring/status`, `GET /api/monitoring/history`, `GET /monitoring/status`, and `GET /monitoring/history` | The signed-in account's latest score and chart points. A `device_id` must belong to that account |
 | `GET /api/monitoring/stream` | The signed-in account, using the session cookie. A `device_id` must belong to that account. Pushes that device's score and open alerts |
-| `GET /api/alerts` | The signed-in account's alerts, optionally filtered by status and device |
+| `GET /api/alerts` and `GET /alerts` | The signed-in account's alerts, optionally filtered by status and owned device |
 | `POST /api/alerts/<id>/acknowledge` | One alert owned by the signed-in account. The label is `expected` or `unexpected`. It does not retrain |
 | `POST /api/onboarding/retrain` | Requires `{"approve": true}`. Starts a new collection generation and does not activate a model |
 | `POST /api/models/reset` | Requires `RESET`. Clears that account's enrollment windows and active model |

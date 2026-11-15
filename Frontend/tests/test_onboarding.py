@@ -1041,6 +1041,7 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/monitoring/status").status_code, 401)
         self.assertEqual(self.client.get("/monitoring/history").status_code, 401)
         self.assertEqual(self.client.get("/api/alerts").status_code, 401)
+        self.assertEqual(self.client.get("/alerts").status_code, 401)
         self.assertEqual(
             self.client.post("/api/alerts/missing/acknowledge", json={"label": "expected"}).status_code, 401,
         )
@@ -1052,11 +1053,14 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/monitoring/history").get_json(), {"axis": "Anomaly score", "points": []})
         self.assertEqual(self.client.get("/monitoring/status").get_json(), empty)
         self.assertEqual(self.client.get("/monitoring/history").get_json(), {"axis": "Anomaly score", "points": []})
+        self.assertEqual(self.client.get("/alerts").get_json(), {"alerts": []})
         for query in ("limit=0", "limit=201", "since=yesterday"):
             self.assertEqual(self.client.get(f"/api/monitoring/history?{query}").status_code, 422)
         self.assertEqual(self.client.get("/api/alerts?status=nope").status_code, 422)
+        self.assertEqual(self.client.get("/alerts?status=nope").status_code, 422)
         self.assertEqual(self.client.get("/api/monitoring/status?device_id=other").status_code, 404)
         self.assertEqual(self.client.get("/api/alerts?device_id=other").status_code, 404)
+        self.assertEqual(self.client.get("/alerts?device_id=other").status_code, 404)
 
         device_id, agent = self.ready_monitor()
         self.upload_scores(device_id, agent, ["UNUSUAL"])
@@ -1072,6 +1076,9 @@ class OnboardingTests(unittest.TestCase):
         self.upload_scores(device_id, agent, ["UNUSUAL", "UNUSUAL", "NORMAL"])
         opened = self.client.get("/api/alerts").get_json()["alerts"]
         self.assertEqual(len(opened), 1)
+        self.assertEqual(self.client.get(f"/alerts?status=open&device_id={device_id}").get_json(), {
+            "alerts": opened,
+        })
         self.assertEqual(opened[0]["status"], "open")
         self.assertTrue(opened[0]["ongoing"])
         self.assertIsNone(opened[0]["duration_seconds"])
@@ -1120,7 +1127,9 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 403)
         self.sign_in("user-b")
         self.assertEqual(self.client.get("/api/alerts").get_json()["alerts"], [])
+        self.assertEqual(self.client.get("/alerts").get_json()["alerts"], [])
         self.assertEqual(self.client.get(f"/api/alerts?device_id={device_id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/alerts?device_id={device_id}").status_code, 404)
         self.assertEqual(self.client.get(f"/api/monitoring/status?device_id={device_id}").status_code, 404)
         self.assertEqual(self.client.get(f"/monitoring/status?device_id={device_id}").status_code, 404)
         self.assertEqual(self.client.get(f"/monitoring/history?device_id={device_id}").status_code, 404)

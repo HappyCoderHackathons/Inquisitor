@@ -1526,6 +1526,7 @@ def register(
             "state": item.get("classification"),
         } for item in rows])
 
+    @blueprint.get("/alerts")
     @blueprint.get("/api/alerts")
     def list_alerts():
         user_id = current_user()
