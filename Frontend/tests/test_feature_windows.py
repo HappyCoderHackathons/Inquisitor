@@ -1,0 +1,80 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+import server
+
+
+def valid_window():
+    return {
+        "schema_version": 1,
+        "device_id": "local-device",
+        "session_id": "local-session",
+        "sequence": 0,
+        "mode": "enrollment",
+        "started_at": "2026-11-14T12:00:00Z",
+        "duration_ms": 30_000,
+        "features": {
+            "key_count": 40,
+            "presses_per_second": 2.0,
+            "hold_mean_ms": 100.0,
+            "hold_std_ms": 20.0,
+            "press_interval_mean_ms": 500.0,
+            "press_interval_std_ms": 50.0,
+            "press_interval_p90_ms": 550.0,
+            "pause_count": 0,
+            "pause_fraction": 0.0,
+            "burst_count": 1,
+            "press_overlap_fraction": 0.2,
+        },
+    }
+
+
+class FeatureWindowApiTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.previous_database_path = server.DB_PATH
+        server.DB_PATH = Path(self.temporary_directory.name) / "test.sqlite3"
+        server.initialize()
+        self.client = server.app.test_client()
+
+    def tearDown(self):
+        server.DB_PATH = self.previous_database_path
+        self.temporary_directory.cleanup()
+
+    def test_saves_and_exports_shared_schema_window_as_jsonl(self):
+        window = valid_window()
+        response = self.client.post("/api/feature-windows", json=window)
+
+        self.assertEqual(response.status_code, 201)
+        summary = self.client.get("/api/feature-windows").get_json()
+        self.assertEqual(summary, {"windows": 1, "sessions": 1, "modes": {"enrollment": 1}})
+        export = self.client.get("/api/feature-windows/export")
+        self.assertEqual(export.mimetype, "application/x-ndjson")
+        self.assertEqual(json.loads(export.get_data(as_text=True)), window)
+
+    def test_rejects_non_contract_fields_and_duplicate_sequences(self):
+        window = valid_window()
+        invalid = {**window, "key_events": ["a"]}
+        self.assertEqual(self.client.post("/api/feature-windows", json=invalid).status_code, 422)
+
+        self.assertEqual(self.client.post("/api/feature-windows", json=window).status_code, 201)
+        duplicate = self.client.post("/api/feature-windows", json=window)
+        self.assertEqual(duplicate.status_code, 409)
+
+    def test_rejects_non_finite_feature_values(self):
+        window = valid_window()
+        window["features"]["hold_mean_ms"] = float("nan")
+        self.assertEqual(self.client.post("/api/feature-windows", json=window).status_code, 422)
+
+    def test_local_data_delete_clears_feature_windows(self):
+        self.client.post("/api/feature-windows", json=valid_window())
+        response = self.client.delete("/api/local-data")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.get("/api/feature-windows").get_json()["windows"], 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

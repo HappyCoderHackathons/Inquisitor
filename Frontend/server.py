@@ -2,15 +2,21 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 from flask import Flask, jsonify, render_template, request
+from jsonschema import Draft202012Validator, FormatChecker
 
 ROOT = Path(__file__).parent
 DB_PATH = Path(os.environ.get("INPUTPRINT_DB", ROOT / "inputprint.sqlite3"))
+FEATURE_SCHEMA_PATH = ROOT.parent / "shared" / "feature-window-v1.schema.json"
+FEATURE_SCHEMA = json.loads(FEATURE_SCHEMA_PATH.read_text(encoding="utf-8"))
+FEATURE_VALIDATOR = Draft202012Validator(FEATURE_SCHEMA, format_checker=FormatChecker())
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
 
@@ -29,6 +35,28 @@ def initialize():
             mean_interval_ms REAL NOT NULL, interval_std_ms REAL NOT NULL,
             mean_hold_ms REAL NOT NULL, score INTEGER NOT NULL, source TEXT NOT NULL
         )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS feature_windows (
+            id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, device_id TEXT NOT NULL,
+            session_id TEXT NOT NULL, sequence INTEGER NOT NULL, mode TEXT NOT NULL,
+            window_json TEXT NOT NULL, UNIQUE(device_id, session_id, sequence)
+        )""")
+
+
+def feature_window_error(value: object) -> str | None:
+    error = next(FEATURE_VALIDATOR.iter_errors(value), None)
+    if error:
+        return f"Feature window does not match schema v1: {error.message}"
+    window = cast(dict[str, object], value)
+    features = cast(dict[str, int | float], window["features"])
+    try:
+        if not all(math.isfinite(number) for number in features.values()):
+            return "Feature values must be finite numbers"
+        duration = cast(int, window["duration_ms"])
+        if any(number > duration for name, number in features.items() if name.endswith("_ms")):
+            return "Timing features cannot exceed window duration"
+    except OverflowError:
+        return "Feature values must be finite numbers"
+    return None
 
 
 @app.get("/")
@@ -53,6 +81,54 @@ def summary():
         recent = conn.execute("SELECT game, score, created_at, input_count FROM samples ORDER BY id DESC LIMIT 8").fetchall()
         games = conn.execute("SELECT game, COUNT(*) n FROM samples GROUP BY game").fetchall()
     return jsonify({"samples": total, "recent": [dict(x) for x in recent], "games": {x["game"]: x["n"] for x in games}})
+
+
+@app.get("/api/feature-windows")
+def feature_window_summary():
+    with db() as conn:
+        total = conn.execute("SELECT COUNT(*) n FROM feature_windows").fetchone()["n"]
+        sessions = conn.execute("SELECT COUNT(DISTINCT session_id) n FROM feature_windows").fetchone()["n"]
+        modes = conn.execute("SELECT mode, COUNT(*) n FROM feature_windows GROUP BY mode").fetchall()
+    return jsonify({"windows": total, "sessions": sessions, "modes": {row["mode"]: row["n"] for row in modes}})
+
+
+@app.get("/api/feature-windows/export")
+def export_feature_windows():
+    with db() as conn:
+        rows = conn.execute("SELECT window_json FROM feature_windows ORDER BY id").fetchall()
+    payload = "".join(f"{row['window_json']}\n" for row in rows)
+    response = app.response_class(payload, mimetype="application/x-ndjson")
+    response.headers["Content-Disposition"] = "attachment; filename=feature-windows-v1.jsonl"
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/feature-windows")
+def save_feature_window():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(error="Expected one feature-window JSON object"), 400
+    error = feature_window_error(data)
+    if error:
+        return jsonify(error=error), 422
+    with db() as conn:
+        try:
+            conn.execute(
+                """INSERT INTO feature_windows
+                (created_at, device_id, session_id, sequence, mode, window_json)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    data["device_id"],
+                    data["session_id"],
+                    data["sequence"],
+                    data["mode"],
+                    json.dumps(data, allow_nan=False, separators=(",", ":")),
+                ),
+            )
+        except sqlite3.IntegrityError:
+            return jsonify(error="This device/session/sequence window already exists"), 409
+    return jsonify(ok=True), 201
 
 
 @app.post("/api/samples")
@@ -82,6 +158,14 @@ def save_sample():
 def delete_samples():
     with db() as conn:
         conn.execute("DELETE FROM samples")
+    return jsonify(ok=True)
+
+
+@app.delete("/api/local-data")
+def delete_local_data():
+    with db() as conn:
+        conn.execute("DELETE FROM samples")
+        conn.execute("DELETE FROM feature_windows")
     return jsonify(ok=True)
 
 
