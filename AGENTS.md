@@ -42,9 +42,10 @@
 
 ## Input and ML boundaries
 
-- Authentication v1 uses keyboard and mouse, collected by the arcade for calibration
-  and by the Windows agent for monitoring with matching feature definitions. Mouse
-  collection needs its own opt-in toggle. Controller input does not expand that scope.
+- Authentication v1 uses keyboard and mouse. The Windows agent always sends both
+  together as schema-v4 aggregates; consent to both is given on its setup terms page,
+  and nothing is sent before that. Agent uploads and hosted training use schema v4
+  only. Controller input does not expand that scope.
 - Require explicit opt-in and visible pause/exit controls. Do not bypass secure
   desktop protections, lock Windows, or block keyboard or mouse input.
 - Key identity may exist transiently in memory only to pair press/release events.

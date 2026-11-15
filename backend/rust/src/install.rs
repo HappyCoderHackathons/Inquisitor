@@ -37,6 +37,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{HSTRING, Interface, PCWSTR, w};
 
 use crate::config::{Config, default_app_dir};
+use crate::credential;
 use crate::startup;
 use crate::tray;
 
@@ -231,6 +232,8 @@ pub fn remove(delete_data: bool) -> Result<Removed, String> {
     stop_running_trays();
     startup::disable().map_err(|e| format!("Could not remove Start with Windows: {e}"))?;
     let _ = fs::remove_file(shortcut_path());
+    // The account connection goes with the app, whether or not data is kept.
+    credential::delete().map_err(|e| format!("Could not remove the account connection: {e}"))?;
     delete_key(UNINSTALL_KEY).map_err(|e| format!("Could not unregister the app: {e}"))?;
 
     if delete_data {

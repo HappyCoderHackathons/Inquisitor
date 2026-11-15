@@ -18,6 +18,14 @@ ENV = {name: "test-value" for name in hosted.ENV} | {
 
 
 def window(device_id, session_id, sequence, key_count=40):
+    """An agent window: schema v4 keyboard and mouse aggregates."""
+    value = native_window(device_id, session_id, sequence)
+    value["features"].update(key_count=key_count, hold_sample_count=key_count)
+    return value
+
+
+def legacy_window(device_id, session_id, sequence, key_count=40):
+    """A schema v1 window, which agents may no longer send."""
     started = datetime.now(timezone.utc) - timedelta(minutes=1)
     return {
         "schema_version": 1, "device_id": device_id, "session_id": session_id, "sequence": sequence,
@@ -476,20 +484,21 @@ class OnboardingTests(unittest.TestCase):
         self.sign_in("user-b")
         self.assertEqual(self.client.get("/api/onboarding").status_code, 404)
 
-    def test_agent_window_accepts_current_native_schemas(self):
+    def test_agent_windows_must_be_schema_v4(self):
         device_id, agent = self.pair()
         session_id = self.client.post("/api/onboarding/rounds", json={"game": "typing"}).get_json()["session_id"]
-        for schema_version in (3, 4):
-            with self.subTest(schema_version=schema_version):
-                response = self.client.post(
-                    "/api/agent/windows",
-                    headers=agent,
-                    json=native_window(device_id, session_id, schema_version, schema_version),
-                )
-                self.assertEqual(response.status_code, 201, response.get_json())
-                stored = self.database.windows.find_one({"session_id": session_id, "sequence": schema_version})
-                self.assertEqual(stored["window"]["schema_version"], schema_version)
-                self.assertEqual((stored["device_id"], stored["session_id"]), (device_id, session_id))
+        response = self.client.post("/api/agent/windows", headers=agent, json=native_window(device_id, session_id, 4))
+        self.assertEqual(response.status_code, 201, response.get_json())
+        stored = self.database.windows.find_one({"session_id": session_id, "sequence": 4})
+        self.assertEqual(stored["window"]["schema_version"], 4)
+        self.assertEqual((stored["device_id"], stored["session_id"]), (device_id, session_id))
+        # Older schemas are valid windows elsewhere, but not from an agent.
+        for sequence, old in ((3, native_window(device_id, session_id, 3, 3)), (1, legacy_window(device_id, session_id, 1))):
+            with self.subTest(schema_version=old["schema_version"]):
+                rejected = self.client.post("/api/agent/windows", headers=agent, json=old)
+                self.assertEqual(rejected.status_code, 422)
+                self.assertIn("schema v4", rejected.get_json()["error"])
+                self.assertIsNone(self.database.windows.find_one({"session_id": session_id, "sequence": sequence}))
 
     def test_invalid_agent_window_is_not_persisted_or_logged_as_input(self):
         device_id, agent = self.pair()
@@ -1380,6 +1389,51 @@ class OnboardingTests(unittest.TestCase):
         self.assertNotIn("%", page)
         self.assertEqual(self.client.delete("/api/me/data", json={}).status_code, 200)
         self.assertEqual(self.database.demo_switches.count_documents({}), 0)
+
+    def test_agent_socket_reports_status_presence_and_revocation(self):
+        device_id, _agent = self.pair()
+        link = hosted.AgentLink(self.database, device_id)
+        hello = link.receive('{"v": 1, "type": "hello", "paused": false, "agent_version": "0.1.0"}')
+        self.assertEqual(hello, [{"v": 1, "type": "status", "state": "collecting", "session_id": None,
+                                  "collection": "active"}])
+        device = self.database.devices.find_one({"_id": device_id})
+        self.assertTrue(device["ws_connected"])
+        self.assertEqual(device["last_heartbeat_at"], self.clock)
+        self.assertEqual(self.client.get("/api/devices").get_json()["devices"][0]["stale"], False)
+        # An unchanged status is not resent; pausing shows on the dashboard.
+        self.assertEqual(link.receive('{"v": 1, "type": "heartbeat", "paused": true}'), [])
+        self.assertEqual(self.client.get("/api/onboarding").get_json()["agent"], "paused")
+        # A closed socket is offline at once, without waiting out the 90-second heartbeat window.
+        link.closed()
+        self.assertEqual(self.client.get("/api/onboarding").get_json()["agent"], "offline")
+        self.assertTrue(self.client.get("/api/devices").get_json()["devices"][0]["stale"])
+        again = hosted.AgentLink(self.database, device_id)
+        again.receive('{"v": 1, "type": "hello", "paused": false}')
+        self.assertEqual(self.client.post(f"/api/devices/{device_id}/revoke", json={}).status_code, 200)
+        self.assertEqual(again.receive('{"v": 1, "type": "heartbeat", "paused": false}'),
+                         [{"v": 1, "type": "revoked"}])
+        self.assertTrue(again.done)
+
+    def test_agent_socket_closes_on_malformed_messages(self):
+        device_id, _agent = self.pair()
+        for raw in ("not json", "[]", '{"v": 2, "type": "hello", "paused": false}',
+                    '{"v": 1, "type": "window", "paused": false}', '{"v": 1, "type": "hello"}',
+                    '{"v": 1, "type": "hello", "paused": false, "keys": "abc"}', b"{}",
+                    '{"v": 1, "type": "hello", "paused": false, "agent_version": "' + "x" * 5000 + '"}'):
+            link = hosted.AgentLink(self.database, device_id)
+            self.assertEqual(link.receive(raw), [], raw)
+            self.assertTrue(link.done)
+            self.assertEqual(link.close_code, hosted.POLICY_VIOLATION)
+
+    def test_agent_socket_handshake_needs_a_token_and_no_foreign_origin(self):
+        _device_id, agent = self.pair()
+        # Werkzeug routes WebSocket rules only for upgrade requests; rejection happens before the upgrade.
+        upgrade = {"Upgrade": "websocket", "Connection": "Upgrade"}
+        self.assertEqual(self.client.get("/api/agent/ws", headers=upgrade).status_code, 401)
+        wrong = {**upgrade, "Authorization": "Bearer wrong"}
+        self.assertEqual(self.client.get("/api/agent/ws", headers=wrong).status_code, 401)
+        foreign = {**upgrade, **agent, "Origin": "https://evil.example.test"}
+        self.assertEqual(self.client.get("/api/agent/ws", headers=foreign).status_code, 403)
 
     def test_each_device_has_its_own_model_and_monitoring_view(self):
         first, first_agent = self.pair()

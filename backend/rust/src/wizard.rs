@@ -84,11 +84,11 @@ const HEIGHT: i32 = 300;
 // The terms page is taller so most of the list fits without scrolling.
 const TERMS_HEIGHT: i32 = 560;
 
-/// Shown on the terms page. Keep it in step with what `capture` writes, and
-/// raise `TERMS_VERSION` whenever what is recorded changes. The edit control
-/// needs CRLF line breaks.
+/// Shown on the terms page. Keep it in step with what `capture` writes and what
+/// `features` and `link` send, and raise `TERMS_VERSION` whenever either changes.
+/// The edit control needs CRLF line breaks.
 const TERMS: &str = "\
-WHAT INQUISITOR RECORDS\r\n\
+WHAT INQUISITOR RECORDS ON THIS PC\r\n\
 Only from devices you tick in Allow connections. Until you allow a device, \
 nothing is recorded from it.\r\n\r\n\
 - Keyboard: when each key goes down and comes up, and the time between keys. \
@@ -102,18 +102,39 @@ values the device reports, which can include where a finger or pen touches \
 the device.\r\n\
 - For every event: the time, the kind of device, and a short device number \
 that changes each session.\r\n\r\n\
+These records are saved as CSV files in the data folder on this PC \
+(%APPDATA%\\inquisitor unless you change it). They are not uploaded.\r\n\r\n\
+WHAT IS SENT TO YOUR ACCOUNT\r\n\
+Only after you connect this PC to your account from the tray, and only while \
+the website is collecting for enrollment or monitoring.\r\n\r\n\
+- One summary per 30 seconds of activity. Keyboard: how many keys were \
+pressed, the average and spread of how long keys were held, and of the time \
+between presses.\r\n\
+- Mouse, in the same summary: speed, how much the pointer turns, how \
+straight its path is, and how many clicks and the time between them, as \
+averages for the 30 seconds.\r\n\
+- The time each summary starts, and whether collection is paused.\r\n\
+- When connecting: this PC's name, so you can tell your devices apart.\r\n\
+Individual key presses, mouse movements, controllers, touch, and pen input \
+are never sent.\r\n\r\n\
 WHAT IS NEVER COLLECTED\r\n\
 - Which keys you press, or any text you type, including passwords\r\n\
 - What you click on, or which window or app you are using\r\n\
 - Window titles, websites, or anything shown on screen\r\n\
 - Clipboard contents, files, microphone, camera, or location\r\n\r\n\
-WHERE IT GOES\r\n\
-- Records are saved as CSV files on this PC, in the data folder \
-(%APPDATA%\\inquisitor unless you change it).\r\n\
-- This version does not upload anything.\r\n\
+WHAT HAPPENS TO THE SUMMARIES\r\n\
+- The website stores them with your account. Enrollment summaries train a \
+model of your rhythm, and monitoring summaries are scored against it.\r\n\
+- When several recent summaries look unusual, your account shows an alert. \
+An alert is a signal to check, not proof of who used the PC. Inquisitor never \
+locks Windows or blocks input.\r\n\
+- You can delete your data and models from your account on the website.\r\n\r\n\
+YOUR CONTROLS\r\n\
 - Pause or quit at any time from the tray icon, and choose which devices are \
 recorded.\r\n\
-- Remove in setup can delete the recorded data.";
+- Disconnect from account in the tray stops all sending and deletes this \
+PC's connection.\r\n\
+- Remove in setup can delete the data recorded on this PC.";
 
 /// Which page the wizard opens on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

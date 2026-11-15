@@ -1,4 +1,4 @@
-"""Convert a tray capture CSV to aggregate-only timing windows, without training."""
+"""Convert a tray capture CSV to schema-v4 keyboard and mouse windows, without training."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from uuid import uuid4
 from .model import sufficient_activity, validate_window
 
 HEADER = ["iso_time", "monotonic_s", "io_type", "device_id", "event", "control", "hold_ms", "flight_ms", "dx", "dy", "value"]
-# Every io_type the tray writes (backend/rust/src/capture.rs). Only keyboard, and
-# mouse when opted in, feed the model; the rest are accepted and skipped.
+# Every io_type the tray writes (backend/rust/src/capture.rs). Only keyboard and mouse
+# feed the model; the rest are accepted and skipped.
 IO_TYPES = frozenset({"keyboard", "mouse", "gamepad", "keypad", "consumer", "touchpad", "touchscreen", "pen",
                       "digitizer", "hid"})
 WINDOW_SECONDS = 30
@@ -26,7 +26,7 @@ MOUSE_BIN_SECONDS = .02
 
 def csv_windows(
     source: TextIO, device_id: str, session_id: str, mode: str = "monitoring", *,
-    keyboard_source: str | None = None, track_mouse: bool = False,
+    keyboard_source: str | None = None,
 ) -> list[dict[str, object]]:
     reader = csv.DictReader(source)
     if reader.fieldnames != HEADER:
@@ -46,7 +46,7 @@ def csv_windows(
     def finish() -> None:
         gaps = [(right - left) * 1000 for left, right in pairwise(presses)]
         window: dict[str, object] = {
-            "schema_version": 3, "device_id": device_id, "session_id": session_id,
+            "schema_version": 4, "device_id": device_id, "session_id": session_id,
             "sequence": sequence, "mode": mode,
             "started_at": (started_at + timedelta(seconds=sequence * WINDOW_SECONDS)).isoformat(),
             "duration_ms": WINDOW_SECONDS * 1000,
@@ -59,39 +59,37 @@ def csv_windows(
                 "press_interval_std_ms": pstdev(gaps) if gaps else 0.0,
             },
         }
-        if track_mouse:
-            speeds, turns = [], []
-            previous: tuple[int, float] | None = None
-            path = total_x = total_y = 0.0
-            for index, (dx, dy) in sorted(mouse_bins.items()):
-                distance = math.hypot(dx, dy)
-                if distance == 0:
-                    continue
-                speeds.append(distance / MOUSE_BIN_SECONDS)
-                angle = math.atan2(dy, dx)
-                if previous is not None and (index - previous[0]) * MOUSE_BIN_SECONDS <= .25:
-                    turns.append(abs((angle - previous[1] + math.pi) % (2 * math.pi) - math.pi))
-                previous = index, angle
-                path += distance
-                total_x += dx
-                total_y += dy
-            click_intervals = [(right - left) * 1000 for left, right in pairwise(clicks)]
-            window["schema_version"] = 4
-            window["features"].update({
-                "mouse_sample_count": len(speeds), "mouse_click_count": len(clicks),
-                "mouse_speed_mean_counts_s": mean(speeds) if speeds else 0.0,
-                "mouse_speed_std_counts_s": pstdev(speeds) if speeds else 0.0,
-                "mouse_click_interval_mean_ms": mean(click_intervals) if click_intervals else 0.0,
-                "mouse_click_interval_std_ms": pstdev(click_intervals) if click_intervals else 0.0,
-                "mouse_turn_mean_rad": mean(turns) if turns else 0.0,
-                "mouse_turn_std_rad": pstdev(turns) if turns else 0.0,
-                "mouse_path_straightness": min(1.0, math.hypot(total_x, total_y) / path) if path else 0.0,
-            })
-        # Idle stretches yield windows with no presses and, when tracked, no mouse activity.
+        speeds, turns = [], []
+        previous: tuple[int, float] | None = None
+        path = total_x = total_y = 0.0
+        for index, (dx, dy) in sorted(mouse_bins.items()):
+            distance = math.hypot(dx, dy)
+            if distance == 0:
+                continue
+            speeds.append(distance / MOUSE_BIN_SECONDS)
+            angle = math.atan2(dy, dx)
+            if previous is not None and (index - previous[0]) * MOUSE_BIN_SECONDS <= .25:
+                turns.append(abs((angle - previous[1] + math.pi) % (2 * math.pi) - math.pi))
+            previous = index, angle
+            path += distance
+            total_x += dx
+            total_y += dy
+        click_intervals = [(right - left) * 1000 for left, right in pairwise(clicks)]
+        window["features"].update({
+            "mouse_sample_count": len(speeds), "mouse_click_count": len(clicks),
+            "mouse_speed_mean_counts_s": mean(speeds) if speeds else 0.0,
+            "mouse_speed_std_counts_s": pstdev(speeds) if speeds else 0.0,
+            "mouse_click_interval_mean_ms": mean(click_intervals) if click_intervals else 0.0,
+            "mouse_click_interval_std_ms": pstdev(click_intervals) if click_intervals else 0.0,
+            "mouse_turn_mean_rad": mean(turns) if turns else 0.0,
+            "mouse_turn_std_rad": pstdev(turns) if turns else 0.0,
+            "mouse_path_straightness": min(1.0, math.hypot(total_x, total_y) / path) if path else 0.0,
+        })
+        # Idle stretches yield windows with no presses and no mouse activity.
         # Skip them so a break never becomes zero-valued samples; the sequence still advances,
         # so started_at stays aligned and sequence numbers stay unique but may have gaps.
         features = window["features"]
-        active = features["key_count"] or (track_mouse and (features["mouse_sample_count"] or features["mouse_click_count"]))
+        active = features["key_count"] or features["mouse_sample_count"] or features["mouse_click_count"]
         if active:
             windows.append(validate_window(window))
         presses.clear()
@@ -118,7 +116,7 @@ def csv_windows(
             while now - origin >= (sequence + 1) * WINDOW_SECONDS:
                 finish()
                 sequence += 1
-            if track_mouse and row["io_type"] == "mouse":
+            if row["io_type"] == "mouse":
                 if mouse_device is None:
                     mouse_device = row["device_id"]
                 if not mouse_device or row["device_id"] != mouse_device:
@@ -170,12 +168,11 @@ def main() -> None:
     parser.add_argument("--mode", choices=("enrollment", "monitoring"), default="monitoring")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--keyboard-source", help="explicit primary raw-input source when a capture has multiple keyboards")
-    parser.add_argument("--mouse", action="store_true", help="opt in to aggregate mouse timing and motion shape")
     args = parser.parse_args()
     try:
         with args.csv.open(encoding="utf-8-sig", newline="") as source:
             windows = csv_windows(source, args.device_id, args.session_id or uuid4().hex, args.mode,
-                                  keyboard_source=args.keyboard_source, track_mouse=args.mouse)
+                                  keyboard_source=args.keyboard_source)
         if not windows:
             raise ValueError("capture has no complete 30-second windows")
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -186,7 +183,7 @@ def main() -> None:
         parser.exit(1, f"Conversion failed: {error}\n")
     usable = sum(sufficient_activity(window) for window in windows)
     print(json.dumps({"windows": len(windows), "usable_windows": usable,
-                      "partial_tail": "excluded", "mouse": "aggregated" if args.mouse else "excluded"}))
+                      "partial_tail": "excluded", "schema_version": 4}))
 
 
 if __name__ == "__main__":

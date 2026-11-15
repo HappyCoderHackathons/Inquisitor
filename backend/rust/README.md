@@ -29,6 +29,30 @@ cargo build            # debug
 cargo build --release  # release exe at target/release/Inquisitor.exe
 ```
 
+## Release
+
+Pushing a version tag publishes a GitHub release
+([`release-rust.yml`](../../.github/workflows/release-rust.yml)):
+
+1. Set `version` in `Cargo.toml`, for example `0.2.0`, and commit it to `main`.
+2. Tag that commit and push the tag:
+
+   ```sh
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+The workflow runs the same format, lint, and test checks as CI, then builds
+the release exe and checks its embedded manifest. It fails if the tag is not
+exactly `v` plus the `Cargo.toml` version, since the setup wizard reports that
+version.
+
+The release gets `Inquisitor-<version>-windows-x64.exe` and its `.sha256`
+checksum, with notes generated from the merged pull requests. A tag with a
+hyphen, such as `v0.2.0-rc.1`, is published as a prerelease; put the same
+suffix in `Cargo.toml`. The exe is not code-signed, so Windows SmartScreen may
+warn on first run.
+
 ## Usage
 
 ```text
@@ -148,13 +172,67 @@ touch screens, pens; `io_type` names the kind):
   HID value.
 - Axis events fire only on value change.
 
+## Connecting to the website
+
+The tray menu's first line shows the account connection, much like a VPN
+client: Not connected, Connecting, Connected (enrolling or monitoring),
+Offline, or Disconnected.
+
+1. **Pairing.** On the website, sign in, open Setup, and create a pairing
+   code. In the tray choose **Connect to account...**, enter the website
+   address and the 8-character code.
+   - The code is checked against the server's alphabet before it is sent,
+     then redeemed at `POST /api/agent/pair`.
+   - The device token the website returns is saved in
+     `%APPDATA%\inquisitor\device.bin`, encrypted with DPAPI for the current
+     Windows user. It is never written in plaintext.
+   - The website address is kept in `config.ini` as `server_url`.
+2. **Presence.** The tray keeps an outbound WebSocket at `/api/agent/ws`.
+   - It sends `hello` and a `heartbeat` every 30 seconds with the pause state,
+     so the website shows Connected, Paused, or Offline.
+   - The website answers with what to collect: enrollment for an active game
+     round, monitoring once a model is trained, otherwise nothing.
+   - The message table is in [`../../docs/threat-model.md`](../../docs/threat-model.md).
+3. **Uploads.** Finished 30-second windows from allowed devices go to
+   `POST /api/agent/windows` over HTTPS.
+   - They are computed live by `src/features.rs`, the same calculation as
+     `backend/ml/tray_csv.py`. Both are tested against
+     `shared/fixtures/tray-capture.*`.
+   - Every window is schema v4: keyboard and mouse aggregates together, the
+     only kind the website accepts.
+   - Nothing is sent before the terms are accepted and the PC is paired, while
+     paused, or while the website is not collecting.
+4. **Offline.** Windows wait in a queue of at most 120 and are dropped after
+   23 hours, since the website refuses windows over a day old. Uploads and
+   reconnects back off from 1 second to 1 minute, with jitter.
+5. **Fail closed.** A 401 or 403, or a `revoked` message, stops uploads,
+   clears the queue, and deletes the stored credential.
+   - **Disconnect from account** does the same locally. The device stays on
+     the website's device list, shown offline, until it is revoked there.
+   - Removing the app also deletes the credential.
+
+Transport is WinHTTP, the HTTP stack built into Windows, so TLS uses the
+Windows certificate store and system proxy settings, and certificate checks
+are never disabled. `http://` is accepted only for localhost, for testing.
+
+Two end-to-end tests run against a local hosted-mode server and are skipped by
+default. Start [`../../scripts/agent_link_test_server.py`](../../scripts/agent_link_test_server.py)
+(in-memory database, test only; its docstring has the command), then:
+
+```sh
+INQUISITOR_TEST_SERVER=http://127.0.0.1:5077 cargo test -- --ignored live_
+```
+
+Each pairs with the server's single-use code, so restart the server between the
+two tests.
+
 ## Privacy and scope
 
 This client follows the rules in [`../AGENTS.md`](../AGENTS.md):
 
-- Authentication v1 is keyboard-only. Mouse and controller capture support
-  the arcade in [`../../Frontend/`](../../Frontend/) and do not expand that
-  scope.
+- Authentication v1 uses keyboard and mouse aggregates, sent together as
+  schema v4 and covered by the setup terms. Controller and other HID capture
+  stays in the local CSV and does not expand that scope.
 - Keyboards emit press and release with timing only. The key identity,
   typed content, and ordered event stream are not persisted, logged, or
   transmitted. The scan code is used transiently in memory to pair press

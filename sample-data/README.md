@@ -71,4 +71,12 @@ at the first rejected window.
 Every output line starts with `REPLAY (recorded windows, not live input)`. Keep that
 label visible during a demo and say that replay proves integration, not live detection.
 Record replay files only from consenting people, aggregate-only, and keep them outside
-the repository. Synthetic files from the generator above are fine for rehearsing.
+the repository. The agent route accepts schema v4 only, and the script refuses any other
+version before sending. Convert a tray capture with `backend.ml.tray_csv` to get v4 windows.
+The v1 files from the generator above cannot be replayed. To rehearse, convert the
+synthetic fixture instead:
+
+```powershell
+uv run --project backend python -m backend.ml.tray_csv shared/fixtures/tray-capture.csv `
+  --device-id <paired device ID> --output C:\demo\rehearsal.jsonl
+```

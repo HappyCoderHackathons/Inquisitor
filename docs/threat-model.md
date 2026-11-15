@@ -7,7 +7,7 @@ where residual risk remains. It complements [architecture decisions](architectur
 ## Assets
 
 - Account credentials and device pairing tokens
-- Aggregate keyboard and optional mouse timing features per user
+- Aggregate keyboard and mouse timing features per user
 - Per-user trained model artifacts and inference results
 - Hosted relay and dashboard session integrity
 
@@ -132,6 +132,19 @@ auth user id. An empty id is rejected.
 | `POST /api/agent/pair` | The account that owns the unused, unexpired pairing code. The token is stored only as a hash |
 | `GET /api/agent/onboarding` | The device for that bearer token. A revoked device is rejected |
 | `POST /api/agent/windows` | That device. The stored `user_id` comes from the device record. `window.device_id` must equal the device id |
+| `GET /api/agent/ws` (WebSocket) | That device. The bearer token is checked before the upgrade, and an `Origin` other than `BETTER_AUTH_URL` is refused with 403, so a browser page cannot open the socket with someone else's token. Each message re-reads the device, so a revoked device gets `revoked` and the socket closes |
+
+The agent socket carries presence only, as JSON text frames with `"v": 1`:
+
+| Direction | Message | Effect |
+| --- | --- | --- |
+| Agent to server | `hello {paused, agent_version?}`, then `heartbeat {paused}` every 30 seconds | Sets `last_heartbeat_at`, `ws_connected`, and `agent_paused` on the device |
+| Server to agent | `status {state, collection, session_id}` | Sent after `hello` and whenever it changes. The same fields as `GET /api/agent/onboarding` |
+| Server to agent | `revoked` | The device was revoked. The agent deletes its credential and stops |
+
+Any other message, an extra field, or a message over 4 KiB closes the socket with 1008. A socket silent for
+90 seconds is dropped. When it closes, `ws_connected` becomes false and the device shows offline at once.
+Feature windows still go over `POST /api/agent/windows`, never over the socket.
 
 Hosted audit records for pairing, device revocation, behavioral-data deletion, and agent activity are single-line JSON with allowlisted metadata only. They may include event, outcome, pseudonymous user/device IDs, device counts, controlled reasons, and for agent-window events only validated schema, mode, and sequence. They never include pairing codes, device names, window contents, feature values, bearer tokens, or authorization headers.
 
@@ -165,7 +178,7 @@ Pairing codes are single-use, hashed, and expire after 10 minutes. The model tok
 compared with `compare_digest`. Account routes take the user from the session or the
 device record.
 
-Agent window uploads require a strict shared feature-window schema (v1-v4), are capped
+Agent window uploads require the strict shared feature-window schema v4, are capped
 at 64 KiB, and are limited to 60 requests per minute per device. Replay of a captured
 window is limited by device, session, and sequence uniqueness (a duplicate is HTTP 409),
 session expiry, and sign-out revocation. Audit events record only metadata such as the

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 /// Version of the terms shown in setup. Raise it when what is recorded changes,
 /// so everyone is asked to accept again before collection resumes.
-pub const TERMS_VERSION: u32 = 1;
+pub const TERMS_VERSION: u32 = 2;
 
 /// Everything the tray needs to remember across restarts.
 pub struct Config {
@@ -24,6 +24,10 @@ pub struct Config {
     /// Terms version the user accepted, or 0. Nothing is collected until this
     /// reaches TERMS_VERSION.
     pub terms_accepted: u32,
+    /// Website the tray is paired with, e.g. `https://app.example.com`. Kept after
+    /// disconnecting so pairing again can prefill it. Not a secret; the device
+    /// credential is stored separately, encrypted (see `credential.rs`).
+    pub server_url: Option<String>,
 }
 
 impl Config {
@@ -45,6 +49,7 @@ impl Config {
             data_dir: default_app_dir(),
             allowed_devices: HashSet::new(),
             terms_accepted: 0,
+            server_url: None,
         }
     }
 
@@ -72,9 +77,11 @@ impl Config {
                     cfg.allowed_devices.insert(val.to_string());
                 }
                 "terms_accepted" => cfg.terms_accepted = val.parse().unwrap_or(0),
+                "server_url" if !val.is_empty() => cfg.server_url = Some(val.to_string()),
                 // `allow_new_connections` and `ignored_device` from older configs
                 // are silently dropped: the menu now models everything through
-                // `allowed_devices` only.
+                // `allowed_devices` only. `include_mouse` is dropped too: uploads
+                // are always schema v4, which includes mouse aggregates.
                 _ => {}
             }
         }
@@ -97,6 +104,9 @@ impl Config {
         writeln!(f, "# Inquisitor config")?;
         writeln!(f, "data_dir={}", self.data_dir.display())?;
         writeln!(f, "terms_accepted={}", self.terms_accepted)?;
+        if let Some(url) = &self.server_url {
+            writeln!(f, "server_url={url}")?;
+        }
         for d in &self.allowed_devices {
             writeln!(f, "allowed_device={d}")?;
         }
@@ -164,6 +174,7 @@ mod tests {
             data_dir: PathBuf::from(r"C:\Users\Some One\Capture Data"),
             allowed_devices: [PATH_A, PATH_B].iter().map(|s| s.to_string()).collect(),
             terms_accepted: TERMS_VERSION,
+            server_url: Some("https://app.example.test/inquisitor".into()),
         };
         cfg.save_to(&path).unwrap();
 
@@ -171,6 +182,7 @@ mod tests {
         assert_eq!(loaded.data_dir, cfg.data_dir);
         assert_eq!(loaded.allowed_devices, cfg.allowed_devices);
         assert!(loaded.terms_accepted());
+        assert_eq!(loaded.server_url, cfg.server_url);
     }
 
     #[test]

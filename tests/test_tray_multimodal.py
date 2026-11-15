@@ -36,18 +36,16 @@ def capture(scale: int = 1, shadow: bool = False) -> str:
 
 
 class TrayMultimodalTests(unittest.TestCase):
-    def test_primary_keyboard_is_explicit_and_mouse_has_separate_opt_in(self) -> None:
+    def test_primary_keyboard_is_explicit_and_windows_are_always_v4(self) -> None:
         with self.assertRaises(ValueError):
             csv_windows(io.StringIO(capture(shadow=True)), "pc", "session")
         window = csv_windows(io.StringIO(capture(shadow=True)), "pc", "session",
-                             keyboard_source="primary", track_mouse=True)[0]
+                             keyboard_source="primary")[0]
         self.assertEqual(window["schema_version"], 4)
         self.assertEqual(window["features"]["key_count"], 60)
         self.assertEqual(window["features"]["hold_sample_count"], 60)
         self.assertEqual(window["features"]["mouse_click_count"], 30)
         validate_window(window)
-        keyboard_only = csv_windows(io.StringIO(capture()), "pc", "session")[0]
-        self.assertEqual(keyboard_only["schema_version"], 3)
         with self.assertRaises(ValueError):
             csv_windows(io.StringIO(capture()), "pc", "session", keyboard_source="absent")
 
@@ -63,19 +61,25 @@ class TrayMultimodalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             csv_windows(io.StringIO(mixed.replace(",pen,", ",webcam,")), "pc", "session")
 
+    def test_converter_matches_the_shared_fixture_the_rust_tray_is_checked_against(self) -> None:
+        # The tray builds the same windows live (backend/rust/src/features.rs); both sides test this fixture.
+        fixtures = Path(__file__).parents[1] / "shared" / "fixtures"
+        text = (fixtures / "tray-capture.csv").read_text(encoding="utf-8")
+        expected = json.loads((fixtures / "tray-capture.v4.json").read_text(encoding="utf-8"))
+        self.assertEqual(csv_windows(io.StringIO(text), "fixture-pc", "fixture-session"), expected)
+
     def test_idle_stretches_produce_no_empty_windows(self) -> None:
         lines = capture().splitlines()
         later = [f"{iso},{float(time) + 300},{rest}" for iso, time, rest in (row.split(",", 2) for row in lines[1:])]
         idle = "\n".join([*lines, *later])
-        for track_mouse in (False, True):
-            windows = csv_windows(io.StringIO(idle), "pc", "session", track_mouse=track_mouse)
-            # Windows 2 to 9 cover the five idle minutes and are skipped, not zero-filled.
-            self.assertEqual([window["sequence"] for window in windows], [0, 1, 10])
-            self.assertEqual(windows[2]["started_at"], "2026-01-01T00:05:00+00:00")
-            self.assertTrue(all(window["features"]["key_count"] for window in windows))
+        windows = csv_windows(io.StringIO(idle), "pc", "session")
+        # Windows 2 to 9 cover the five idle minutes and are skipped, not zero-filled.
+        self.assertEqual([window["sequence"] for window in windows], [0, 1, 10])
+        self.assertEqual(windows[2]["started_at"], "2026-01-01T00:05:00+00:00")
+        self.assertTrue(all(window["features"]["key_count"] for window in windows))
 
     def test_model_inputs_do_not_change_with_uniform_mouse_resolution_scaling(self) -> None:
-        windows = [csv_windows(io.StringIO(capture(scale)), "pc", "session", track_mouse=True)[0] for scale in (1, 10)]
+        windows = [csv_windows(io.StringIO(capture(scale)), "pc", "session")[0] for scale in (1, 10)]
         matrix = labeled_features(windows, "tray-multimodal")
         self.assertEqual(matrix.shape, (2, 13))
         np.testing.assert_allclose(matrix[0], matrix[1], rtol=1e-12, atol=1e-12)
@@ -84,11 +88,35 @@ class TrayMultimodalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_window(invalid)
 
+    def test_native_v4_profile_trains_genuine_only_and_scores_only_v4(self) -> None:
+        # Synthetic windows: a contract check for the hosted enrollment path, not evidence of accuracy.
+        template = csv_windows(io.StringIO(capture()), "pc", "session", "enrollment")[0]
+        windows = []
+        for index in range(30):
+            window = copy.deepcopy(template)
+            window.update(session_id="train" if index < 20 else "calibrate", sequence=index)
+            window["features"].update(hold_mean_ms=90 + index % 7 * 3, mouse_speed_mean_counts_s=300 + index * 5)
+            windows.append(window)
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"ML_ALLOW_TRAINING": "1"}):
+            store = ModelStore(Path(temporary))
+            metadata = store.train(windows, "user", "pc", ["calibrate"], profile="native-v4")
+            self.assertEqual((metadata["algorithm"], metadata["schema_version"]), ("IsolationForest", 4))
+            self.assertEqual(len(metadata["feature_names"]), 15)
+            self.assertIn("mouse_path_straightness", metadata["feature_names"])
+            monitoring = {**windows[0], "mode": "monitoring"}
+            self.assertIn(store.score(metadata["model_id"], monitoring, "user", "pc")["state"], ("NORMAL", "UNUSUAL"))
+            older = generate_windows(49, 1)[0]
+            older["device_id"] = "pc"
+            with self.assertRaises(ValueError):
+                store.score(metadata["model_id"], older, "user", "pc")
+            with self.assertRaises(ValueError):
+                store.train([generate_windows(49, 1)[0]] * 30, "user", "pc", ["calibrate"], profile="native-v4")
+
     @unittest.skipUnless(os.environ.get("ML_ALLOW_TRAINING") == "1", "fitting runs only on the designated host")
     def test_one_model_serves_two_allowed_devices_and_keeps_other_accounts_out(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
-            template = csv_windows(io.StringIO(capture()), "pc-1", "session", "enrollment", track_mouse=True)[0]
+            template = csv_windows(io.StringIO(capture()), "pc-1", "session", "enrollment")[0]
             groups = [[], []]
             for label, target in enumerate(groups):
                 for device in ("pc-1", "pc-2"):

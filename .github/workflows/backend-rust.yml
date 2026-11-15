@@ -6,13 +6,17 @@ on:
     paths:
       - 'backend/rust/**'
       - 'docs/icons/png/**'
+      - 'shared/fixtures/**'
       - '.github/workflows/backend-rust.yml'
   pull_request:
     paths:
       - 'backend/rust/**'
       - 'docs/icons/png/**'
+      - 'shared/fixtures/**'
       - '.github/workflows/backend-rust.yml'
   workflow_dispatch:
+  # release-rust.yml runs these same checks and builds before publishing.
+  workflow_call:
 
 concurrency:
   group: backend-rust-${{ github.ref }}
