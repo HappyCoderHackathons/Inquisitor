@@ -172,8 +172,20 @@
       arena: "Move with WASD or arrows; aim and fire with the mouse"
     }[id];
   }
+  var onboardingActive = false;
+  var onboardingQueue = Promise.resolve();
+  function reportRound(path, body = {}) {
+    if (!onboardingActive) return;
+    onboardingQueue = onboardingQueue.then(
+      () => fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    ).then(() => void 0).catch(() => void 0);
+  }
+  void fetch("/api/onboarding").then(async (response) => {
+    onboardingActive = response.ok && (await response.json()).state === "collecting";
+  }).catch(() => void 0);
   function start() {
     if (!active) return;
+    reportRound("/api/onboarding/rounds", { game: active });
     clearInterval(timerId);
     clearInterval(gravityTimerId);
     cancelAnimationFrame(animation);
@@ -236,6 +248,7 @@
     }
   }
   function close() {
+    if (running) reportRound("/api/onboarding/rounds/current/cancel");
     running = false;
     clearInterval(timerId);
     clearInterval(gravityTimerId);
@@ -634,6 +647,7 @@
     $("#startGame").classList.remove("hidden");
   }
   function saveSample() {
+    reportRound("/api/onboarding/rounds/current/finish");
     const avg = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
     const mean = avg(intervals), std = Math.sqrt(avg(intervals.map((x) => (x - mean) ** 2)));
     const d = {

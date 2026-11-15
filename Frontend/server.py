@@ -12,6 +12,8 @@ from typing import cast
 from flask import Flask, jsonify, render_template, request
 from jsonschema import Draft202012Validator, FormatChecker
 
+import hosted
+
 ROOT = Path(__file__).parent
 DB_PATH = Path(os.environ.get("INPUTPRINT_DB", ROOT / "inputprint.sqlite3"))
 FEATURE_VALIDATORS = {
@@ -188,6 +190,21 @@ def delete_local_data():
         conn.execute("DELETE FROM samples")
         conn.execute("DELETE FROM feature_windows")
     return jsonify(ok=True)
+
+
+def onboarding_window_error(window: dict[str, object]) -> str | None:
+    return feature_window_error(window) or started_at_error(window, datetime.now(timezone.utc))
+
+
+if hosted.configured():
+    from pymongo import MongoClient
+
+    hosted.register(
+        app,
+        MongoClient(os.environ["MONGODB_URI"], tz_aware=True)[os.environ["MONGODB_DB"]],
+        hosted.ml_trainer(os.environ["ML_SERVICE_URL"], Path(os.environ["ML_TOKEN_FILE"]).read_text().strip()),
+        onboarding_window_error,
+    )
 
 
 if __name__ == "__main__":

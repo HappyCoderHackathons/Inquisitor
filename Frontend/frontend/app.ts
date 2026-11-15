@@ -181,8 +181,26 @@ function instruction(id: GameId) {
     } as Record<GameId, string>
   )[id];
 }
+let onboardingActive = false;
+let onboardingQueue = Promise.resolve();
+function reportRound(path: string, body: object = {}) {
+  if (!onboardingActive) return;
+  // Queued so a sprint's finish and next start reach the server in order.
+  onboardingQueue = onboardingQueue
+    .then(() =>
+      fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+    )
+    .then(() => undefined)
+    .catch(() => undefined);
+}
+void fetch("/api/onboarding")
+  .then(async (response) => {
+    onboardingActive = response.ok && ((await response.json()) as { state: string }).state === "collecting";
+  })
+  .catch(() => undefined);
 function start() {
   if (!active) return;
+  reportRound("/api/onboarding/rounds", { game: active });
   clearInterval(timerId);
   clearInterval(gravityTimerId);
   cancelAnimationFrame(animation);
@@ -245,6 +263,7 @@ function finish() {
   }
 }
 function close() {
+  if (running) reportRound("/api/onboarding/rounds/current/cancel");
   running = false;
   clearInterval(timerId);
   clearInterval(gravityTimerId);
@@ -667,6 +686,7 @@ function endArena() {
   $("#startGame").classList.remove("hidden");
 }
 function saveSample() {
+  reportRound("/api/onboarding/rounds/current/finish");
   const avg = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
   const mean = avg(intervals),
     std = Math.sqrt(avg(intervals.map((x) => (x - mean) ** 2)));

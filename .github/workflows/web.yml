@@ -27,4 +27,4 @@ jobs:
       - run: npm run format:check
       - name: Committed bundles match source
         run: npm run build && git diff --exit-code -- static
-      - run: uv run --no-project --python 3.13 --with-requirements requirements.txt python -m unittest discover -s tests -v
+      - run: uv run --no-project --python 3.13 --with-requirements requirements.txt --with "mongomock>=4.3,<5" python -m unittest discover -s tests -v

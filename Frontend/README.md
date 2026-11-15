@@ -37,6 +37,27 @@ Collection sessions use a random local browser ID and a new session ID each time
 
 Xbox and Nintendo controllers work through the browser Gamepad API. Connect the controller and press a button once so the browser can recognize it. Keyboard controls are shown in each game. The arcade sprint rotates through four one-minute rounds; each game can also be played on its own.
 
+## Hosted onboarding
+
+When all of these environment variables are set, `server.py` also serves SSOJet sign-in, agent pairing, and onboarding training backed by MongoDB Atlas. If none are set, the app stays local-only. If only some are set, startup fails.
+
+| Variable | Purpose |
+| --- | --- |
+| `SSOJET_AUTHORITY` | SSOJet base URL; `/.well-known/openid-configuration` is appended |
+| `SSOJET_CLIENT_ID`, `SSOJET_CLIENT_SECRET` | SSOJet regular web application credentials |
+| `SSOJET_REDIRECT_URI` | Must exactly match the SSOJet callback, e.g. `https://<host>/auth/callback` |
+| `SESSION_SECRET` | Random string that signs session cookies |
+| `MONGODB_URI`, `MONGODB_DB` | Atlas connection string and database name |
+| `ML_SERVICE_URL`, `ML_TOKEN_FILE` | Remote ML service URL and the file holding its bearer token |
+
+The user signs in at `/onboarding` and gets a single-use pairing code that expires after 10 minutes. The agent redeems it at `POST /api/agent/pair` and receives a device token; only the token's SHA-256 hash is stored.
+
+Pairing opens an onboarding enrollment for that device. Each arcade round the user starts becomes a session. The agent reads the active session from `GET /api/agent/onboarding` and uploads enrollment windows to `POST /api/agent/windows`. A finished round is credited by server time, capped at 60 seconds; cancelled rounds earn no time. `GET /api/onboarding` reports seconds per game and counts the usable windows (30 or more key presses). Aim Trainer rounds count toward time but rarely produce usable windows.
+
+Training starts once each of the four games has 150 seconds credited and there are at least 20 training windows and 10 calibration windows. The latest keyboard-active round of each game is the calibration set. The server sends the usable windows to the ML service's genuine-only model and activates the result; the ML host must run with `ML_ALLOW_TRAINING=1`. A failed training run ends that onboarding, and pairing again starts a new one.
+
+Store Atlas and SSOJet credentials only in deployment configuration.
+
 ## Privacy and current scope
 
 - Game input is handled in the browser for gameplay. Input events are transient and are not sent to Flask.
