@@ -31,6 +31,9 @@ FEATURE_VALIDATORS = {
     )
     for version in (1, 2)
 }
+SAMPLE_FEATURE_WINDOW = json.loads(
+    (ROOT.parent / "shared" / "fixtures" / "feature-window-v2.json").read_text(encoding="utf-8")
+)["valid"]["enrollment"]
 app = Flask(__name__, static_folder="static", template_folder="templates")
 account: AccountStore | None = None
 
@@ -120,6 +123,11 @@ def arcade():
 @app.get("/dashboard")
 def dashboard():
     return render_template("dashboard.html")
+
+
+@app.get("/privacy")
+def privacy():
+    return render_template("privacy.html", sample_payload=json.dumps(SAMPLE_FEATURE_WINDOW, indent=2))
 
 
 @app.get("/api/summary")
@@ -311,6 +319,10 @@ if hosted.configured():
         scorer,
         onboarding_window_error,
     )
+else:
+    @app.get("/onboarding")
+    def onboarding_unavailable():
+        return render_template("auth-unavailable.html")
 
 
 if __name__ == "__main__":

@@ -124,9 +124,27 @@ button:focus-visible,a:focus-visible,input:focus-visible,.arena-canvas:focus-vis
 .intro-final h2{margin-bottom:0}
 .intro-final .eyebrow{margin:0}
 .intro-footer{max-width:1040px;margin:auto;padding:22px 24px 28px;border-top:1px solid var(--line);font:10px var(--mono);letter-spacing:.7px}
-.intro-footer nav{display:flex;gap:18px}
+.intro-footer nav{display:flex;flex-wrap:wrap;gap:18px}
 .intro-footer nav a{color:var(--muted);text-decoration:none}
 .intro-footer nav a:hover{color:var(--green)}
+.agent-required{max-width:620px;margin:22px 0 0;color:var(--text);font-size:14px;line-height:1.6}
+.timing-flow{margin:0}
+.timing-flow ol{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;margin:0;padding:0;list-style:none}
+.timing-flow li{padding:19px;border:1px solid var(--line);border-radius:8px;background:linear-gradient(155deg,var(--panel),#100D14)}
+.timing-flow strong{display:block;margin:17px 0 8px;font:600 17px var(--sans)}
+.timing-flow li span:last-child,.timing-flow figcaption{color:var(--muted);font-size:13px;line-height:1.6}
+.timing-flow figcaption{margin-top:16px}
+.timing-flow a,.limit-list a{color:var(--purple)}
+.limit-list{max-width:720px;margin:0;padding-left:18px;color:var(--muted);font-size:14px;line-height:1.7}
+.limit-list li+li{margin-top:6px}
+.table-scroll{overflow-x:auto}
+.field-table{width:100%;border-collapse:collapse;font-size:13px}
+.field-table caption{margin-bottom:10px;color:var(--muted);font:10px var(--mono);letter-spacing:1px;text-align:left}
+.field-table th,.field-table td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.field-table thead th{color:var(--muted);font:10px var(--mono);letter-spacing:1px;font-weight:400}
+.field-table code,.sample-payload{font:12px/1.5 var(--mono)}
+.field-table code{color:var(--green)}
+.sample-payload{overflow:auto;margin:0;padding:16px;border:1px solid var(--line);border-radius:8px;background:#100D14;color:var(--text)}
 @media(max-width:700px){
   .intro-main{padding:42px 17px 22px}
   .intro-hero h1{font-size:clamp(40px,11vw,58px);letter-spacing:-2px}
@@ -134,7 +152,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,.arena-canvas:focus-vis
   .intro-facts{gap:20px;justify-content:space-between;margin-top:38px}
   .intro-facts strong{font-size:14px}
   .intro-facts span{font-size:11px}
-  .intro-cards{grid-template-columns:1fr;gap:9px}
+  .intro-cards,.timing-flow ol{grid-template-columns:1fr;gap:9px}
   .intro-card{padding:16px}
   .intro-card h3{margin-top:11px}
   .intro-privacy{grid-template-columns:1fr;gap:4px;padding:30px 0}
@@ -240,7 +258,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,.arena-canvas:focus-vis
 body{background:var(--bg);font-family:var(--sans)}
 .arcade-header{height:68px;max-width:1040px;margin:auto;padding:0 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
 .arcade-header .brand{font:600 18px var(--sans);letter-spacing:0}
-.arcade-nav{display:flex;gap:22px}
+.arcade-nav{display:flex;flex-wrap:wrap;gap:22px}
 .arcade-nav a{color:var(--muted);font-size:14px;text-decoration:none}
 .arcade-nav a:hover{color:var(--text)}
 .arcade-main{max-width:1040px;margin:auto;padding:36px 24px 48px}
@@ -282,7 +300,8 @@ body{background:var(--bg);font-family:var(--sans)}
 .modal-foot{font:13px var(--sans)}
 .game-modal .button{font:500 14px var(--sans);letter-spacing:0}
 @media(max-width:620px){
-  .arcade-header{height:60px;padding:0 17px}
+  .arcade-header{height:auto;flex-wrap:wrap;align-items:center;row-gap:10px;padding:14px 17px}
+  .arcade-nav{flex:1 1 100%;gap:12px 16px}
   .arcade-main{padding:28px 17px 36px}
   .arcade-main>h1{font-size:28px}
   .quick-play{align-items:flex-start;flex-direction:column;padding:16px}
