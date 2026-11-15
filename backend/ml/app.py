@@ -14,7 +14,7 @@ from backend.account.store import AccountStore, retention_seconds_from_env
 from backend.http_security import API_CSP, apply_security_headers
 
 from .evaluation import window_metrics
-from .model import LABELED_PROFILES, ModelStore, validate_window
+from .model import LABELED_PROFILES, NATIVE_V4_PROFILE, ModelStore, validate_window
 from .published import PublishedModel
 
 
@@ -110,7 +110,7 @@ def create_app() -> Flask:
 
     def validate_training_request(value: dict[str, object]) -> tuple[bool, object]:
         profile = value.get("profile", "all")
-        if not isinstance(profile, str) or profile not in {"all", "cadence-overlap", *LABELED_PROFILES}:
+        if not isinstance(profile, str) or profile not in {"all", "cadence-overlap", NATIVE_V4_PROFILE, *LABELED_PROFILES}:
             raise ValueError("unknown feature profile")
         if "device_ids" in value and not isinstance(value["device_ids"], list):
             raise ValueError("device_ids must be an explicit list")

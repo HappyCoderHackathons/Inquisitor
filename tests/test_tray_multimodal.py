@@ -88,6 +88,30 @@ class TrayMultimodalTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_window(invalid)
 
+    def test_native_v4_profile_trains_genuine_only_and_scores_only_v4(self) -> None:
+        # Synthetic windows: a contract check for the hosted enrollment path, not evidence of accuracy.
+        template = csv_windows(io.StringIO(capture()), "pc", "session", "enrollment")[0]
+        windows = []
+        for index in range(30):
+            window = copy.deepcopy(template)
+            window.update(session_id="train" if index < 20 else "calibrate", sequence=index)
+            window["features"].update(hold_mean_ms=90 + index % 7 * 3, mouse_speed_mean_counts_s=300 + index * 5)
+            windows.append(window)
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"ML_ALLOW_TRAINING": "1"}):
+            store = ModelStore(Path(temporary))
+            metadata = store.train(windows, "user", "pc", ["calibrate"], profile="native-v4")
+            self.assertEqual((metadata["algorithm"], metadata["schema_version"]), ("IsolationForest", 4))
+            self.assertEqual(len(metadata["feature_names"]), 15)
+            self.assertIn("mouse_path_straightness", metadata["feature_names"])
+            monitoring = {**windows[0], "mode": "monitoring"}
+            self.assertIn(store.score(metadata["model_id"], monitoring, "user", "pc")["state"], ("NORMAL", "UNUSUAL"))
+            older = generate_windows(49, 1)[0]
+            older["device_id"] = "pc"
+            with self.assertRaises(ValueError):
+                store.score(metadata["model_id"], older, "user", "pc")
+            with self.assertRaises(ValueError):
+                store.train([generate_windows(49, 1)[0]] * 30, "user", "pc", ["calibrate"], profile="native-v4")
+
     @unittest.skipUnless(os.environ.get("ML_ALLOW_TRAINING") == "1", "fitting runs only on the designated host")
     def test_one_model_serves_two_allowed_devices_and_keeps_other_accounts_out(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -77,10 +77,24 @@ def valid_windows(values: list[object]) -> tuple[list[dict[str, object]], int]:
     return windows, len(values) - len(windows)
 
 
-def feature_row(window: dict[str, object]) -> list[float]:
+# Genuine-only Isolation Forest over the native v4 aggregates (keyboard and mouse), the profile hosted
+# enrollment trains. It needs no impostor data; its accuracy has not been evaluated.
+NATIVE_V4_PROFILE = "native-v4"
+NATIVE_V4_FEATURES = tuple(MULTIMODAL_SCHEMA["properties"]["features"]["required"])
+
+
+def profile_feature_names(profile: str) -> tuple[str, ...]:
+    return NATIVE_V4_FEATURES if profile == NATIVE_V4_PROFILE else FEATURE_NAMES
+
+
+def feature_row(window: dict[str, object], profile: str = "all") -> list[float]:
+    features = cast(dict[str, int | float], window["features"])
+    if profile == NATIVE_V4_PROFILE:
+        if window["schema_version"] != 4:
+            raise ValueError("the native-v4 profile requires schema v4 windows")
+        return [float(features[name]) for name in NATIVE_V4_FEATURES]
     if window["schema_version"] in (3, 4):
         raise ValueError("tray windows require a matching tray model profile")
-    features = cast(dict[str, int | float], window["features"])
     return [float(features[name]) for name in FEATURE_NAMES]
 
 
@@ -300,8 +314,9 @@ class ModelStore:
                 return self._train_labeled(values, impostor_values or [], user_id, device_id, model_id, profile, device_ids)
             if impostor_values is not None:
                 raise ValueError("impostor windows require the labeled-overlap profile")
-            if profile not in ("all", "cadence-overlap"):
+            if profile not in ("all", "cadence-overlap", NATIVE_V4_PROFILE):
                 raise ValueError("unknown feature profile")
+            names = profile_feature_names(profile)
             if validation_session_id is None:
                 raise ValueError("validation sessions are required")
             validation_sessions = (
@@ -328,12 +343,12 @@ class ModelStore:
                     f"need {min_train_windows} training windows and {min_validation_windows} windows "
                     "from a separate validation session"
                 )
-            selected = ("presses_per_second", "press_overlap_fraction") if profile == "cadence-overlap" else FEATURE_NAMES
+            selected = ("presses_per_second", "press_overlap_fraction") if profile == "cadence-overlap" else names
             transform = "log1p" if profile == "cadence-overlap" else "identity"
-            matrix = np.asarray([feature_row(window) for window in training])
+            matrix = np.asarray([feature_row(window, profile) for window in training])
             if transform == "log1p":
                 matrix = np.log1p(matrix)
-            mask = (np.std(matrix, axis=0) > 1e-8) & np.asarray([name in selected for name in FEATURE_NAMES])
+            mask = (np.std(matrix, axis=0) > 1e-8) & np.asarray([name in selected for name in names])
             if not mask.any():
                 raise ValueError("all training features are constant")
             parameters = {"n_estimators": 200 if profile == "cadence-overlap" else 100,
@@ -341,7 +356,7 @@ class ModelStore:
                           "random_state": 49, "n_jobs": 1}
             model = IsolationForest(**parameters)
             model.fit(matrix[:, mask])
-            validation_matrix = np.asarray([feature_row(window) for window in validation])
+            validation_matrix = np.asarray([feature_row(window, profile) for window in validation])
             if transform == "log1p":
                 validation_matrix = np.log1p(validation_matrix)
             calibration_scores = -model.score_samples(validation_matrix[:, mask])
@@ -352,13 +367,13 @@ class ModelStore:
                 "user_id": user_id,
                 "device_id": device_id,
                 "algorithm": "IsolationForest",
-                "schema_version": 1,
-                "schema_sha256": SCHEMA_HASH,
-                "feature_names": list(FEATURE_NAMES),
+                "schema_version": 4 if profile == NATIVE_V4_PROFILE else 1,
+                "schema_sha256": MULTIMODAL_SCHEMA_HASH if profile == NATIVE_V4_PROFILE else SCHEMA_HASH,
+                "feature_names": list(names),
                 "feature_profile": profile,
                 "transform": transform,
-                "selected_features": [name for name, keep in zip(FEATURE_NAMES, mask) if keep],
-                "dropped_features": [name for name, keep in zip(FEATURE_NAMES, mask) if not keep],
+                "selected_features": [name for name, keep in zip(names, mask) if keep],
+                "dropped_features": [name for name, keep in zip(names, mask) if not keep],
                 "training_window_count": len(training),
                 "rejected_window_count": rejected,
                 "validation_window_count": len(validation),
@@ -472,14 +487,17 @@ class ModelStore:
         with self._lock:
             metadata = self.ready_metadata(model_id, user_id, device_id)
             profile = cast(str, metadata.get("feature_profile", "all"))
-            expected_hash = (MULTIMODAL_SCHEMA_HASH if profile == "tray-multimodal" else
+            v4_profiles = ("tray-multimodal", NATIVE_V4_PROFILE)
+            expected_hash = (MULTIMODAL_SCHEMA_HASH if profile in v4_profiles else
                              TRAY_SCHEMA_HASH if profile in TRAY_PROFILES else SCHEMA_HASH)
             if metadata["schema_sha256"] != expected_hash:
                 raise ValueError("model schema differs from the running service")
             if window["schema_version"] == 3 and profile not in (*TRAY_PROFILES, "tray-multimodal"):
                 raise ValueError("tray windows require a tray model profile")
-            if window["schema_version"] == 4 and profile != "tray-multimodal":
-                raise ValueError("schema v4 requires the tray-multimodal profile")
+            if window["schema_version"] == 4 and profile not in v4_profiles:
+                raise ValueError("schema v4 requires a v4 model profile")
+            if profile == NATIVE_V4_PROFILE and window["schema_version"] != 4:
+                raise ValueError("the native-v4 profile requires schema v4 windows")
             if metadata["versions"] != {name: version(name) for name in ("scikit-learn", "numpy", "joblib")}:
                 raise ValueError("model dependency versions differ from the running service")
             if (profile == "tray-multimodal" and window["schema_version"] != 4) or not sufficient_activity(window):
@@ -502,7 +520,7 @@ class ModelStore:
                                       LABELED_PROFILES[profile])
         else:
             model = cast(IsolationForest, bundle["model"])
-            matrix = np.asarray([feature_row(window)])
+            matrix = np.asarray([feature_row(window, profile)])
             if bundle.get("transform") == "log1p":
                 matrix = np.log1p(matrix)
             matrix = matrix[:, bundle["mask"]]
