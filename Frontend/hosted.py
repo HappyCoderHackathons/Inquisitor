@@ -47,6 +47,9 @@ GAME_SECONDS = 150
 ROUND_MS = 60_000
 MIN_TRAINING_WINDOWS = 20
 MIN_VALIDATION_WINDOWS = 10
+REQUIRED_WINDOWS = MIN_TRAINING_WINDOWS + MIN_VALIDATION_WINDOWS
+# A paired device is online when one of its authenticated calls is this recent.
+HEARTBEAT_ONLINE = timedelta(seconds=90)
 # (requests, window) per key; generous for real use, tight enough to stop guessing and floods.
 LOGIN_LIMIT = (30, timedelta(minutes=1))
 PAIR_LIMIT = (10, timedelta(minutes=10))
@@ -133,8 +136,30 @@ def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer, Deleter]:
     return train, score, delete
 
 
+def collection_state(onboarding: Document) -> str:
+    value = onboarding.get("collection", "active")
+    return value if value in ("active", "paused", "finished") else "active"
+
+
+def agent_presence(database: Database, onboarding: Document) -> str:
+    device = database.devices.find_one(
+        {"_id": onboarding["device_id"], "revoked_at": None, "pairing_state": "paired"}
+    )
+    seen = device.get("last_heartbeat_at") if device else None
+    if not isinstance(seen, datetime):
+        return "offline"
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=UTC)
+    if now() - seen > HEARTBEAT_ONLINE:
+        return "offline"
+    if collection_state(onboarding) == "paused":
+        return "paused"
+    return "active"
+
+
 def progress(database: Database, onboarding: Document) -> Document:
-    rounds = list(database.rounds.find({"onboarding_id": onboarding["_id"], "credited_ms": {"$gt": 0}}))
+    all_rounds = list(database.rounds.find({"onboarding_id": onboarding["_id"]}))
+    rounds = [item for item in all_rounds if item.get("credited_ms", 0) > 0]
     seconds = {game: sum(r["credited_ms"] for r in rounds if r["game"] == game) // 1000 for game in GAMES}
     # The latest keyboard-active round of each game calibrates the threshold; earlier rounds train.
     latest = {}
@@ -153,6 +178,13 @@ def progress(database: Database, onboarding: Document) -> Document:
         "required_training_windows": MIN_TRAINING_WINDOWS, "required_validation_windows": MIN_VALIDATION_WINDOWS,
         "ready_to_train": all(seconds[game] >= GAME_SECONDS for game in GAMES)
         and training >= MIN_TRAINING_WINDOWS and validation >= MIN_VALIDATION_WINDOWS,
+        "collection": collection_state(onboarding),
+        "agent": agent_presence(database, onboarding),
+        "usable_windows": sum(
+            int(item.get("valid_window_count") or item.get("usable_windows") or 0) for item in all_rounds
+        ),
+        "duration_seconds": sum(int(item.get("credited_ms") or 0) for item in all_rounds) // 1000,
+        "required_windows": REQUIRED_WINDOWS,
     }
 
 
@@ -433,7 +465,7 @@ def register(
     def start_round():
         onboarding = user_onboarding(current_user())
         game = json_body().get("game")
-        if game not in GAMES or onboarding["state"] != "collecting":
+        if game not in GAMES or onboarding["state"] != "collecting" or collection_state(onboarding) != "active":
             abort(409 if game in GAMES else 422)
         started = now()
         database.rounds.update_many(
@@ -484,6 +516,72 @@ def register(
             return jsonify(status), 409
         start_training(onboarding, status)
         return jsonify(progress(database, user_onboarding(onboarding["user_id"]))), 202
+
+    def close_open_round(onboarding: Document, *, credit: bool) -> None:
+        active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "status": "active"})
+        if active is None:
+            return
+        ended = now()
+        credited = 0
+        status: EnrollmentSessionStatus = "cancelled"
+        if credit:
+            started = cast(datetime, active["started_at"])
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=UTC)
+            credited = min(int((ended - started).total_seconds() * 1000), ROUND_MS)
+            status = "completed"
+        database.rounds.update_one(
+            {"_id": active["_id"]},
+            {"$set": {"ended_at": ended, "credited_ms": credited, "status": status}},
+        )
+
+    def mark_collection(onboarding: Document, value: str) -> Document:
+        database.onboarding.update_one({"_id": onboarding["_id"]}, {"$set": {"collection": value}})
+        onboarding["collection"] = value
+        return progress(database, onboarding)
+
+    @blueprint.post("/api/onboarding/pause")
+    def pause_enrollment():
+        onboarding = user_onboarding(current_user())
+        json_body()
+        if onboarding["state"] != "collecting" or collection_state(onboarding) == "finished":
+            return jsonify(progress(database, onboarding)), 409
+        if collection_state(onboarding) == "paused":
+            return jsonify(progress(database, onboarding))
+        return jsonify(mark_collection(onboarding, "paused"))
+
+    @blueprint.post("/api/onboarding/resume")
+    def resume_enrollment():
+        onboarding = user_onboarding(current_user())
+        json_body()
+        if onboarding["state"] != "collecting" or collection_state(onboarding) != "paused":
+            return jsonify(progress(database, onboarding)), 409
+        return jsonify(mark_collection(onboarding, "active"))
+
+    @blueprint.post("/api/onboarding/discard")
+    def discard_enrollment():
+        onboarding = user_onboarding(current_user())
+        json_body()
+        if onboarding["state"] != "collecting":
+            return jsonify(progress(database, onboarding)), 409
+        close_open_round(onboarding, credit=False)
+        database.windows.delete_many({"onboarding_id": onboarding["_id"]})
+        database.rounds.update_many(
+            {"onboarding_id": onboarding["_id"]},
+            {"$set": {"usable_windows": 0, "valid_window_count": 0, "credited_ms": 0}},
+        )
+        return jsonify(mark_collection(onboarding, "active"))
+
+    @blueprint.post("/api/onboarding/finish")
+    def finish_enrollment():
+        onboarding = user_onboarding(current_user())
+        json_body()
+        if onboarding["state"] != "collecting":
+            return jsonify(progress(database, onboarding)), 409
+        if collection_state(onboarding) == "finished":
+            return jsonify(progress(database, onboarding))
+        close_open_round(onboarding, credit=True)
+        return jsonify(mark_collection(onboarding, "finished"))
 
     @blueprint.post("/api/devices/<device_id>/revoke")
     def revoke_device(device_id: str):
@@ -561,8 +659,14 @@ def register(
         onboarding = database.onboarding.find_one({"device_id": device["_id"]})
         if onboarding is None:
             abort(404)
-        active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "status": "active"})
-        return jsonify(state=onboarding["state"], session_id=active["_id"] if active else None)
+        active = None
+        if onboarding["state"] == "collecting" and collection_state(onboarding) == "active":
+            active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "status": "active"})
+        return jsonify(
+            state=onboarding["state"],
+            session_id=active["_id"] if active else None,
+            collection=collection_state(onboarding),
+        )
 
     @blueprint.post("/api/agent/windows")
     def upload_window():
@@ -577,7 +681,9 @@ def register(
         if window["mode"] == "monitoring":
             return score_window(device, window)
         onboarding = database.onboarding.find_one({"device_id": device["_id"], "state": "collecting"})
-        active = onboarding and database.rounds.find_one(
+        if onboarding is None or collection_state(onboarding) != "active":
+            return jsonify(error="enrollment is not collecting"), 409
+        active = database.rounds.find_one(
             {"_id": window["session_id"], "onboarding_id": onboarding["_id"], "status": "active"}
         )
         if not active:
