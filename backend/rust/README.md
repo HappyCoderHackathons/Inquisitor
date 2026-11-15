@@ -29,6 +29,30 @@ cargo build            # debug
 cargo build --release  # release exe at target/release/Inquisitor.exe
 ```
 
+## Release
+
+Pushing a version tag publishes a GitHub release
+([`release-rust.yml`](../../.github/workflows/release-rust.yml)):
+
+1. Set `version` in `Cargo.toml`, for example `0.2.0`, and commit it to `main`.
+2. Tag that commit and push the tag:
+
+   ```sh
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+The workflow runs the same format, lint, and test checks as CI, then builds
+the release exe and checks its embedded manifest. It fails if the tag is not
+exactly `v` plus the `Cargo.toml` version, since the setup wizard reports that
+version.
+
+The release gets `Inquisitor-<version>-windows-x64.exe` and its `.sha256`
+checksum, with notes generated from the merged pull requests. A tag with a
+hyphen, such as `v0.2.0-rc.1`, is published as a prerelease; put the same
+suffix in `Cargo.toml`. The exe is not code-signed, so Windows SmartScreen may
+warn on first run.
+
 ## Usage
 
 ```text
