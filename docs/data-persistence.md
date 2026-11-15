@@ -6,6 +6,16 @@ and model rows are scoped to `user_id` and `device_id`. The monitoring retention
 is one process-wide row. A purge deletes monitoring rows older than that period for every
 account on that store.
 
+## Numeric feature storage inspection
+
+Run `python scripts/inspect_feature_storage.py --sqlite PATH` for a local SQLite
+database, or add `--mongodb` on the hosted-app host to inspect Atlas using
+`MONGODB_URI` and `MONGODB_DB`. `--sqlite` may be repeated to inspect multiple
+databases. The script opens SQLite read-only and checks stored windows against the
+shared feature-window schemas. It rejects nonnumeric feature fields, undeclared
+window fields, and unexpected columns in SQLite feature-window tables; it prints
+counts and locations only, never stored feature values.
+
 ## Model versions
 
 Each trained artifact is tracked as a model version with job state, algorithm name, and
