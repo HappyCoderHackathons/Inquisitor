@@ -95,5 +95,6 @@ def delete_device_records(database: Database, user_id: str, device_id: str) -> N
     database.model_versions.delete_many({"user_id": user_id, "device_id": device_id})
     database.inference_results.delete_many({"user_id": user_id, "device_id": device_id})
     database.alerts.delete_many({"user_id": user_id, "device_id": device_id})
+    database.demo_switches.delete_many({"user_id": user_id, "device_id": device_id})
     database.windows.delete_many({"user_id": user_id, "device_id": device_id})
     database.monitoring_windows.delete_many({"user_id": user_id, "device_id": device_id})

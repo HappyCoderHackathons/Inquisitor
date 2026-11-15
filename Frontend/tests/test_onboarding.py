@@ -84,6 +84,7 @@ class OnboardingTests(unittest.TestCase):
         self.training_error = None
         self.score_error = None
         self.score_states = []
+        self.baseline_score = None
         self.deleted = []
         self.delete_error = None
         self.reset_calls = []
@@ -146,7 +147,10 @@ class OnboardingTests(unittest.TestCase):
         self.scored.append((user_id, device_id, value["sequence"]))
         state = self.score_states.pop(0) if self.score_states else "NORMAL"
         score = None if state == "INSUFFICIENT_DATA" else 0.8 if state == "UNUSUAL" else -0.4
-        return {"model_id": "model-1", "state": state, "score": score, "threshold": 0.1, "score_delta": -0.5}
+        result = {"model_id": "model-1", "state": state, "score": score, "threshold": 0.1, "score_delta": -0.5}
+        if self.baseline_score is not None:
+            result["baseline_score"] = self.baseline_score
+        return result
 
     def sign_in(self, user_id="user-a"):
         sid = f"session-{user_id}"
@@ -1070,6 +1074,95 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual((offline["state"], offline["agent"], offline["stale"]), ("offline", "offline", True))
         self.assertEqual(offline["score"], 0.8)
         self.assertIsNotNone(offline["last_seen"])
+
+    def test_verification_delay_counts_windows_after_the_switch(self):
+        base = self.clock
+        normals = [(base + timedelta(seconds=index), "NORMAL") for index in range(4)]
+        switched = base + timedelta(seconds=4)
+        self.assertEqual(hosted.verification_delay(normals, switched, window=4, unusual_needed=3), (False, None))
+        after = normals + [(switched + timedelta(seconds=offset), "UNUSUAL") for offset in (1, 2, 3)]
+        self.assertEqual(hosted.verification_delay(after, switched, window=4, unusual_needed=3), (False, 3))
+        early = [(base + timedelta(seconds=index), "UNUSUAL") for index in range(4)]
+        alert_before, latency = hosted.verification_delay(
+            early + [(base + timedelta(seconds=5), "UNUSUAL")], base + timedelta(seconds=4),
+            window=4, unusual_needed=3,
+        )
+        self.assertTrue(alert_before)
+        self.assertEqual(latency, 1)
+        skipped = [
+            (base, "UNUSUAL"), (base + timedelta(seconds=1), "INSUFFICIENT_DATA"),
+            (base + timedelta(seconds=2), "UNUSUAL"), (base + timedelta(seconds=3), "UNUSUAL"),
+            (base + timedelta(seconds=4), "NORMAL"),
+        ]
+        self.assertEqual(
+            hosted.verification_delay(skipped, base - timedelta(seconds=1), window=4, unusual_needed=3),
+            (False, 5),
+        )
+
+    def test_devices_list_last_check_in_and_revoke_blocks_the_token(self):
+        self.assertEqual(self.client.get("/api/devices").status_code, 401)
+        anonymous = self.client.get("/devices")
+        self.assertEqual(anonymous.status_code, 302)
+        self.assertIn("/login?next=/devices", anonymous.headers["Location"])
+        device_id, agent = self.pair()
+        self.client.get("/api/agent/onboarding", headers=agent)
+        listed = self.client.get("/api/devices").get_json()["devices"]
+        self.assertEqual(listed[0]["id"], device_id)
+        self.assertEqual(listed[0]["name"], "keyboard")
+        self.assertIsNotNone(listed[0]["last_seen"])
+        self.assertFalse(listed[0]["revoked"])
+        self.assertFalse(listed[0]["stale"])
+        self.assertNotIn("token_hash", listed[0])
+        self.sign_in("user-b")
+        self.assertEqual(self.client.get("/api/devices").get_json()["devices"], [])
+        self.assertEqual(self.client.post(f"/api/devices/{device_id}/revoke", json={}).status_code, 404)
+        self.sign_in()
+        self.assertEqual(self.client.post(f"/api/devices/{device_id}/revoke", json={}).status_code, 200)
+        row = self.client.get("/api/devices").get_json()["devices"][0]
+        self.assertTrue(row["revoked"])
+        self.assertTrue(row["stale"])
+        self.assertEqual(self.client.get("/api/agent/onboarding", headers=agent).status_code, 401)
+        page = self.client.get("/devices").get_data(as_text=True)
+        self.assertIn("Revoke", page)
+        self.assertNotIn("%", page)
+
+    def test_demo_switch_marker_stores_time_and_plots_baseline_score(self):
+        anonymous = self.client.get("/demo")
+        self.assertEqual(anonymous.status_code, 302)
+        self.assertIn("/login?next=/demo", anonymous.headers["Location"])
+        self.assertEqual(self.client.post("/api/demo/switches", json={}).status_code, 401)
+        device_id, agent = self.ready_monitor()
+        self.baseline_score = 0.25
+        self.upload_scores(device_id, agent, ["NORMAL", "NORMAL", "NORMAL", "NORMAL"])
+        self.clock += timedelta(seconds=1)
+        blocked = self.client.post(
+            "/api/demo/switches", json={"note": "typed"}, headers={"Origin": "https://evil.example"},
+        )
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(self.client.post("/api/demo/switches", json={"note": "typed"}).status_code, 400)
+        self.assertEqual(self.database.demo_switches.count_documents({}), 0)
+        marked = self.client.post("/api/demo/switches", json={})
+        self.assertEqual(marked.status_code, 201, marked.get_json())
+        self.assertEqual(marked.get_json()["device_id"], device_id)
+        self.assertIsNone(marked.get_json()["latency_seconds"])
+        self.upload_scores(device_id, agent, ["UNUSUAL", "UNUSUAL", "UNUSUAL"])
+        listed = self.client.get("/api/demo/switches").get_json()["switches"]
+        self.assertEqual(listed[0]["latency_seconds"], 3)
+        self.assertFalse(listed[0]["alert_before_switch"])
+        points = self.client.get("/api/monitoring/history").get_json()["points"]
+        self.assertTrue(all(point["baseline_score"] == 0.25 for point in points))
+        self.sign_in("user-b")
+        self.assertEqual(self.client.get("/api/demo/switches").get_json()["switches"], [])
+        self.assertEqual(self.client.post(f"/api/demo/switches?device_id={device_id}", json={}).status_code, 404)
+        self.sign_in()
+        page = self.client.get("/demo").get_data(as_text=True)
+        self.assertIn("Enrolled user", page)
+        self.assertIn("Guest tester", page)
+        self.assertIn("Typed content never collected.", page)
+        self.assertIn("Training samples", page)
+        self.assertNotIn("%", page)
+        self.assertEqual(self.client.delete("/api/me/data", json={}).status_code, 200)
+        self.assertEqual(self.database.demo_switches.count_documents({}), 0)
 
 
 if __name__ == "__main__":

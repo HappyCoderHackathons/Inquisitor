@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#09070D">
+    <meta name="description" content="Judge view of the enrolled user and a guest tester. Scores are anomaly signals, not identity.">
+    <title>Inquisitor | Demo</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/demo.js" defer></script>
+  </head>
+  <body>
+    <div class="arcade-layout">
+      <header class="arcade-header">
+        <a class="brand" href="/">Inquisitor</a>
+        <nav class="arcade-nav" aria-label="Main navigation">
+          <a href="/">Home</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/dashboard">Dashboard</a>
+          <a href="/demo" aria-current="page">Demo</a>
+          <a href="/devices">Devices</a>
+        </nav>
+      </header>
+
+      <main class="dashboard-main">
+        <section class="dashboard-heading">
+          <p class="eyebrow"><span class="eyebrow-line"></span> JUDGE VIEW</p>
+          <h1>Live demo</h1>
+          <p id="typedContentNote">Typed content never collected.</p>
+        </section>
+
+        <div class="demo-split">
+          <section class="demo-role" aria-labelledby="enrolledHeading">
+            <p class="eyebrow">THIS ACCOUNT</p>
+            <h2 id="enrolledHeading">Enrolled user</h2>
+            <p id="demoModel" class="demo-fact">Model: Not recorded</p>
+            <p id="demoSamples" class="demo-fact">Training samples: Not recorded</p>
+            <p id="demoStatus" class="demo-fact" role="status">No scored windows yet.</p>
+          </section>
+          <section class="demo-role" aria-labelledby="guestHeading">
+            <p class="eyebrow">SECOND PERSON</p>
+            <h2 id="guestHeading">Guest tester</h2>
+            <p id="guestSwitchStatus" class="demo-fact" role="status">No switch is marked yet.</p>
+            <button id="markSwitch" class="button secondary-button" type="button">Mark the switch</button>
+          </section>
+        </div>
+
+        <section class="dashboard-panel" aria-labelledby="demoChartHeading">
+          <h2 id="demoChartHeading">Anomaly score</h2>
+          <p id="demoChartSummary" class="dashboard-panel-copy">No scored windows yet.</p>
+          <svg id="demoChart" class="score-chart" viewBox="0 0 640 200" role="img" aria-labelledby="demoChartHeading"></svg>
+          <label class="demo-toggle" for="baselineToggle">
+            <input id="baselineToggle" type="checkbox">
+            Compare baseline score
+          </label>
+          <p class="dashboard-footnote">The line is an anomaly score compared with this device's threshold. It is not an identity percentage. A switch marker is the time you say a guest took over. It does not prove who is typing.</p>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

@@ -156,6 +156,27 @@ def persistence_decision(
     return None
 
 
+def verification_delay(
+    samples: list[tuple[datetime, str]], switched_at: datetime, *, window: int, unusual_needed: int,
+) -> tuple[bool, int | None]:
+    """Seconds from a demo switch until the persistence rule opens, using windows in time order."""
+    mark = switched_at if switched_at.tzinfo is not None else switched_at.replace(tzinfo=UTC)
+    recent: list[str] = []
+    alert_before = False
+    for created, state in samples:
+        if state not in {"NORMAL", "UNUSUAL"}:
+            continue
+        seen = created if created.tzinfo is not None else created.replace(tzinfo=UTC)
+        recent = (recent + [state])[-window:]
+        if len(recent) < window or recent.count("UNUSUAL") < unusual_needed:
+            continue
+        if seen < mark:
+            alert_before = True
+            continue
+        return alert_before, max(int((seen - mark).total_seconds()), 0)
+    return alert_before, None
+
+
 def whole_count(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return None
@@ -619,7 +640,7 @@ def register(
             "progress": {"usable_window_count": usable_windows},
         }
 
-    account_pages = {"/dashboard"}
+    account_pages = {"/dashboard", "/demo", "/devices"}
 
     def safe_next() -> str:
         value = request.args.get("next", "")
@@ -688,6 +709,18 @@ def register(
         if signed_in_user() is None:
             return redirect(url_for("hosted.login", next="/dashboard"))
         return render_template("dashboard.html")
+
+    @blueprint.get("/demo")
+    def demo_page():
+        if signed_in_user() is None:
+            return redirect(url_for("hosted.login", next="/demo"))
+        return render_template("demo.html")
+
+    @blueprint.get("/devices")
+    def devices_page():
+        if signed_in_user() is None:
+            return redirect(url_for("hosted.login", next="/devices"))
+        return render_template("devices.html")
 
     def auth_request(method: str, path: str) -> requests.Response:
         headers = {name: request.headers[name] for name in ("Cookie", "Content-Type", "Origin", "Sec-Fetch-Site")
@@ -1351,6 +1384,8 @@ def register(
             "t": timestamp_text(item.get("created_at")),
             "score": finite_number(item.get("score")),
             "threshold": finite_number(item.get("threshold")),
+            "baseline_score": finite_number(item.get("result", {}).get("baseline_score")
+                                            if isinstance(item.get("result"), dict) else None),
             "state": item.get("classification"),
         } for item in rows])
 
@@ -1387,6 +1422,78 @@ def register(
         alert["acknowledgement"] = label
         alert["acknowledged_at"] = stamp
         return jsonify(alert_payload(alert))
+
+    def device_payload(device: Document) -> Document:
+        seen = device.get("last_heartbeat_at")
+        revoked = device.get("revoked_at") is not None or device.get("pairing_state") == "revoked"
+        fresh = isinstance(seen, datetime) and now() - aware(seen) <= HEARTBEAT_ONLINE
+        return {
+            "id": device["_id"],
+            "name": device.get("name"),
+            "last_seen": timestamp_text(seen),
+            "pairing_state": device.get("pairing_state"),
+            "revoked": revoked,
+            "stale": revoked or not fresh,
+        }
+
+    def switch_payload(switch: Document) -> Document:
+        window, unusual_needed, _normal_needed = alert_rule()
+        samples = [
+            (item.get("created_at"), item.get("classification"))
+            for item in database.inference_results.find(
+                {"user_id": switch["user_id"], "device_id": switch["device_id"]},
+            ).sort("created_at", ASCENDING)
+        ]
+        typed = [
+            (created, state) for created, state in samples
+            if isinstance(created, datetime) and isinstance(state, str)
+        ]
+        alert_before, latency = verification_delay(
+            typed, switch["switched_at"], window=window, unusual_needed=unusual_needed,
+        )
+        return {
+            "id": switch["_id"],
+            "device_id": switch["device_id"],
+            "switched_at": timestamp_text(switch.get("switched_at")),
+            "alert_before_switch": alert_before,
+            "latency_seconds": latency,
+        }
+
+    @blueprint.get("/api/devices")
+    def list_devices():
+        user_id = current_user()
+        devices = database.devices.find({"user_id": user_id}).sort("created_at", ASCENDING)
+        return jsonify(devices=[device_payload(item) for item in devices])
+
+    @blueprint.post("/api/demo/switches")
+    def mark_switch():
+        user_id = current_user()
+        body = json_body()
+        if body != {}:
+            return jsonify(error="a switch marker does not accept extra fields"), 400
+        device = owned_device(user_id, request.args.get("device_id"))
+        if device is None:
+            abort(404)
+        stamp = now()
+        switch = {
+            "_id": uuid4().hex,
+            "user_id": user_id,
+            "device_id": device["_id"],
+            "switched_at": stamp,
+        }
+        database.demo_switches.insert_one(switch)
+        return jsonify(switch_payload(switch)), 201
+
+    @blueprint.get("/api/demo/switches")
+    def list_switches():
+        user_id = current_user()
+        device_id = request.args.get("device_id")
+        query: Document = {"user_id": user_id}
+        if device_id not in (None, ""):
+            owned_device(user_id, device_id)
+            query["device_id"] = device_id
+        switches = database.demo_switches.find(query).sort("switched_at", ASCENDING)
+        return jsonify(switches=[switch_payload(item) for item in switches])
 
     def score_window(device: Document, window: Document):
         # Monitoring continues on the active model while a retrain collects, trains, or awaits review.
