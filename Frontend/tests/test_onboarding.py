@@ -229,6 +229,11 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/me").status_code, 401)
         self.sign_in()
         self.assertEqual(self.client.get("/api/me").get_json()["email"], "user-a@example.test")
+        user = self.database.users.find_one({"_id": "better-auth:user-a"})
+        self.assertEqual(user["privacy_preferences"], {
+            "keyboard_collection": False, "mouse_collection": False, "model_training": False,
+        })
+        self.assertIn("consent_records", self.database.list_collection_names())
         cookie = self.client.get_cookie("better-auth.session_token").value
         self.assertEqual(self.client.post("/api/auth/sign-out", json={}).status_code, 200)
         self.assertEqual(self.client.get("/api/me").status_code, 401)

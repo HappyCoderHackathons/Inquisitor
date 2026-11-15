@@ -78,6 +78,8 @@ After training, the agent sends `monitoring` windows to the same upload endpoint
 
 Better Auth validates its signed HttpOnly session cookie against MongoDB on each authenticated request. Sessions expire after 12 hours without refresh; sign-out revokes the server-side session. Flask forwards every Set-Cookie header from authentication responses. Authentication and pairing APIs reject cross-site JSON requests. Requests are rate-limited, returning 429, at 30 per minute per IP for auth posts, 10 per 10 minutes per IP for pairing attempts, and 60 per minute per device for window uploads. Better Auth also applies its own database-backed endpoint limits. Behind a reverse proxy, configure Werkzeug's `ProxyFix` for the exact trusted proxy count so limits use the client address; never trust arbitrary forwarded IP headers.
 
+The application `users` collection stores the namespaced account ID, email, creation time, and privacy preferences. Keyboard collection, mouse collection, and model-training preferences default to `false`; they are separate from Better Auth's `auth_user` records. The `consent_records` collection is indexed by user, scope, and grant time. Its records contain a consent scope, UTC `granted_at`, and nullable UTC `revoked_at` timestamp. This change defines and initializes the collections; consent-management endpoints and UI are not yet implemented.
+
 Store Atlas credentials and `BETTER_AUTH_SECRET` only in deployment configuration. Run
 `npm run test:auth` for Better Auth credential/session checks and the existing Python
 unittest suite for Flask's auth boundary and account/device isolation. Auth tests use

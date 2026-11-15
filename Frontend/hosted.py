@@ -19,6 +19,8 @@ from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 
+from models import DEFAULT_PRIVACY_PREFERENCES
+
 GAMES = ("aim", "tetris", "typing", "arena")
 GAME_SECONDS = 150
 ROUND_MS = 60_000
@@ -114,6 +116,13 @@ def register(
     database.pairing_codes.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("code_hash", unique=True)
     database.devices.create_index("token_hash", unique=True)
+    database.consent_records.create_index(
+        [("user_id", ASCENDING), ("scope", ASCENDING), ("granted_at", ASCENDING)]
+    )
+    database.users.update_many(
+        {"privacy_preferences": {"$exists": False}},
+        {"$set": {"privacy_preferences": DEFAULT_PRIVACY_PREFERENCES}},
+    )
     database.onboarding.create_index([("user_id", ASCENDING), ("device_id", ASCENDING)], unique=True)
     for collection in (database.windows, database.monitoring_windows):
         collection.create_index(
@@ -173,8 +182,13 @@ def register(
                                 or not isinstance(user.get("email"), str):
                             raise ValueError("invalid auth user")
                         g.auth_user = "better-auth:" + user["id"]
+                        timestamp = now()
                         database.users.update_one({"_id": g.auth_user}, {
-                            "$set": {"email": user["email"]}, "$setOnInsert": {"created_at": now()},
+                            "$set": {"email": user["email"]},
+                            "$setOnInsert": {
+                                "created_at": timestamp,
+                                "privacy_preferences": DEFAULT_PRIVACY_PREFERENCES,
+                            },
                         }, upsert=True)
                 except ValueError:
                     abort(503, description="Invalid sign-in service response")
