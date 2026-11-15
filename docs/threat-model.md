@@ -109,6 +109,9 @@ auth user id. An empty id is rejected.
 | `POST /api/onboarding/rounds` and `POST /api/onboarding/rounds/current/<outcome>` | The signed-in account's round. The body selects a game or an outcome |
 | `POST /api/onboarding/train` | The signed-in account's onboarding |
 | `GET /api/model` | The signed-in account's active model. Counts and evaluation come from that model's stored metadata |
+| `GET /api/monitoring/status` and `GET /api/monitoring/history` | The signed-in account's latest score and chart points. A `device_id` must belong to that account |
+| `GET /api/alerts` | The signed-in account's alerts, optionally filtered by status and device |
+| `POST /api/alerts/<id>/acknowledge` | One alert owned by the signed-in account. The label is `expected` or `unexpected`. It does not retrain |
 | `POST /api/onboarding/retrain` | Requires `{"approve": true}`. Starts a new collection generation and does not activate a model |
 | `POST /api/models/reset` | Requires `RESET`. Clears that account's enrollment windows and active model |
 | `POST /api/models/deactivate` | Requires `DEACTIVATE`. Deactivates that account's active model and keeps its windows |

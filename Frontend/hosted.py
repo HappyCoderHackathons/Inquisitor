@@ -53,6 +53,14 @@ MIN_VALIDATION_WINDOWS = 10
 REQUIRED_WINDOWS = MIN_TRAINING_WINDOWS + MIN_VALIDATION_WINDOWS
 # A paired device is online when one of its authenticated calls is this recent.
 HEARTBEAT_ONLINE = timedelta(seconds=90)
+# Spec 7.6: open an alert when this many of the last window are unusual, and close after sustained normal windows.
+ALERT_WINDOW = 4
+ALERT_UNUSUAL_COUNT = 3
+ALERT_NORMAL_COUNT = 3
+ALERT_EXPLANATION = (
+    "Recent windows scored above this device's threshold. "
+    "This is an anomaly signal, not proof of identity."
+)
 # (requests, window) per key; generous for real use, tight enough to stop guessing and floods.
 LOGIN_LIMIT = (30, timedelta(minutes=1))
 PAIR_LIMIT = (10, timedelta(minutes=10))
@@ -121,6 +129,31 @@ def digest(value: str) -> str:
 
 def now() -> datetime:
     return datetime.now(UTC)
+
+
+def alert_rule() -> tuple[int, int, int]:
+    def read(name: str, default: int) -> int:
+        raw = os.environ.get(name)
+        if raw is None or not raw.isdigit() or int(raw) < 1:
+            return default
+        return int(raw)
+
+    return read("ALERT_WINDOW", ALERT_WINDOW), read("ALERT_UNUSUAL_COUNT", ALERT_UNUSUAL_COUNT), read(
+        "ALERT_NORMAL_COUNT", ALERT_NORMAL_COUNT,
+    )
+
+
+def persistence_decision(
+    states: list[str], *, window: int, unusual_needed: int, normal_needed: int,
+) -> str | None:
+    recent = [state for state in states if state in {"NORMAL", "UNUSUAL"}][-window:]
+    if len(recent) < window:
+        return None
+    if recent.count("UNUSUAL") >= unusual_needed:
+        return "open"
+    if recent.count("NORMAL") >= normal_needed:
+        return "close"
+    return None
 
 
 def whole_count(value: object) -> int | None:
@@ -1169,6 +1202,192 @@ def register(
         audit_agent_window(device["_id"], "accepted", window=window)
         return jsonify(ok=True, usable=usable), 201
 
+    def apply_alert_rule(user_id: str, device_id: str, stamp: datetime) -> None:
+        window, unusual_needed, normal_needed = alert_rule()
+        states = [
+            item.get("classification")
+            for item in database.inference_results.find(
+                {"user_id": user_id, "device_id": device_id}, {"classification": 1},
+            ).sort("created_at", ASCENDING)
+        ]
+        decision = persistence_decision(
+            [state for state in states if isinstance(state, str)],
+            window=window, unusual_needed=unusual_needed, normal_needed=normal_needed,
+        )
+        open_alert = database.alerts.find_one({"user_id": user_id, "device_id": device_id, "status": "open"})
+        if decision == "open" and open_alert is None:
+            database.alerts.insert_one({
+                "_id": uuid4().hex,
+                "user_id": user_id,
+                "device_id": device_id,
+                "status": "open",
+                "severity": "medium",
+                "explanation": ALERT_EXPLANATION,
+                "started_at": stamp,
+                "ended_at": None,
+                "acknowledged_at": None,
+                "acknowledgement": None,
+            })
+        elif decision == "close" and open_alert is not None:
+            database.alerts.update_one(
+                {"_id": open_alert["_id"]}, {"$set": {"status": "closed", "ended_at": stamp}},
+            )
+
+    def aware(value: datetime) -> datetime:
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+    def owned_device(user_id: str, device_id: str | None) -> Document | None:
+        if device_id is None:
+            return database.devices.find_one(
+                {"user_id": user_id, "revoked_at": None},
+                sort=[("last_heartbeat_at", -1), ("created_at", -1)],
+            )
+        device = database.devices.find_one({"_id": device_id, "user_id": user_id})
+        if device is None:
+            abort(404)
+        return device
+
+    def agent_state(device: Document | None) -> tuple[str, bool]:
+        seen = device.get("last_heartbeat_at") if device else None
+        if not isinstance(seen, datetime) or now() - aware(seen) > HEARTBEAT_ONLINE:
+            return "offline", True
+        onboarding = database.onboarding.find_one({"device_id": device["_id"], "user_id": device["user_id"]})
+        if onboarding is not None and collection_state(onboarding) == "paused":
+            return "paused", False
+        return "active", False
+
+    def monitoring_state(user_id: str, device: Document | None, presence: str) -> str | None:
+        if device is None:
+            return None
+        if presence == "offline":
+            return "offline"
+        if presence == "paused":
+            return "paused"
+        latest = database.inference_results.find_one(
+            {"user_id": user_id, "device_id": device["_id"]}, sort=[("created_at", -1)],
+        )
+        if latest is None:
+            return "not_enough_activity"
+        if database.alerts.find_one({"user_id": user_id, "device_id": device["_id"], "status": "open"}):
+            return "needs_verification"
+        classification = latest.get("classification")
+        if classification == "UNUSUAL":
+            return "unusual"
+        if classification == "NORMAL":
+            return "normal"
+        return "not_enough_activity"
+
+    def alert_payload(alert: Document) -> Document:
+        started = alert.get("started_at") or alert.get("created_at")
+        ended = alert.get("ended_at")
+        duration = None
+        if isinstance(started, datetime) and isinstance(ended, datetime):
+            duration = max(int((aware(ended) - aware(started)).total_seconds()), 0)
+        return {
+            "id": alert["_id"],
+            "device_id": alert["device_id"],
+            "status": alert.get("status"),
+            "severity": alert.get("severity"),
+            "explanation": alert.get("explanation") or ALERT_EXPLANATION,
+            "started_at": timestamp_text(started),
+            "ended_at": timestamp_text(ended),
+            "duration_seconds": duration,
+            "ongoing": alert.get("status") == "open",
+            "acknowledgement": alert.get("acknowledgement"),
+            "acknowledged_at": timestamp_text(alert.get("acknowledged_at")),
+        }
+
+    @blueprint.get("/api/monitoring/status")
+    def monitoring_status():
+        user_id = current_user()
+        device = owned_device(user_id, request.args.get("device_id"))
+        presence, stale = agent_state(device)
+        latest = None
+        if device is not None:
+            latest = database.inference_results.find_one(
+                {"user_id": user_id, "device_id": device["_id"]}, sort=[("created_at", -1)],
+            )
+        score = finite_number(latest.get("score")) if latest else None
+        threshold = finite_number(latest.get("threshold")) if latest else None
+        return jsonify(
+            state=monitoring_state(user_id, device, presence),
+            window_state=latest.get("classification") if latest else None,
+            score=score,
+            threshold=threshold,
+            scored_at=timestamp_text(latest.get("created_at")) if latest else None,
+            agent=presence if device is not None else "offline",
+            last_seen=timestamp_text(device.get("last_heartbeat_at")) if device else None,
+            stale=stale if device is not None else True,
+            device_id=device["_id"] if device else None,
+            device_name=device.get("name") if device else None,
+        )
+
+    @blueprint.get("/api/monitoring/history")
+    def monitoring_history():
+        user_id = current_user()
+        raw_limit = request.args.get("limit", "60")
+        if not raw_limit.isdigit() or not 1 <= int(raw_limit) <= 200:
+            return jsonify(error="limit must be an integer from 1 to 200"), 422
+        since = request.args.get("since")
+        until = request.args.get("until")
+        created: Document = {}
+        for name, value in (("since", since), ("until", until)):
+            if value in (None, ""):
+                continue
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return jsonify(error=f"{name} must be an ISO timestamp"), 422
+            created["$gte" if name == "since" else "$lte"] = aware(parsed)
+        device = owned_device(user_id, request.args.get("device_id"))
+        if device is None:
+            return jsonify(axis="Anomaly score", points=[])
+        query: Document = {"user_id": user_id, "device_id": device["_id"]}
+        if created:
+            query["created_at"] = created
+        rows = list(database.inference_results.find(query).sort("created_at", -1).limit(int(raw_limit)))
+        rows.reverse()
+        return jsonify(axis="Anomaly score", points=[{
+            "t": timestamp_text(item.get("created_at")),
+            "score": finite_number(item.get("score")),
+            "threshold": finite_number(item.get("threshold")),
+            "state": item.get("classification"),
+        } for item in rows])
+
+    @blueprint.get("/api/alerts")
+    def list_alerts():
+        user_id = current_user()
+        query: Document = {"user_id": user_id}
+        status = request.args.get("status")
+        if status not in (None, ""):
+            if status not in {"open", "closed"}:
+                return jsonify(error="status must be open or closed"), 422
+            query["status"] = status
+        device_id = request.args.get("device_id")
+        if device_id not in (None, ""):
+            owned_device(user_id, device_id)
+            query["device_id"] = device_id
+        alerts = database.alerts.find(query).sort("started_at", -1)
+        return jsonify(alerts=[alert_payload(item) for item in alerts])
+
+    @blueprint.post("/api/alerts/<alert_id>/acknowledge")
+    def acknowledge_alert(alert_id: str):
+        user_id = current_user()
+        body = json_body()
+        label = body.get("label")
+        if set(body) != {"label"} or label not in {"expected", "unexpected"}:
+            return jsonify(error="label must be expected or unexpected"), 400
+        alert = database.alerts.find_one({"_id": alert_id, "user_id": user_id})
+        if alert is None:
+            abort(404)
+        stamp = now()
+        database.alerts.update_one(
+            {"_id": alert_id}, {"$set": {"acknowledgement": label, "acknowledged_at": stamp}},
+        )
+        alert["acknowledgement"] = label
+        alert["acknowledged_at"] = stamp
+        return jsonify(alert_payload(alert))
+
     def score_window(device: Document, window: Document):
         # Monitoring continues on the active model while a retrain collects, trains, or awaits review.
         if database.onboarding.find_one({"device_id": device["_id"], "model_id": {"$exists": True, "$ne": None}}) is None:
@@ -1193,6 +1412,7 @@ def register(
         record_inference(
             database, user_id=device["user_id"], device_id=device["_id"], window=window, result=result, created_at=stamp,
         )
+        apply_alert_rule(device["user_id"], device["_id"], stamp)
         database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"result": result}})
         audit_agent_window(device["_id"], "accepted", window=window)
         return jsonify(result), 201

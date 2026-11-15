@@ -169,6 +169,15 @@ button:focus-visible,a:focus-visible,input:focus-visible,.arena-canvas:focus-vis
 .status-card[data-state="unusual"]{--accent:var(--orange)}
 .status-card[data-state="needs_verification"]{--accent:#FBBF24}
 .status-card[data-state="paused"]{--accent:var(--purple)}
+.status-card[data-state="offline"]{--accent:#FBBF24}
+.status-card[data-state="not_enough_activity"]{--accent:var(--muted)}
+.score-chart{display:block;width:100%;height:auto;margin:12px 0 8px}
+.score-chart .score-line{fill:none;stroke:#C4B5FD;stroke-width:2}
+.score-chart .threshold-line{stroke:#FBBF24;stroke-width:1.5;stroke-dasharray:4 4}
+.alert-list{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:10px}
+.alert-item{border:1px solid var(--line);border-radius:8px;padding:12px}
+.alert-item p{margin:4px 0 0;color:var(--muted);font-size:13px;line-height:1.5}
+.alert-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .status-card-icon{display:grid;place-items:center;flex:none;width:44px;height:44px;border-radius:8px;background:var(--panel2);color:var(--accent)}
 .status-card-icon svg{width:26px;height:26px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .status-card .eyebrow{margin:0;font:10px var(--mono);letter-spacing:1px;color:var(--muted)}

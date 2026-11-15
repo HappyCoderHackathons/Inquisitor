@@ -72,7 +72,27 @@ const dataActionStatus = $("#dataActionStatus");
 const modelSummaryStatus = $("#modelSummaryStatus");
 const dangerForms = document.querySelectorAll<HTMLFormElement>(".typed-confirm");
 
-type MonitoringStatus = "normal" | "not_enough_activity" | "unusual" | "needs_verification" | "paused";
+type MonitoringStatus = "normal" | "not_enough_activity" | "unusual" | "needs_verification" | "paused" | "offline";
+type MonitoringSnapshot = {
+  state: MonitoringStatus | null;
+  score: number | null;
+  threshold: number | null;
+  scored_at: string | null;
+  agent: "active" | "paused" | "offline";
+  last_seen: string | null;
+  stale: boolean;
+  device_name: string | null;
+};
+type HistoryPoint = { t: string | null; score: number | null; threshold: number | null; state: string | null };
+type AlertItem = {
+  id: string;
+  status: string;
+  explanation: string;
+  started_at: string | null;
+  duration_seconds: number | null;
+  ongoing: boolean;
+  acknowledgement: string | null;
+};
 
 const monitoringStatusViews: Record<MonitoringStatus | "none", { label: string; detail: string; icon: string }> = {
   normal: {
@@ -100,6 +120,11 @@ const monitoringStatusViews: Record<MonitoringStatus | "none", { label: string; 
     label: "Paused",
     detail: "Monitoring is paused. No input is being measured.",
     icon: '<circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/>',
+  },
+  offline: {
+    label: "Offline",
+    detail: "The agent has not checked in recently. The last score is not a live signal.",
+    icon: '<circle cx="12" cy="12" r="9"/><path d="M8 8l8 8M16 8l-8 8"/>',
   },
   none: {
     label: "No signal",
@@ -681,10 +706,191 @@ function wireDangerForm(form: HTMLFormElement) {
 
 dangerForms.forEach(wireDangerForm);
 
+const monitoringPollMs = 5_000;
+let monitoringTimer = 0;
+
+function renderAgentConnection(snapshot: MonitoringSnapshot) {
+  const heading = $("#agentConnectionStatus");
+  const detail = $("#agentConnectionDetail");
+  const indicator = $("#agentConnectionIndicator");
+  const seen = snapshot.last_seen ? `Last check-in ${snapshot.last_seen}.` : "No check-in has been recorded.";
+  if (heading) {
+    heading.textContent =
+      snapshot.agent === "active" ? "Connected" : snapshot.agent === "paused" ? "Paused" : "Offline";
+  }
+  if (detail) {
+    detail.textContent = snapshot.stale
+      ? `${seen} No recent check-in. These scores may be out of date.`
+      : snapshot.agent === "paused"
+        ? `${seen} Collection is paused.`
+        : seen;
+  }
+  indicator?.classList.toggle("pending", snapshot.stale || snapshot.agent !== "active");
+}
+
+function renderScoreChart(points: HistoryPoint[]) {
+  const svg = $("#scoreChart");
+  const summary = $("#scoreChartSummary");
+  if (!svg) return;
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const scored = points.filter((point): point is HistoryPoint & { score: number } => typeof point.score === "number");
+  const latest = scored[scored.length - 1];
+  if (summary) {
+    summary.textContent = latest
+      ? `Latest anomaly score is ${latest.score}. Threshold is ${latest.threshold ?? "not recorded"}.`
+      : "No scored windows yet.";
+  }
+  if (scored.length === 0) return;
+  const threshold = [...scored].reverse().find((point) => typeof point.threshold === "number")?.threshold ?? null;
+  const values = scored.map((point) => point.score);
+  if (threshold !== null) values.push(threshold);
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+  if (min === max) {
+    min -= 1;
+    max += 1;
+  }
+  const width = 640;
+  const height = 200;
+  const pad = 28;
+  const xAt = (index: number) => pad + (index * (width - pad * 2)) / Math.max(scored.length - 1, 1);
+  const yAt = (value: number) => height - pad - ((value - min) / (max - min)) * (height - pad * 2);
+  const namespace = "http://www.w3.org/2000/svg";
+  const add = (name: string, attrs: Record<string, string>) => {
+    const element = document.createElementNS(namespace, name);
+    for (const [key, value] of Object.entries(attrs)) element.setAttribute(key, value);
+    svg.append(element);
+  };
+  if (threshold !== null) {
+    const y = String(yAt(threshold));
+    add("line", { x1: String(pad), x2: String(width - pad), y1: y, y2: y, class: "threshold-line" });
+  }
+  add("polyline", {
+    points: scored.map((point, index) => `${xAt(index)},${yAt(point.score)}`).join(" "),
+    class: "score-line",
+  });
+}
+
+function renderAlerts(alerts: AlertItem[]) {
+  const list = $("#alertList");
+  const status = $("#alertListStatus");
+  if (!list) return;
+  list.replaceChildren();
+  if (status)
+    status.textContent =
+      alerts.length === 0 ? "No alerts recorded." : `${alerts.length} alert${alerts.length === 1 ? "" : "s"}.`;
+  for (const alert of alerts) {
+    const item = document.createElement("li");
+    item.className = "alert-item";
+    const title = document.createElement("strong");
+    title.textContent = alert.ongoing ? "Open alert" : "Closed alert";
+    const body = document.createElement("p");
+    const started = alert.started_at ?? "time not recorded";
+    const duration = alert.ongoing
+      ? "Ongoing"
+      : alert.duration_seconds === null
+        ? "Duration not recorded"
+        : `${alert.duration_seconds} seconds`;
+    const label =
+      alert.acknowledgement === "expected"
+        ? "Marked expected."
+        : alert.acknowledgement === "unexpected"
+          ? "Marked unexpected."
+          : "";
+    body.textContent = `${started}. ${duration}. ${alert.explanation} ${label}`.trim();
+    item.append(title, body);
+    if (!alert.acknowledgement) {
+      const actions = document.createElement("div");
+      actions.className = "alert-actions";
+      for (const choice of ["expected", "unexpected"] as const) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "button secondary-button";
+        button.textContent = choice === "expected" ? "Expected" : "Unexpected";
+        button.addEventListener("click", () => {
+          button.disabled = true;
+          void acknowledgeAlert(alert.id, choice);
+        });
+        actions.append(button);
+      }
+      item.append(actions);
+    }
+    list.append(item);
+  }
+}
+
+async function acknowledgeAlert(id: string, label: "expected" | "unexpected") {
+  const status = $("#alertListStatus");
+  try {
+    const response = await fetch(`/api/alerts/${id}/acknowledge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label }),
+    });
+    if (!response.ok) throw new Error(responseError(await response.json().catch(() => null), response.status));
+    await refreshMonitoring();
+  } catch (error) {
+    if (status) {
+      status.textContent =
+        error instanceof TypeError
+          ? "Could not acknowledge that alert. The server did not respond."
+          : error instanceof Error
+            ? error.message
+            : "Could not acknowledge that alert.";
+    }
+  }
+}
+
+async function refreshMonitoring() {
+  const chartSummary = $("#scoreChartSummary");
+  const alertStatus = $("#alertListStatus");
+  let response: Response;
+  try {
+    response = await fetch("/api/monitoring/status");
+  } catch {
+    const detail = $("#monitoringStatusDetail");
+    if (detail) detail.textContent = "Could not load monitoring status. The server did not respond.";
+    return;
+  }
+  if (response.status === 404) {
+    window.clearInterval(monitoringTimer);
+    monitoringTimer = 0;
+    return;
+  }
+  if (!response.ok) {
+    const detail = $("#monitoringStatusDetail");
+    if (detail) detail.textContent = `Could not load monitoring status (${response.status}).`;
+    return;
+  }
+  const snapshot = (await response.json()) as MonitoringSnapshot;
+  renderMonitoringStatus(snapshot.state);
+  renderAgentConnection(snapshot);
+  const modelDetail = $("#modelConnectionDetail");
+  const modelHeading = $("#modelConnectionStatus");
+  if (modelHeading) modelHeading.textContent = snapshot.score === null ? "Not connected" : "Scoring";
+  if (modelDetail && snapshot.score !== null) {
+    modelDetail.textContent = "Recent windows are scored against this account's active model.";
+  }
+  try {
+    const history = await fetch("/api/monitoring/history?limit=60");
+    if (history.ok) renderScoreChart(((await history.json()) as { points: HistoryPoint[] }).points ?? []);
+    else if (chartSummary) chartSummary.textContent = `Could not load the anomaly score (${history.status}).`;
+  } catch {
+    if (chartSummary) chartSummary.textContent = "Could not load the anomaly score. The server did not respond.";
+  }
+  try {
+    const alerts = await fetch("/api/alerts");
+    if (alerts.ok) renderAlerts(((await alerts.json()) as { alerts: AlertItem[] }).alerts ?? []);
+    else if (alertStatus) alertStatus.textContent = `Could not load alerts (${alerts.status}).`;
+  } catch {
+    if (alertStatus) alertStatus.textContent = "Could not load alerts. The server did not respond.";
+  }
+}
+
 updateControls();
 void refreshModelSummary();
-// shortcut: no status source yet, wire this to GET /monitoring/status when #125 lands.
-renderMonitoringStatus(null);
+void refreshMonitoring();
+monitoringTimer = window.setInterval(() => void refreshMonitoring(), monitoringPollMs);
 void (async () => {
   setCollectionStatus("Loading saved windows…");
   try {

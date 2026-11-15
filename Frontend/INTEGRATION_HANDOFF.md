@@ -1,9 +1,10 @@
 # Dashboard integration handoff
 
 The user dashboard supports opt-in local feature-window collection and JSONL
-export. It does not currently authenticate users, connect to a model, show an
-anomaly signal, or open a WebSocket. Connection labels remain disconnected
-so the page does not present placeholder data as live.
+export. When hosted sign-in is configured, it polls monitoring status, anomaly
+score history, and alerts for the signed-in account. It does not open a
+WebSocket. A stale agent check-in is labeled offline, and the last score is
+not presented as a live signal.
 
 ## Code locations
 

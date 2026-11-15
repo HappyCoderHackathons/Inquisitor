@@ -83,6 +83,7 @@ class OnboardingTests(unittest.TestCase):
         self.scored = []
         self.training_error = None
         self.score_error = None
+        self.score_states = []
         self.deleted = []
         self.delete_error = None
         self.reset_calls = []
@@ -143,7 +144,9 @@ class OnboardingTests(unittest.TestCase):
         if self.score_error:
             raise self.score_error
         self.scored.append((user_id, device_id, value["sequence"]))
-        return {"model_id": "model-1", "state": "NORMAL", "score": -0.4, "threshold": 0.1, "score_delta": -0.5}
+        state = self.score_states.pop(0) if self.score_states else "NORMAL"
+        score = None if state == "INSUFFICIENT_DATA" else 0.8 if state == "UNUSUAL" else -0.4
+        return {"model_id": "model-1", "state": state, "score": score, "threshold": 0.1, "score_delta": -0.5}
 
     def sign_in(self, user_id="user-a"):
         sid = f"session-{user_id}"
@@ -913,6 +916,160 @@ class OnboardingTests(unittest.TestCase):
         cleared = discarded.get_json()
         self.assertEqual((cleared["collection"], cleared["usable_windows"], cleared["duration_seconds"]), ("active", 0, 0))
         self.assertEqual(self.database.windows.count_documents({"device_id": device_id}), 0)
+
+    def ready_monitor(self):
+        device_id, agent = self.pair()
+        self.database.onboarding.update_one(
+            {"device_id": device_id}, {"$set": {"state": "ready", "model_id": "model-1"}},
+        )
+        return device_id, agent
+
+    def upload_scores(self, device_id, agent, states):
+        start = getattr(self, "monitor_sequence", 0)
+        self.score_states = list(states)
+        last = None
+        for offset in range(len(states)):
+            self.clock += timedelta(seconds=1)
+            body = window(device_id, "monitor-1", start + offset) | {"mode": "monitoring"}
+            last = self.client.post("/api/agent/windows", headers=agent, json=body)
+            self.assertEqual(last.status_code, 201, last.get_json())
+        self.monitor_sequence = start + len(states)
+        return last
+
+    def test_persistence_rule_counts_valid_windows_only(self):
+        decide = hosted.persistence_decision
+        self.assertIsNone(decide(["UNUSUAL", "UNUSUAL"], window=4, unusual_needed=3, normal_needed=3))
+        self.assertIsNone(decide(
+            ["UNUSUAL", "UNUSUAL", "NORMAL", "NORMAL"], window=4, unusual_needed=3, normal_needed=3,
+        ))
+        self.assertEqual(decide(
+            ["UNUSUAL", "UNUSUAL", "UNUSUAL", "NORMAL"], window=4, unusual_needed=3, normal_needed=3,
+        ), "open")
+        self.assertEqual(decide(
+            ["UNUSUAL", "UNUSUAL", "INSUFFICIENT_DATA", "UNUSUAL", "NORMAL"],
+            window=4, unusual_needed=3, normal_needed=3,
+        ), "open")
+        self.assertEqual(decide(
+            ["NORMAL", "NORMAL", "NORMAL", "UNUSUAL"], window=4, unusual_needed=3, normal_needed=3,
+        ), "close")
+        self.assertEqual(hosted.alert_rule(), (4, 3, 3))
+        with patch.dict(os.environ, {"ALERT_WINDOW": "0", "ALERT_UNUSUAL_COUNT": "nope", "ALERT_NORMAL_COUNT": ""}):
+            self.assertEqual(hosted.alert_rule(), (4, 3, 3))
+        with patch.dict(os.environ, {"ALERT_WINDOW": "2", "ALERT_UNUSUAL_COUNT": "2", "ALERT_NORMAL_COUNT": "2"}):
+            self.assertEqual(hosted.alert_rule(), (2, 2, 2))
+
+    def test_monitoring_status_history_and_alerts_follow_the_persistence_rule(self):
+        self.assertEqual(self.client.get("/api/monitoring/status").status_code, 401)
+        self.assertEqual(self.client.get("/api/monitoring/history").status_code, 401)
+        self.assertEqual(self.client.get("/api/alerts").status_code, 401)
+        self.assertEqual(
+            self.client.post("/api/alerts/missing/acknowledge", json={"label": "expected"}).status_code, 401,
+        )
+        self.sign_in()
+        empty = self.client.get("/api/monitoring/status").get_json()
+        self.assertIsNone(empty["state"])
+        self.assertEqual(empty["agent"], "offline")
+        self.assertTrue(empty["stale"])
+        self.assertEqual(self.client.get("/api/monitoring/history").get_json(), {"axis": "Anomaly score", "points": []})
+        for query in ("limit=0", "limit=201", "since=yesterday"):
+            self.assertEqual(self.client.get(f"/api/monitoring/history?{query}").status_code, 422)
+        self.assertEqual(self.client.get("/api/alerts?status=nope").status_code, 422)
+        self.assertEqual(self.client.get("/api/monitoring/status?device_id=other").status_code, 404)
+        self.assertEqual(self.client.get("/api/alerts?device_id=other").status_code, 404)
+
+        device_id, agent = self.ready_monitor()
+        self.upload_scores(device_id, agent, ["UNUSUAL"])
+        one = self.client.get("/api/monitoring/status").get_json()
+        self.assertEqual((one["state"], one["window_state"], one["score"], one["agent"], one["stale"]),
+                         ("unusual", "UNUSUAL", 0.8, "active", False))
+        self.assertEqual(one["device_id"], device_id)
+        self.assertEqual(one["device_name"], "keyboard")
+        self.assertEqual(self.client.get("/api/alerts").get_json()["alerts"], [])
+
+        self.upload_scores(device_id, agent, ["UNUSUAL", "UNUSUAL", "NORMAL"])
+        opened = self.client.get("/api/alerts").get_json()["alerts"]
+        self.assertEqual(len(opened), 1)
+        self.assertEqual(opened[0]["status"], "open")
+        self.assertTrue(opened[0]["ongoing"])
+        self.assertIsNone(opened[0]["duration_seconds"])
+        self.assertIsNone(opened[0]["acknowledgement"])
+        self.assertIn("not proof of identity", opened[0]["explanation"])
+        self.assertEqual(self.client.get("/api/monitoring/status").get_json()["state"], "needs_verification")
+
+        self.upload_scores(device_id, agent, ["NORMAL"])
+        self.assertEqual(self.client.get("/api/alerts").get_json()["alerts"][0]["status"], "open")
+        self.upload_scores(device_id, agent, ["NORMAL"])
+        closed = self.client.get("/api/alerts?status=closed").get_json()["alerts"]
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(closed[0]["duration_seconds"], 2)
+        self.assertFalse(closed[0]["ongoing"])
+        self.assertEqual(self.client.get("/api/alerts?status=open").get_json()["alerts"], [])
+        self.assertEqual(self.client.get("/api/monitoring/status").get_json()["state"], "normal")
+
+        history = self.client.get("/api/monitoring/history").get_json()
+        self.assertEqual(history["axis"], "Anomaly score")
+        self.assertEqual([point["state"] for point in history["points"]],
+                         ["UNUSUAL", "UNUSUAL", "UNUSUAL", "NORMAL", "NORMAL", "NORMAL"])
+        self.assertEqual([point["score"] for point in history["points"]], [0.8, 0.8, 0.8, -0.4, -0.4, -0.4])
+        self.assertTrue(all(point["threshold"] == 0.1 for point in history["points"]))
+        future = self.client.get("/api/monitoring/history?since=2099-01-01T00:00:00Z").get_json()
+        self.assertEqual(future["points"], [])
+        scoped = self.client.get(f"/api/monitoring/history?device_id={device_id}&limit=2").get_json()
+        self.assertEqual([point["state"] for point in scoped["points"]], ["NORMAL", "NORMAL"])
+
+        self.upload_scores(device_id, agent, ["UNUSUAL", "UNUSUAL", "UNUSUAL"])
+        again = self.client.get("/api/alerts").get_json()["alerts"]
+        self.assertEqual(len(again), 2)
+        open_alert = self.client.get("/api/alerts?status=open").get_json()["alerts"][0]
+        rejected = self.client.post(
+            f"/api/alerts/{open_alert['id']}/acknowledge", json={"label": "maybe", "retrain": True},
+        )
+        self.assertEqual(rejected.status_code, 400)
+        blocked = self.client.post(
+            f"/api/alerts/{open_alert['id']}/acknowledge",
+            json={"label": "expected"}, headers={"Origin": "https://evil.example"},
+        )
+        self.assertEqual(blocked.status_code, 403)
+        self.sign_in("user-b")
+        self.assertEqual(self.client.get("/api/alerts").get_json()["alerts"], [])
+        self.assertEqual(self.client.get(f"/api/alerts?device_id={device_id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/monitoring/status?device_id={device_id}").status_code, 404)
+        self.assertEqual(
+            self.client.post(f"/api/alerts/{open_alert['id']}/acknowledge", json={"label": "unexpected"}).status_code,
+            404,
+        )
+        self.sign_in()
+        acknowledged = self.client.post(
+            f"/api/alerts/{open_alert['id']}/acknowledge", json={"label": "expected"},
+        )
+        self.assertEqual(acknowledged.status_code, 200)
+        body = acknowledged.get_json()
+        self.assertEqual(body["acknowledgement"], "expected")
+        self.assertEqual(body["status"], "open")
+        self.assertEqual(self.trained, [])
+        self.assertEqual(self.activated, [])
+        self.assertEqual(self.database.model_versions.count_documents({}), 0)
+        stored = self.database.alerts.find_one({"_id": open_alert["id"]})
+        self.assertEqual(stored["acknowledgement"], "expected")
+        self.assertIsNotNone(stored["acknowledged_at"])
+
+    def test_alert_rule_settings_and_agent_presence_change_the_status(self):
+        device_id, agent = self.ready_monitor()
+        with patch.dict(os.environ, {"ALERT_WINDOW": "2", "ALERT_UNUSUAL_COUNT": "2", "ALERT_NORMAL_COUNT": "2"}):
+            self.upload_scores(device_id, agent, ["UNUSUAL", "UNUSUAL"])
+        self.assertEqual(len(self.client.get("/api/alerts").get_json()["alerts"]), 1)
+        self.database.onboarding.update_one({"device_id": device_id}, {"$set": {"collection": "paused"}})
+        self.client.get("/api/agent/onboarding", headers=agent)
+        paused = self.client.get("/api/monitoring/status").get_json()
+        self.assertEqual((paused["state"], paused["agent"], paused["stale"]), ("paused", "paused", False))
+        self.assertEqual(paused["score"], 0.8)
+        self.database.devices.update_one(
+            {"_id": device_id}, {"$set": {"last_heartbeat_at": self.clock - timedelta(minutes=11)}},
+        )
+        offline = self.client.get("/api/monitoring/status").get_json()
+        self.assertEqual((offline["state"], offline["agent"], offline["stale"]), ("offline", "offline", True))
+        self.assertEqual(offline["score"], 0.8)
+        self.assertIsNotNone(offline["last_seen"])
 
 
 if __name__ == "__main__":

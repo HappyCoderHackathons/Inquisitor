@@ -37,16 +37,30 @@
           </div>
         </section>
 
+        <section class="dashboard-panel" aria-labelledby="scoreChartHeading">
+          <h2 id="scoreChartHeading">Anomaly score</h2>
+          <p id="scoreChartSummary" class="dashboard-panel-copy">No scored windows yet.</p>
+          <svg id="scoreChart" class="score-chart" viewBox="0 0 640 200" role="img" aria-labelledby="scoreChartHeading"></svg>
+          <p class="dashboard-footnote">The line is an anomaly score compared with this device's threshold. It is not an identity percentage.</p>
+        </section>
+
+        <section class="dashboard-panel" aria-labelledby="alertListHeading">
+          <h2 id="alertListHeading">Alerts</h2>
+          <p id="alertListStatus" class="dashboard-panel-copy" role="status">No alerts recorded.</p>
+          <ul id="alertList" class="alert-list"></ul>
+          <p class="dashboard-footnote">An alert opens when 3 of the last 4 valid windows are unusual, and it closes after 3 of the last 4 are normal. Marking an alert expected or unexpected does not retrain the model. A single unusual window is not an alert.</p>
+        </section>
+
         <section class="connection-grid" aria-label="Connection status">
           <article class="connection-card">
-            <div class="connection-card-heading"><span class="status-indicator pending"></span><span class="eyebrow">AGENT</span></div>
+            <div class="connection-card-heading"><span id="agentConnectionIndicator" class="status-indicator pending"></span><span class="eyebrow">AGENT</span></div>
             <h2 id="agentConnectionStatus">Not connected</h2>
-            <p>The authenticated agent WebSocket has not been configured.</p>
+            <p id="agentConnectionDetail">No check-in has been recorded for a paired agent.</p>
           </article>
           <article class="connection-card">
             <div class="connection-card-heading"><span class="status-indicator pending"></span><span class="eyebrow">BEHAVIOR MODEL</span></div>
             <h2 id="modelConnectionStatus">Not connected</h2>
-            <p>No live model or inference status is available in this prototype.</p>
+            <p id="modelConnectionDetail">No scored windows are recorded for this account yet.</p>
           </article>
           <article class="connection-card">
             <div class="connection-card-heading"><span class="status-indicator pending"></span><span class="eyebrow">ACCOUNT</span></div>
