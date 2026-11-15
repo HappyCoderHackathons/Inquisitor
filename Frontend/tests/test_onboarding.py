@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 import mongomock
 from flask import Flask
+from pymongo.errors import DuplicateKeyError
 
 import hosted
 import server
@@ -355,6 +356,7 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(session["device_id"], device_id)
         self.assertEqual(session["status"], "completed")
         self.assertEqual(session["valid_window_count"], 5)
+        self.assertEqual(session["generation"], 0)
 
     def test_rounds_credit_server_time_and_pick_latest_round_per_game_for_calibration(self):
         device_id, agent = self.pair()
@@ -375,6 +377,110 @@ class OnboardingTests(unittest.TestCase):
         cancelled_session = self.database.rounds.find_one({"_id": cancelled_session_id})
         self.assertEqual(cancelled_session["status"], "cancelled")
         self.assertEqual(cancelled_session["valid_window_count"], 0)
+
+    def test_enrollment_endpoints_are_owner_scoped_and_group_usable_windows_by_session(self):
+        device_id, agent = self.pair()
+        started = self.client.post(
+            "/api/enrollments", json={"device_id": device_id, "game": "typing"}
+        )
+        self.assertEqual(started.status_code, 201, started.get_json())
+        enrollment = started.get_json()
+        enrollment_id = enrollment["id"]
+        self.assertEqual(enrollment["status"], "active")
+        self.assertEqual(enrollment["progress"]["usable_window_count"], 0)
+
+        self.assertEqual(
+            self.client.post(
+                "/api/enrollments", json={"device_id": device_id, "game": "typing"}
+            ).status_code,
+            409,
+        )
+        self.assertEqual(
+            self.client.get("/api/agent/onboarding", headers=agent).get_json()["session_id"],
+            enrollment_id,
+        )
+        uploaded = self.client.post(
+            "/api/agent/windows", headers=agent, json=window(device_id, enrollment_id, 0)
+        )
+        self.assertEqual(uploaded.status_code, 201, uploaded.get_json())
+        stored = self.database.windows.find_one({"session_id": enrollment_id})
+        self.assertEqual(stored["session_id"], enrollment_id)
+        self.assertEqual(stored["window"]["session_id"], enrollment_id)
+        unusable = self.client.post(
+            "/api/agent/windows",
+            headers=agent,
+            json=window(device_id, enrollment_id, 1, key_count=20),
+        )
+        self.assertEqual(unusable.status_code, 201, unusable.get_json())
+        self.assertFalse(unusable.get_json()["usable"])
+
+        progress = self.client.get(f"/api/enrollments/{enrollment_id}").get_json()
+        self.assertEqual(progress["progress"]["usable_window_count"], 1)
+        self.clock += timedelta(seconds=30)
+        completed = self.client.post(f"/api/enrollments/{enrollment_id}/complete", json={})
+        self.assertEqual(completed.status_code, 200, completed.get_json())
+        self.assertEqual(completed.get_json()["status"], "completed")
+        onboarding_progress = self.client.get("/api/onboarding").get_json()
+        self.assertIn(enrollment_id, onboarding_progress["sessions"])
+        self.assertIn(enrollment_id, onboarding_progress["validation_sessions"])
+        self.assertEqual(onboarding_progress["usable_windows"], 1)
+        self.assertEqual(
+            self.client.post(
+                "/api/agent/windows", headers=agent, json=window(device_id, enrollment_id, 2)
+            ).status_code,
+            409,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/enrollments", json={"device_id": device_id, "game": "typing"}
+            ).status_code,
+            201,
+        )
+
+        self.sign_in("user-b")
+        self.assertEqual(self.client.get(f"/api/enrollments/{enrollment_id}").status_code, 404)
+        self.assertEqual(
+            self.client.post(f"/api/enrollments/{enrollment_id}/complete", json={}).status_code, 404
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/enrollments", json={"device_id": device_id, "game": "typing"}
+            ).status_code,
+            404,
+        )
+
+    def test_enrollment_unique_index_rejects_concurrent_active_sessions(self):
+        device_id, _ = self.pair()
+        onboarding = self.database.onboarding.find_one({"device_id": device_id})
+        session = {
+            "_id": "active-enrollment",
+            "onboarding_id": onboarding["_id"],
+            "device_id": device_id,
+            "game": "typing",
+            "started_at": self.clock,
+            "ended_at": None,
+            "status": "active",
+            "credited_ms": 0,
+            "valid_window_count": 0,
+        }
+        self.database.rounds.insert_one(session)
+        with self.assertRaises(DuplicateKeyError):
+            self.database.rounds.insert_one({**session, "_id": "second-active-enrollment"})
+
+    def test_enrollment_creation_rejects_invalid_game_or_unpaired_device(self):
+        device_id, _ = self.pair()
+        self.assertEqual(
+            self.client.post(
+                "/api/enrollments", json={"device_id": device_id, "game": "unknown"}
+            ).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/enrollments", json={"device_id": "unpaired-device", "game": "typing"}
+            ).status_code,
+            404,
+        )
 
     def test_ten_minutes_of_games_trains_and_activates_model(self):
         device_id, agent = self.pair()

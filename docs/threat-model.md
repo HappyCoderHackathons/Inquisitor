@@ -105,6 +105,7 @@ auth user id. An empty id is rejected.
 | `GET /api/me`, `GET /api/onboarding` | The signed-in account |
 | `GET /onboarding`, `GET /login` | Page, or redirect to onboarding |
 | `POST /api/pairing-codes` | The signed-in account. The code is stored as a hash |
+| `POST /api/enrollments`, `GET /api/enrollments/<id>`, `POST /api/enrollments/<id>/complete` | The signed-in account, and only sessions associated with its owned device |
 | `POST /api/onboarding/rounds` and `POST /api/onboarding/rounds/current/<outcome>` | The signed-in account's round. The body selects a game or an outcome |
 | `POST /api/onboarding/train` | The signed-in account's onboarding |
 | `POST /api/devices/<device_id>/revoke` | The signed-in account, and only a device row whose `user_id` matches that account |
