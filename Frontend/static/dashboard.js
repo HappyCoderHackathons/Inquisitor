@@ -1,3 +1,4 @@
+"use strict";
 (() => {
   // frontend/dashboard.ts
   var $ = (selector) => document.querySelector(selector);
@@ -196,7 +197,9 @@
     collectionPaused = false;
     window.clearInterval(timerId);
     resetWindow();
-    setCollectionStatus(pendingWindow ? "Collection stopped. Retry saving the pending aggregate window or leave it unsaved." : message);
+    setCollectionStatus(
+      pendingWindow ? "Collection stopped. Retry saving the pending aggregate window or leave it unsaved." : message
+    );
     updateControls();
   }
   function pauseCollection() {

@@ -14,7 +14,7 @@ A local Flask + TypeScript arcade prototype for collecting opt-in behavioral inp
    `python3 -m venv --clear .venv` before activating it again.
 2. Install Python dependencies: `python3 -m pip install -r requirements.txt`
 3. Install the TypeScript bundler: `npm install`
-4. Build the browser app: `npm run build`
+4. Build the browser app: `npm run build`. Commit the rebuilt `static/` bundles with any TypeScript change; CI fails if they are stale. Before committing, run `npm run format` and `npm run typecheck`.
 5. Start Flask: `python3 server.py`
 6. Open [http://127.0.0.1:5000](http://127.0.0.1:5000)
 

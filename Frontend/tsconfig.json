@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "target": "es2020",
+    "lib": ["es2020", "dom"],
+    "moduleDetection": "force",
+    "types": []
+  },
+  "include": ["frontend/*.ts"]
+}
