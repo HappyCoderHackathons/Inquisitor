@@ -63,6 +63,40 @@ def labeled_features(windows: list[dict[str, object]]) -> np.ndarray:
     return matrix
 
 
+LABELED_FEATURES = ("hold_cv", "press_overlap_fraction")
+FEATURE_TEXT = {"hold_cv": "Hold-time variability", "press_overlap_fraction": "Key overlap"}
+
+
+def robust_baseline(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    median = np.median(matrix, axis=0)
+    scale = 1.4826 * np.median(np.abs(matrix - median), axis=0)
+    # A discrete feature can vary while its MAD is zero. Use its training standard deviation.
+    return median, np.where(scale > 1e-8, scale, np.std(matrix, axis=0))
+
+
+def explain(
+    raw: np.ndarray, standardized: np.ndarray, coefficient: np.ndarray, baseline: dict[str, list[float]] | None,
+) -> dict[str, object]:
+    contributions = standardized * coefficient
+    order = [int(index) for index in np.argsort(-contributions)]
+    features = []
+    for index in order:
+        item: dict[str, object] = {"feature": LABELED_FEATURES[index], "contribution": float(contributions[index])}
+        if baseline is not None:
+            scale = baseline["scale"][index]
+            item["baseline_z"] = float((raw[index] - baseline["median"][index]) / scale) if scale > 1e-8 else None
+        features.append(item)
+    top, label = features[0], FEATURE_TEXT[cast(str, features[0]["feature"])]
+    if top.get("baseline_z") is not None:
+        z = cast(float, top["baseline_z"])
+        summary = (f"{label} was {abs(z):.1f} robust deviations {'above' if z > 0 else 'below'} "
+                   "the enrolled baseline and contributed most to this alert.")
+    else:
+        direction = "higher" if standardized[order[0]] > 0 else "lower"
+        summary = f"{label} contributed most to this alert ({direction} than the model's training average)."
+    return {"features": features, "summary": summary}
+
+
 class ModelStore:
     def __init__(self, directory: Path) -> None:
         self.directory = directory.resolve()
@@ -85,6 +119,27 @@ class ModelStore:
             if metadata["user_id"] != user_id or metadata["device_id"] != device_id:
                 raise PermissionError("model belongs to another account or device")
             return metadata
+
+    def _active_path(self, user_id: str, device_id: str) -> Path:
+        owner = hashlib.sha256(json.dumps([user_id, device_id]).encode()).hexdigest()
+        return self.directory / "active" / f"{owner}.json"
+
+    def activate(self, model_id: str, user_id: str, device_id: str) -> dict[str, object]:
+        with self._lock:
+            metadata = self.metadata(model_id, user_id, device_id)
+            path = self._active_path(user_id, device_id)
+            path.parent.mkdir(exist_ok=True, mode=0o700)
+            staging = path.with_suffix(".tmp")
+            staging.write_text(json.dumps({"model_id": model_id}), encoding="utf-8")
+            os.replace(staging, path)
+            return metadata
+
+    def active_model_id(self, user_id: str, device_id: str) -> str:
+        with self._lock:
+            try:
+                return json.loads(self._active_path(user_id, device_id).read_text(encoding="utf-8"))["model_id"]
+            except FileNotFoundError as error:
+                raise FileNotFoundError("no active model for this account and device") from error
 
     def train(
         self,
@@ -210,7 +265,9 @@ class ModelStore:
         parameters = {"C": 0.1, "class_weight": "balanced", "random_state": 49, "max_iter": 1000}
         model = make_pipeline(FunctionTransformer(np.log1p), StandardScaler(), LogisticRegression(**parameters))
         model.fit(matrix, labels)
-        genuine_scores = model.decision_function(labeled_features(genuine))
+        genuine_matrix = labeled_features(genuine)
+        baseline_median, baseline_scale = robust_baseline(genuine_matrix)
+        genuine_scores = model.decision_function(genuine_matrix)
         threshold = float(np.sort(genuine_scores)[math.ceil(.98 * len(genuine_scores)) - 1])
         metadata = {
             "model_id": uuid4().hex, "state": "ready", "user_id": user_id, "device_id": device_id,
@@ -228,6 +285,7 @@ class ModelStore:
             "threshold_data_role": "in-sample genuine training data; not independent calibration",
             "calibration_false_rejection_rate": float(np.mean(genuine_scores > threshold)),
             "training_false_rejection_rate": float(np.mean(genuine_scores > threshold)),
+            "genuine_baseline": {"median": baseline_median.tolist(), "scale": baseline_scale.tolist()},
             "parameters": parameters, "trained_at": datetime.now(UTC).isoformat(),
             "versions": {name: version(name) for name in ("scikit-learn", "numpy", "joblib")},
         }
@@ -251,8 +309,15 @@ class ModelStore:
                     self._loaded.pop(next(iter(self._loaded)))
                 self._loaded[model_id] = joblib.load(self._path(model_id) / "model.joblib")
             bundle = self._loaded[model_id]
+        explanation = None
         if bundle.get("score_kind") == "impostor_margin":
-            score = float(bundle["model"].decision_function(labeled_features([window]))[0])
+            pipeline = bundle["model"]
+            raw = labeled_features([window])
+            score = float(pipeline.decision_function(raw)[0])
+            if score > cast(float, metadata["threshold"]):
+                standardized = pipeline[:-1].transform(raw)[0]
+                explanation = explain(raw[0], standardized, pipeline[-1].coef_[0],
+                                      cast(dict[str, list[float]] | None, metadata.get("genuine_baseline")))
         else:
             model = cast(IsolationForest, bundle["model"])
             matrix = np.asarray([feature_row(window)])
@@ -261,16 +326,22 @@ class ModelStore:
             matrix = matrix[:, bundle["mask"]]
             score = float(-model.score_samples(matrix)[0])
         threshold = cast(float, metadata["threshold"])
-        return {
+        result: dict[str, object] = {
             "model_id": model_id,
             "state": "UNUSUAL" if score > threshold else "NORMAL",
             "score": score,
             "threshold": threshold,
             "score_delta": score - threshold,
         }
+        if explanation is not None:
+            result["explanation"] = explanation
+        return result
 
     def delete(self, model_id: str, user_id: str, device_id: str) -> None:
         with self._lock:
             self.metadata(model_id, user_id, device_id)
             shutil.rmtree(self._path(model_id))
             self._loaded.pop(model_id, None)
+            active = self._active_path(user_id, device_id)
+            if active.exists() and json.loads(active.read_text(encoding="utf-8"))["model_id"] == model_id:
+                active.unlink()

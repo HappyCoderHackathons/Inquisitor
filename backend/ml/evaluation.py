@@ -9,7 +9,7 @@ from typing import cast
 import numpy as np
 from numpy.typing import NDArray
 
-from .model import feature_row, validate_window
+from .model import feature_row, robust_baseline, validate_window
 
 
 def split_sessions(
@@ -56,10 +56,7 @@ class MedianMAD:
         mask = np.std(matrix, axis=0) > 1e-8
         if not mask.any():
             raise ValueError("all training features are constant")
-        median = np.median(matrix[:, mask], axis=0)
-        scale = 1.4826 * np.median(np.abs(matrix[:, mask] - median), axis=0)
-        # A discrete feature can vary while its MAD is zero. Use its training standard deviation.
-        scale = np.where(scale > 1e-8, scale, np.std(matrix[:, mask], axis=0))
+        median, scale = robust_baseline(matrix[:, mask])
         return cls(median, scale, mask)
 
     def deviations(self, windows: list[dict[str, object]]) -> NDArray[np.float64]:
