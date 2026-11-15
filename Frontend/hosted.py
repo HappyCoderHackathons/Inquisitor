@@ -273,6 +273,12 @@ def register(
             updates["valid_window_count"] = session.get("usable_windows", 0)
         if updates:
             database.rounds.update_one({"_id": session["_id"]}, {"$set": updates})
+    database.rounds.create_index(
+        [("device_id", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"status": "active", "device_id": {"$exists": True}},
+        name="one_active_enrollment_per_device",
+    )
     for collection in (database.windows, database.monitoring_windows):
         collection.create_index(
             [("device_id", ASCENDING), ("session_id", ASCENDING), ("sequence", ASCENDING)], unique=True
@@ -352,6 +358,44 @@ def register(
         if user_id is None:
             abort(401)
         return user_id
+
+    def owned_enrollment(enrollment_id: str, user_id: str) -> Document:
+        enrollment = database.rounds.find_one({"_id": enrollment_id})
+        if enrollment is None:
+            abort(404)
+        if database.devices.find_one({"_id": enrollment["device_id"], "user_id": user_id}) is None:
+            abort(404)
+        if database.onboarding.find_one(
+            {
+                "_id": enrollment["onboarding_id"],
+                "user_id": user_id,
+                "device_id": enrollment["device_id"],
+            }
+        ) is None:
+            abort(404)
+        return enrollment
+
+    def enrollment_response(enrollment: Document) -> Document:
+        usable_windows = database.windows.count_documents({
+            "device_id": enrollment["device_id"],
+            "session_id": enrollment["_id"],
+            "usable": True,
+        })
+        started = cast(datetime, enrollment["started_at"])
+        ended = cast(datetime | None, enrollment.get("ended_at"))
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        if ended is not None and ended.tzinfo is None:
+            ended = ended.replace(tzinfo=UTC)
+        return {
+            "id": enrollment["_id"],
+            "device_id": enrollment["device_id"],
+            "game": enrollment["game"],
+            "status": enrollment["status"],
+            "started_at": started.isoformat().replace("+00:00", "Z"),
+            "ended_at": ended.isoformat().replace("+00:00", "Z") if ended is not None else None,
+            "progress": {"usable_window_count": usable_windows},
+        }
 
     account_pages = {"/dashboard"}
 
@@ -483,6 +527,76 @@ def register(
     def onboarding_status():
         return jsonify(progress(database, user_onboarding(current_user())))
 
+    @blueprint.post("/api/enrollments")
+    def create_enrollment():
+        user_id = current_user()
+        body = json_body()
+        device_id = body.get("device_id")
+        game = body.get("game")
+        if not isinstance(device_id, str) or not device_id or game not in GAMES:
+            abort(422)
+        device = database.devices.find_one({
+            "_id": device_id,
+            "user_id": user_id,
+            "pairing_state": "paired",
+            "revoked_at": None,
+        })
+        if device is None:
+            abort(404)
+        onboarding = database.onboarding.find_one({"user_id": user_id, "device_id": device_id})
+        if onboarding is None:
+            abort(404)
+        if onboarding["state"] != "collecting" or collection_state(onboarding) != "active":
+            abort(409)
+        if database.rounds.find_one({"device_id": device_id, "status": "active"}) is not None:
+            abort(409)
+
+        started = now()
+        session_id = uuid4().hex
+        session_status: EnrollmentSessionStatus = "active"
+        session: EnrollmentSession = {
+            "_id": session_id,
+            "onboarding_id": onboarding["_id"],
+            "device_id": device_id,
+            "game": game,
+            "started_at": started,
+            "ended_at": None,
+            "status": session_status,
+            "credited_ms": 0,
+            "valid_window_count": 0,
+        }
+        try:
+            database.rounds.insert_one(session)
+        except DuplicateKeyError:
+            abort(409)
+        return jsonify(enrollment_response(session)), 201
+
+    @blueprint.get("/api/enrollments/<enrollment_id>")
+    def get_enrollment(enrollment_id: str):
+        enrollment = owned_enrollment(enrollment_id, current_user())
+        return jsonify(enrollment_response(enrollment))
+
+    @blueprint.post("/api/enrollments/<enrollment_id>/complete")
+    def complete_enrollment(enrollment_id: str):
+        user_id = current_user()
+        json_body()
+        enrollment = owned_enrollment(enrollment_id, user_id)
+        if enrollment["status"] != "active":
+            abort(409)
+        ended = now()
+        started = cast(datetime, enrollment["started_at"])
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        credited = min(max(int((ended - started).total_seconds() * 1000), 0), ROUND_MS)
+        completed = database.rounds.find_one_and_update(
+            {"_id": enrollment_id, "device_id": enrollment["device_id"], "status": "active"},
+            {"$set": {"ended_at": ended, "credited_ms": credited, "status": "completed"}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if completed is None:
+            abort(409)
+        return jsonify(enrollment_response(completed))
+
     @blueprint.post("/api/onboarding/rounds")
     def start_round():
         onboarding = user_onboarding(current_user())
@@ -507,7 +621,10 @@ def register(
             "credited_ms": 0,
             "valid_window_count": 0,
         }
-        database.rounds.insert_one(session)
+        try:
+            database.rounds.insert_one(session)
+        except DuplicateKeyError:
+            abort(409)
         return jsonify(session_id=session_id), 201
 
     @blueprint.post("/api/onboarding/rounds/current/<outcome>")
