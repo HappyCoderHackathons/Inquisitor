@@ -1,0 +1,28 @@
+{# Shared site header. Every page shows the same links; only sign-in state changes them. #}
+{% set here = nav_path | default("") %}
+{% macro link(href, label) -%}
+  <a href="{{ href }}"{% if here == href %} aria-current="page"{% endif %}>{{ label }}</a>
+{%- endmacro %}
+<header class="arcade-header">
+  <a class="brand" href="/">Inquisitor</a>
+  <nav class="arcade-nav" aria-label="Main navigation">
+    {{ link("/", "Home") }}
+    {{ link("/arcade", "Activities") }}
+    {{ link("/privacy", "Privacy") }}
+    {% if nav_signed_in %}
+      {{ link("/onboarding", "Setup") }}
+      {{ link("/dashboard", "Dashboard") }}
+      {{ link("/devices", "Devices") }}
+      {{ link("/demo", "Demo") }}
+      <button id="navSignOut" class="nav-signout" type="button">Sign out</button>
+    {% elif nav_hosted %}
+      <a href="/onboarding"{% if here == "/onboarding" and request.args.get("mode") != "signup" %} aria-current="page"{% endif %}>Log in</a>
+      <a class="nav-cta" href="/onboarding?mode=signup"{% if here == "/onboarding" and request.args.get("mode") == "signup" %} aria-current="page"{% endif %}>Create account</a>
+    {% else %}
+      {{ link("/dashboard", "Dashboard") }}
+      {{ link("/devices", "Devices") }}
+      {{ link("/demo", "Demo") }}
+    {% endif %}
+  </nav>
+</header>
+{% if nav_signed_in %}<script src="/static/nav.js" defer></script>{% endif %}

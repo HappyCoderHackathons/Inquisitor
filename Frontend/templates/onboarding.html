@@ -14,15 +14,7 @@
   </head>
   <body>
     <div class="arcade-layout">
-      <header class="arcade-header">
-        <a class="brand" href="/">Inquisitor</a>
-        <nav class="arcade-nav" aria-label="Main navigation">
-          <a href="/">Home</a>
-          <a href="/privacy">Privacy</a>
-          <a href="/arcade">Activities</a>
-          <a href="/onboarding" aria-current="page">{% if signed_in %}Setup{% elif mode|default('login') == 'signup' %}Create account{% else %}Log in{% endif %}</a>
-        </nav>
-      </header>
+      {% include "_header.html" %}
 
       <main class="dashboard-main">
         <section class="dashboard-heading">
@@ -68,13 +60,14 @@
           <p><a class="button secondary-button" href="https://github.com/hack-the-nest-but-happier/Inquisitor/releases/latest/download/Inquisitor-windows-x64.exe" rel="noopener">Download the Windows agent</a> <a href="https://github.com/hack-the-nest-but-happier/Inquisitor/releases/latest" rel="noopener">Release notes and checksum</a></p>
           <p class="dashboard-panel-copy"><strong>Check your inputs:</strong> in the tray menu, open <strong>Allow connections...</strong> and allow the keyboard and mouse you use (or <strong>Allow all</strong>). The agent records nothing from a device until it is allowed, so rounds earn no windows without this.</p>
           <button id="createCode" class="button primary" type="button">Get pairing code</button>
-          <p><strong id="pairingCode" class="pairing-code"></strong> <span id="pairingExpiry" role="timer"></span></p>
+          <p><strong id="pairingCode" class="pairing-code" aria-live="polite"></strong> <span id="pairingExpiry" role="timer"></span></p>
+          <p id="pairingStatus" class="action-status" role="status" aria-live="polite"></p>
         </section>
 
         <section class="dashboard-panel" aria-labelledby="wizardTitle">
           <h2 id="wizardTitle">3. Enrollment</h2>
           <p id="onboardingState" class="collection-status" role="status" aria-live="polite">Loading setup status…</p>
-          <p id="agentStatus" class="collection-status" role="status">Agent status: offline</p>
+          <p id="agentStatus" class="collection-status" role="status">Agent status: Offline</p>
           <nav class="wizard-steps" aria-label="Enrollment steps">
             <button class="wizard-step" type="button" data-step-tab="warmup" aria-current="step">1. Warm-up</button>
             <button class="wizard-step" type="button" data-step-tab="activity" disabled>2. Natural Activity</button>
@@ -125,10 +118,10 @@
           </div>
           <p id="windowProgress" class="dashboard-footnote"></p>
           <div class="collection-actions">
-            <button id="pauseEnrollment" class="button secondary-button" type="button">Pause</button>
+            <button id="pauseEnrollment" class="button secondary-button" type="button" disabled>Pause</button>
             <button id="resumeEnrollment" class="button secondary-button" type="button" disabled>Resume</button>
-            <button id="discardEnrollment" class="button secondary-button" type="button">Discard</button>
-            <button id="finishEnrollment" class="button secondary-button" type="button">Finish enrollment</button>
+            <button id="discardEnrollment" class="button secondary-button" type="button" disabled>Discard</button>
+            <button id="finishEnrollment" class="button secondary-button" type="button" disabled>Finish enrollment</button>
           </div>
           <p id="enrollmentControlStatus" class="action-status" role="status" aria-live="polite"></p>
           <div class="wizard-nav">

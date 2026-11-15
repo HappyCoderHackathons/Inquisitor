@@ -98,6 +98,8 @@ class UxStateTests(unittest.TestCase):
             "Fire with click, Space, or F",
         ):
             self.assertIn(phrase, script)
+        # The crosshair is drawn, not a text character.
+        self.assertIn('<div class="aim-cross" aria-hidden="true"></div>', script)
 
     def test_setup_and_dashboard_fetches_name_loading_and_disconnects(self):
         signed_in = server.app.jinja_env.get_template("onboarding.html").render(signed_in=True)
@@ -155,6 +157,15 @@ class UxStateTests(unittest.TestCase):
         self.assertGreaterEqual(contrast("948D9E", "211B2A"), 4.5)
         self.assertGreaterEqual(contrast("7E6C9A", "100D14"), 3)
         self.assertGreaterEqual(contrast("A3E635", "09070D"), 3)
+
+    def test_pages_share_the_header_and_favicon(self):
+        for path in ("/", "/arcade", "/dashboard", "/demo", "/devices", "/privacy"):
+            page = self.client.get(path).get_data(as_text=True)
+            self.assertIn('aria-label="Main navigation"', page, path)
+            self.assertIn('href="/arcade"', page, path)
+            self.assertIn('rel="icon" href="/static/favicon.svg"', page, path)
+        dashboard = self.client.get("/dashboard").get_data(as_text=True)
+        self.assertIn('id="deviceSwitcherRow" class="demo-toggle" hidden', dashboard)
 
 
 if __name__ == "__main__":

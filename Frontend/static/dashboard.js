@@ -1,5 +1,35 @@
 "use strict";
 (() => {
+  // frontend/format.ts
+  var dateTime = new Intl.DateTimeFormat(void 0, { dateStyle: "medium", timeStyle: "short" });
+  function formatTime(iso, fallback = "Not recorded") {
+    if (!iso) return fallback;
+    const value = new Date(iso);
+    return Number.isNaN(value.getTime()) ? fallback : dateTime.format(value);
+  }
+  function formatAgo(iso, fallback = "never") {
+    if (!iso) return fallback;
+    const value = new Date(iso);
+    if (Number.isNaN(value.getTime())) return fallback;
+    const seconds = Math.max(0, (Date.now() - value.getTime()) / 1e3);
+    if (seconds < 60) return "just now";
+    if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+    if (seconds < 86400) return `${Math.round(seconds / 3600)} h ago`;
+    return formatTime(iso);
+  }
+  function formatScore(value, fallback = "not available") {
+    return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : fallback;
+  }
+  function formatDuration(seconds, fallback = "not recorded") {
+    if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return fallback;
+    const total = Math.round(seconds);
+    if (total < 60) return `${total} s`;
+    const minutes = Math.floor(total / 60), rest = total % 60;
+    if (minutes < 60) return rest ? `${minutes} min ${rest} s` : `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours} h ${minutes % 60} min`;
+  }
+
   // frontend/dashboard.ts
   var $ = (selector) => document.querySelector(selector);
   var collectionSurface = $("#collectorSurface");
@@ -261,6 +291,7 @@
     return created;
   }
   async function refreshCollectionSummary() {
+    if (!collectionStatus) return;
     let response;
     try {
       response = await fetch("/api/feature-windows");
@@ -466,12 +497,15 @@
     if (enrollLink) enrollLink.hidden = summary.available;
     const device = $("#modelDevice");
     if (device) {
-      device.textContent = summary.available ? `${summary.device_name ?? "Unnamed device"}${summary.device_id ? ` (${summary.device_id})` : ""}` : "Not recorded";
+      device.textContent = summary.available ? summary.device_name && summary.device_name.length > 0 ? summary.device_name : "Unnamed device" : "Not recorded";
     }
     const version = $("#modelVersion");
-    if (version) version.textContent = summary.available ? recorded(summary.model_id) : "Not recorded";
+    if (version) {
+      version.textContent = summary.available ? summary.trained_at ? `Trained ${formatTime(summary.trained_at)}` : recorded(summary.model_id) : "Not recorded";
+      version.title = summary.available ? summary.model_id ?? "" : "";
+    }
     const trained = $("#modelTrained");
-    if (trained) trained.textContent = summary.available ? recorded(summary.trained_at) : "Not recorded";
+    if (trained) trained.textContent = summary.available ? formatTime(summary.trained_at) : "Not recorded";
     const windows = $("#modelWindows");
     if (windows) windows.textContent = windowText(summary);
     const sessions = $("#modelSessions");
@@ -590,7 +624,7 @@
     const heading = $("#agentConnectionStatus");
     const detail = $("#agentConnectionDetail");
     const indicator = $("#agentConnectionIndicator");
-    const seen = snapshot.last_seen ? `Last check-in ${snapshot.last_seen}.` : "No check-in has been recorded.";
+    const seen = snapshot.last_seen ? `Last check-in ${formatAgo(snapshot.last_seen)}.` : "No check-in has been recorded.";
     if (heading) {
       heading.textContent = snapshot.agent === "active" ? "Connected" : snapshot.agent === "paused" ? "Paused" : "Offline";
     }
@@ -607,7 +641,7 @@
     const scored = points.filter((point) => typeof point.score === "number");
     const latest = scored[scored.length - 1];
     if (summary) {
-      summary.textContent = latest ? `Latest anomaly score is ${latest.score}. Threshold is ${latest.threshold ?? "not recorded"}.` : "No scored windows yet.";
+      summary.textContent = latest ? `Latest anomaly score is ${formatScore(latest.score)}. Threshold is ${formatScore(latest.threshold, "not recorded")}.` : "No scored windows yet.";
     }
     if (scored.length === 0) return;
     const threshold = [...scored].reverse().find((point) => typeof point.threshold === "number")?.threshold ?? null;
@@ -644,6 +678,7 @@
     const status = $("#alertListStatus");
     if (!list) return;
     list.replaceChildren();
+    status?.classList.remove("error");
     if (status)
       status.textContent = alerts.length === 0 ? "No alerts recorded." : `${alerts.length} alert${alerts.length === 1 ? "" : "s"}.`;
     for (const alert of alerts) {
@@ -652,8 +687,8 @@
       const title = document.createElement("strong");
       title.textContent = alert.ongoing ? "Open alert" : "Closed alert";
       const body = document.createElement("p");
-      const started = alert.started_at ?? "time not recorded";
-      const duration = alert.ongoing ? "Ongoing" : alert.duration_seconds === null ? "Duration not recorded" : `${alert.duration_seconds} seconds`;
+      const started = alert.started_at ? `Started ${formatTime(alert.started_at)}` : "Start time not recorded";
+      const duration = alert.ongoing ? "Ongoing" : `Lasted ${formatDuration(alert.duration_seconds)}`;
       const label = alert.acknowledgement === "expected" ? "Marked expected." : alert.acknowledgement === "unexpected" ? "Marked unexpected." : "";
       body.textContent = `${started}. ${duration}. ${alert.explanation} ${label}`.trim();
       item.append(title, body);
@@ -677,8 +712,8 @@
           button.className = "button secondary-button";
           button.textContent = choice === "expected" ? "Expected" : "Unexpected";
           button.addEventListener("click", () => {
-            button.disabled = true;
-            void acknowledgeAlert(alert.id, choice);
+            for (const sibling of actions.querySelectorAll("button")) sibling.disabled = true;
+            void acknowledgeAlert(alert.id, choice, actions);
           });
           actions.append(button);
         }
@@ -687,10 +722,10 @@
       list.append(item);
     }
   }
-  async function acknowledgeAlert(id, label) {
+  async function acknowledgeAlert(id, label, actions) {
     const status = $("#alertListStatus");
     try {
-      const response = await fetch(`/api/alerts/${id}/acknowledge`, {
+      const response = await fetch(`/api/alerts/${encodeURIComponent(id)}/acknowledge`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ label })
@@ -698,7 +733,9 @@
       if (!response.ok) throw new Error(responseError(await response.json().catch(() => null), response.status));
       await refreshMonitoring();
     } catch (error) {
+      for (const button of actions.querySelectorAll("button")) button.disabled = false;
       if (status) {
+        status.classList.add("error");
         status.textContent = error instanceof TypeError ? "Could not acknowledge that alert. The server did not respond." : error instanceof Error ? error.message : "Could not acknowledge that alert.";
       }
     }
@@ -808,7 +845,32 @@
     }
     if (selectedDeviceId) select.value = selectedDeviceId;
   }
+  async function loadAccount() {
+    const heading = $("#accountConnectionStatus");
+    const detail = $("#accountConnectionDetail");
+    let response;
+    try {
+      response = await fetch("/api/me");
+    } catch {
+      if (detail) detail.textContent = "Could not load your account. The server did not respond.";
+      return;
+    }
+    if (response.status === 404 || response.status === 401) return;
+    if (!response.ok) {
+      if (detail) detail.textContent = `Could not load your account (${response.status}).`;
+      return;
+    }
+    const account = await response.json();
+    if (heading) heading.textContent = "Signed in";
+    if (detail) detail.textContent = account.email ? `Signed in as ${account.email}.` : "Signed in.";
+    $("#accountConnectionIndicator")?.classList.remove("pending");
+    const email = $("#accountEmail");
+    if (email) email.textContent = account.email ?? "Not recorded";
+    const id = $("#accountId");
+    if (id) id.textContent = account.user_id;
+  }
   updateControls();
+  void loadAccount();
   void (async () => {
     await loadDeviceSwitcher();
     void refreshModelSummary();

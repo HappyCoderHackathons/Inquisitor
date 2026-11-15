@@ -1,3 +1,5 @@
+import { formatAgo, formatDuration, formatScore, formatTime } from "./format";
+
 type CollectionMode = "enrollment" | "monitoring";
 type MouseFeatures = {
   move_count: number;
@@ -351,6 +353,8 @@ function localDeviceId() {
 }
 
 async function refreshCollectionSummary() {
+  // The hosted dashboard has no browser collection panel.
+  if (!collectionStatus) return;
   let response: Response;
   try {
     response = await fetch("/api/feature-windows");
@@ -582,13 +586,22 @@ function showModelSummary(summary: ModelSummary) {
   const device = $("#modelDevice");
   if (device) {
     device.textContent = summary.available
-      ? `${summary.device_name ?? "Unnamed device"}${summary.device_id ? ` (${summary.device_id})` : ""}`
+      ? summary.device_name && summary.device_name.length > 0
+        ? summary.device_name
+        : "Unnamed device"
       : "Not recorded";
   }
   const version = $("#modelVersion");
-  if (version) version.textContent = summary.available ? recorded(summary.model_id) : "Not recorded";
+  if (version) {
+    version.textContent = summary.available
+      ? summary.trained_at
+        ? `Trained ${formatTime(summary.trained_at)}`
+        : recorded(summary.model_id)
+      : "Not recorded";
+    version.title = summary.available ? (summary.model_id ?? "") : "";
+  }
   const trained = $("#modelTrained");
-  if (trained) trained.textContent = summary.available ? recorded(summary.trained_at) : "Not recorded";
+  if (trained) trained.textContent = summary.available ? formatTime(summary.trained_at) : "Not recorded";
   const windows = $("#modelWindows");
   if (windows) windows.textContent = windowText(summary);
   const sessions = $("#modelSessions");
@@ -723,7 +736,9 @@ function renderAgentConnection(snapshot: MonitoringSnapshot) {
   const heading = $("#agentConnectionStatus");
   const detail = $("#agentConnectionDetail");
   const indicator = $("#agentConnectionIndicator");
-  const seen = snapshot.last_seen ? `Last check-in ${snapshot.last_seen}.` : "No check-in has been recorded.";
+  const seen = snapshot.last_seen
+    ? `Last check-in ${formatAgo(snapshot.last_seen)}.`
+    : "No check-in has been recorded.";
   if (heading) {
     heading.textContent =
       snapshot.agent === "active" ? "Connected" : snapshot.agent === "paused" ? "Paused" : "Offline";
@@ -747,7 +762,7 @@ function renderScoreChart(points: HistoryPoint[]) {
   const latest = scored[scored.length - 1];
   if (summary) {
     summary.textContent = latest
-      ? `Latest anomaly score is ${latest.score}. Threshold is ${latest.threshold ?? "not recorded"}.`
+      ? `Latest anomaly score is ${formatScore(latest.score)}. Threshold is ${formatScore(latest.threshold, "not recorded")}.`
       : "No scored windows yet.";
   }
   if (scored.length === 0) return;
@@ -786,6 +801,7 @@ function renderAlerts(alerts: AlertItem[]) {
   const status = $("#alertListStatus");
   if (!list) return;
   list.replaceChildren();
+  status?.classList.remove("error");
   if (status)
     status.textContent =
       alerts.length === 0 ? "No alerts recorded." : `${alerts.length} alert${alerts.length === 1 ? "" : "s"}.`;
@@ -795,12 +811,8 @@ function renderAlerts(alerts: AlertItem[]) {
     const title = document.createElement("strong");
     title.textContent = alert.ongoing ? "Open alert" : "Closed alert";
     const body = document.createElement("p");
-    const started = alert.started_at ?? "time not recorded";
-    const duration = alert.ongoing
-      ? "Ongoing"
-      : alert.duration_seconds === null
-        ? "Duration not recorded"
-        : `${alert.duration_seconds} seconds`;
+    const started = alert.started_at ? `Started ${formatTime(alert.started_at)}` : "Start time not recorded";
+    const duration = alert.ongoing ? "Ongoing" : `Lasted ${formatDuration(alert.duration_seconds)}`;
     const label =
       alert.acknowledgement === "expected"
         ? "Marked expected."
@@ -829,8 +841,8 @@ function renderAlerts(alerts: AlertItem[]) {
         button.className = "button secondary-button";
         button.textContent = choice === "expected" ? "Expected" : "Unexpected";
         button.addEventListener("click", () => {
-          button.disabled = true;
-          void acknowledgeAlert(alert.id, choice);
+          for (const sibling of actions.querySelectorAll("button")) sibling.disabled = true;
+          void acknowledgeAlert(alert.id, choice, actions);
         });
         actions.append(button);
       }
@@ -840,10 +852,10 @@ function renderAlerts(alerts: AlertItem[]) {
   }
 }
 
-async function acknowledgeAlert(id: string, label: "expected" | "unexpected") {
+async function acknowledgeAlert(id: string, label: "expected" | "unexpected", actions: HTMLElement) {
   const status = $("#alertListStatus");
   try {
-    const response = await fetch(`/api/alerts/${id}/acknowledge`, {
+    const response = await fetch(`/api/alerts/${encodeURIComponent(id)}/acknowledge`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ label }),
@@ -851,7 +863,9 @@ async function acknowledgeAlert(id: string, label: "expected" | "unexpected") {
     if (!response.ok) throw new Error(responseError(await response.json().catch(() => null), response.status));
     await refreshMonitoring();
   } catch (error) {
+    for (const button of actions.querySelectorAll("button")) button.disabled = false;
     if (status) {
+      status.classList.add("error");
       status.textContent =
         error instanceof TypeError
           ? "Could not acknowledge that alert. The server did not respond."
@@ -972,7 +986,34 @@ async function loadDeviceSwitcher() {
   if (selectedDeviceId) select.value = selectedDeviceId;
 }
 
+async function loadAccount() {
+  const heading = $("#accountConnectionStatus");
+  const detail = $("#accountConnectionDetail");
+  let response: Response;
+  try {
+    response = await fetch("/api/me");
+  } catch {
+    if (detail) detail.textContent = "Could not load your account. The server did not respond.";
+    return;
+  }
+  // The local prototype has no accounts, so the placeholders stay.
+  if (response.status === 404 || response.status === 401) return;
+  if (!response.ok) {
+    if (detail) detail.textContent = `Could not load your account (${response.status}).`;
+    return;
+  }
+  const account = (await response.json()) as { user_id: string; email: string | null };
+  if (heading) heading.textContent = "Signed in";
+  if (detail) detail.textContent = account.email ? `Signed in as ${account.email}.` : "Signed in.";
+  $("#accountConnectionIndicator")?.classList.remove("pending");
+  const email = $("#accountEmail");
+  if (email) email.textContent = account.email ?? "Not recorded";
+  const id = $("#accountId");
+  if (id) id.textContent = account.user_id;
+}
+
 updateControls();
+void loadAccount();
 void (async () => {
   await loadDeviceSwitcher();
   void refreshModelSummary();

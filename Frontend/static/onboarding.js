@@ -20,14 +20,44 @@
   var agentOffline = true;
   var wizardStep = 0;
   var wizardSteps = ["warmup", "activity", "train"];
+  var offlineNote = "The agent is offline. Stay on Warm-up until it is active or paused.";
+  var agentLabels = {
+    active: "Connected",
+    paused: "Paused",
+    offline: "Offline"
+  };
+  var enrollmentButtons = ["pauseEnrollment", "resumeEnrollment", "discardEnrollment", "finishEnrollment"];
+  var lastStatus = null;
+  var enrollmentBusy = false;
+  function showAgentStatus(agent) {
+    const label = element("agentStatus");
+    const text = `Agent status: ${agentLabels[agent]}`;
+    if (label && label.textContent !== text) label.textContent = text;
+  }
+  function updateEnrollmentButtons() {
+    const status = lastStatus;
+    const collecting = status?.state === "collecting";
+    const allowed = {
+      pauseEnrollment: collecting && status?.collection === "active",
+      resumeEnrollment: collecting && status?.collection !== "active",
+      discardEnrollment: collecting,
+      finishEnrollment: collecting && status?.collection !== "finished" && Boolean(status?.ready_to_train)
+    };
+    for (const id of enrollmentButtons) {
+      const button = element(id);
+      if (button) button.disabled = enrollmentBusy || !allowed[id];
+    }
+  }
   function showWizard(index, announce = false) {
+    const note = element("enrollmentControlStatus");
+    if (!agentOffline && note?.textContent === offlineNote) {
+      note.classList.remove("error");
+      note.textContent = "";
+    }
     if (agentOffline && index > 0) {
-      if (announce) {
-        const note = element("enrollmentControlStatus");
-        if (note) {
-          note.classList.add("error");
-          note.textContent = "The agent is offline. Stay on Warm-up until it is active or paused.";
-        }
+      if (announce && note) {
+        note.classList.add("error");
+        note.textContent = offlineNote;
       }
       index = 0;
     }
@@ -166,6 +196,16 @@
     void authenticate("sign-out", {}, element("signOut"));
   });
   var countdownId = 0;
+  var pollId = 0;
+  var pollTick = null;
+  function schedulePolling(state) {
+    if (state === "ready") {
+      window.clearInterval(pollId);
+      pollId = 0;
+    } else if (!pollId && pollTick) {
+      pollId = window.setInterval(pollTick, 5e3);
+    }
+  }
   var currentDevice = null;
   var deviceBeforeCode = null;
   var waitingForPair = false;
@@ -236,8 +276,9 @@
     const stateLabel = element("onboardingState");
     if (response.status === 404) {
       agentOffline = true;
-      const agent2 = element("agentStatus");
-      if (agent2) agent2.textContent = "Agent status: offline";
+      lastStatus = null;
+      showAgentStatus("offline");
+      updateEnrollmentButtons();
       showWizard(0);
       if (stateLabel?.textContent === "Loading setup status\u2026") {
         stateLabel.classList.remove("error");
@@ -247,6 +288,7 @@
     }
     if (!response.ok) throw new Error(`Could not load setup status (${response.status}).`);
     const status = await response.json();
+    lastStatus = status;
     if (waitingForPair && status.device_id !== deviceBeforeCode) {
       waitingForPair = false;
       window.clearInterval(countdownId);
@@ -298,31 +340,37 @@
       progressLabel.textContent = `${status.counted_windows} of ${required} windows toward training \xB7 ${status.duration_seconds} s recorded`;
     }
     agentOffline = status.agent === "offline";
-    const agent = element("agentStatus");
-    if (agent) agent.textContent = `Agent status: ${status.agent}`;
-    const collecting = status.state === "collecting";
-    const pause = element("pauseEnrollment");
-    const resume = element("resumeEnrollment");
-    const discard = element("discardEnrollment");
-    const finish = element("finishEnrollment");
-    if (pause) pause.disabled = !collecting || status.collection !== "active";
-    if (resume) resume.disabled = !collecting || status.collection === "active";
-    if (discard) discard.disabled = !collecting;
-    if (finish) finish.disabled = !collecting || status.collection === "finished" || !status.ready_to_train;
+    showAgentStatus(status.agent);
+    updateEnrollmentButtons();
     showWizard(agentOffline ? 0 : wizardStep);
+    schedulePolling(status.state);
   }
   element("createCode")?.addEventListener("click", async () => {
     const button = element("createCode");
     const target = element("pairingCode");
+    const status = element("pairingStatus");
+    const fail = (message) => {
+      if (target) target.textContent = "";
+      if (status) {
+        status.classList.add("error");
+        status.textContent = message;
+      }
+    };
     if (button) {
       button.disabled = true;
       button.textContent = "Creating code\u2026";
+    }
+    if (status) {
+      status.classList.remove("error");
+      status.textContent = "";
     }
     try {
       const response = await post("/api/pairing-codes");
       if (!target) return;
       if (!response.ok) {
-        target.textContent = response.status >= 500 ? "Could not create a code. The server is unavailable." : `Could not create a code (${response.status}).`;
+        fail(
+          response.status >= 500 ? "Could not create a code. The server is unavailable." : `Could not create a code (${response.status}).`
+        );
         return;
       }
       const created = await response.json();
@@ -331,7 +379,7 @@
       waitingForPair = true;
       startCountdown(Date.parse(created.expires_at));
     } catch {
-      if (target) target.textContent = "Could not create a code. The server did not respond.";
+      fail("Could not create a code. The server did not respond.");
     } finally {
       if (button) {
         button.disabled = false;
@@ -418,6 +466,16 @@
       status.classList.remove("error");
       status.textContent = "Please wait.";
     }
+    enrollmentBusy = true;
+    updateEnrollmentButtons();
+    try {
+      await sendEnrollmentControl(path, status);
+    } finally {
+      enrollmentBusy = false;
+      updateEnrollmentButtons();
+    }
+  }
+  async function sendEnrollmentControl(path, status) {
     try {
       const response = await post(path);
       if (!response.ok) {
@@ -462,6 +520,7 @@
       "Finish enrollment? The agent stops sending enrollment windows. Training can still use the windows already collected."
     );
   });
+  var modelButtons = ["retrainModel", "activateCandidate", "keepCurrent", "rollbackModel"];
   async function modelAction(path, confirmText, body = {}) {
     if (!window.confirm(confirmText)) return;
     const status = element("modelStatus");
@@ -469,6 +528,8 @@
       status.classList.remove("error");
       status.textContent = "Please wait.";
     }
+    const buttons = modelButtons.map((id) => element(id)).filter((item) => item instanceof HTMLButtonElement);
+    for (const button of buttons) button.disabled = true;
     try {
       const response = await post(path, body);
       if (!response.ok && status) {
@@ -483,6 +544,8 @@
         status.classList.add("error");
         status.textContent = error instanceof Error ? error.message : "Could not update your model. Try again.";
       }
+    } finally {
+      for (const button of buttons) button.disabled = false;
     }
   }
   element("retrainModel")?.addEventListener("click", () => {
@@ -519,7 +582,8 @@
       label.classList.add("error");
       label.textContent = error instanceof Error ? error.message : "Could not load setup status. The server did not respond.";
     });
+    pollTick = tick;
     void tick();
-    window.setInterval(tick, 5e3);
+    schedulePolling(null);
   }
 })();

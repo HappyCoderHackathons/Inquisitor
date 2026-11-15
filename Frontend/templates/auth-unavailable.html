@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="theme-color" content="#09070D">
+    <meta name="description" content="Account sign-in is not set up on this Inquisitor server.">
     <title>Inquisitor | Sign-in unavailable</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png">
@@ -12,14 +13,7 @@
   </head>
   <body>
     <div class="arcade-layout">
-      <header class="arcade-header">
-        <a class="brand" href="/">Inquisitor</a>
-        <nav class="arcade-nav" aria-label="Main navigation">
-          <a href="/">Home</a>
-          <a href="/privacy">Privacy</a>
-          <a href="/onboarding" aria-current="page">Log In</a>
-        </nav>
-      </header>
+      {% include "_header.html" %}
       <main class="intro-main">
         <section class="intro-hero">
           <p class="eyebrow"><span class="eyebrow-line"></span> ACCOUNT</p>

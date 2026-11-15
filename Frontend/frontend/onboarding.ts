@@ -53,15 +53,47 @@ let signingUp = false;
 let agentOffline = true;
 let wizardStep = 0;
 const wizardSteps = ["warmup", "activity", "train"] as const;
+const offlineNote = "The agent is offline. Stay on Warm-up until it is active or paused.";
+const agentLabels: Record<OnboardingStatus["agent"], string> = {
+  active: "Connected",
+  paused: "Paused",
+  offline: "Offline",
+};
+const enrollmentButtons = ["pauseEnrollment", "resumeEnrollment", "discardEnrollment", "finishEnrollment"] as const;
+let lastStatus: OnboardingStatus | null = null;
+let enrollmentBusy = false;
+
+function showAgentStatus(agent: OnboardingStatus["agent"]) {
+  const label = element("agentStatus");
+  const text = `Agent status: ${agentLabels[agent]}`;
+  if (label && label.textContent !== text) label.textContent = text;
+}
+
+function updateEnrollmentButtons() {
+  const status = lastStatus;
+  const collecting = status?.state === "collecting";
+  const allowed: Record<(typeof enrollmentButtons)[number], boolean> = {
+    pauseEnrollment: collecting && status?.collection === "active",
+    resumeEnrollment: collecting && status?.collection !== "active",
+    discardEnrollment: collecting,
+    finishEnrollment: collecting && status?.collection !== "finished" && Boolean(status?.ready_to_train),
+  };
+  for (const id of enrollmentButtons) {
+    const button = element(id) as HTMLButtonElement | null;
+    if (button) button.disabled = enrollmentBusy || !allowed[id];
+  }
+}
 
 function showWizard(index: number, announce = false) {
+  const note = element("enrollmentControlStatus");
+  if (!agentOffline && note?.textContent === offlineNote) {
+    note.classList.remove("error");
+    note.textContent = "";
+  }
   if (agentOffline && index > 0) {
-    if (announce) {
-      const note = element("enrollmentControlStatus");
-      if (note) {
-        note.classList.add("error");
-        note.textContent = "The agent is offline. Stay on Warm-up until it is active or paused.";
-      }
+    if (announce && note) {
+      note.classList.add("error");
+      note.textContent = offlineNote;
     }
     index = 0;
   }
@@ -216,6 +248,18 @@ element("signOut")?.addEventListener("click", () => {
   void authenticate("sign-out", {}, element("signOut") as HTMLButtonElement);
 });
 let countdownId = 0;
+let pollId = 0;
+let pollTick: (() => void) | null = null;
+
+// Poll while setup is in progress. A finished setup only changes on a user action, which refreshes itself.
+function schedulePolling(state: OnboardingStatus["state"] | null) {
+  if (state === "ready") {
+    window.clearInterval(pollId);
+    pollId = 0;
+  } else if (!pollId && pollTick) {
+    pollId = window.setInterval(pollTick, 5000);
+  }
+}
 let currentDevice: string | null = null;
 let deviceBeforeCode: string | null = null;
 let waitingForPair = false;
@@ -291,8 +335,9 @@ async function refresh() {
   const stateLabel = element("onboardingState");
   if (response.status === 404) {
     agentOffline = true;
-    const agent = element("agentStatus");
-    if (agent) agent.textContent = "Agent status: offline";
+    lastStatus = null;
+    showAgentStatus("offline");
+    updateEnrollmentButtons();
     showWizard(0);
     if (stateLabel?.textContent === "Loading setup status…") {
       stateLabel.classList.remove("error");
@@ -302,6 +347,7 @@ async function refresh() {
   }
   if (!response.ok) throw new Error(`Could not load setup status (${response.status}).`);
   const status = (await response.json()) as OnboardingStatus;
+  lastStatus = status;
   // A new onboarding device means the code shown on this page was just redeemed.
   if (waitingForPair && status.device_id !== deviceBeforeCode) {
     waitingForPair = false;
@@ -360,35 +406,40 @@ async function refresh() {
     progressLabel.textContent = `${status.counted_windows} of ${required} windows toward training · ${status.duration_seconds} s recorded`;
   }
   agentOffline = status.agent === "offline";
-  const agent = element("agentStatus");
-  if (agent) agent.textContent = `Agent status: ${status.agent}`;
-  const collecting = status.state === "collecting";
-  const pause = element("pauseEnrollment") as HTMLButtonElement | null;
-  const resume = element("resumeEnrollment") as HTMLButtonElement | null;
-  const discard = element("discardEnrollment") as HTMLButtonElement | null;
-  const finish = element("finishEnrollment") as HTMLButtonElement | null;
-  if (pause) pause.disabled = !collecting || status.collection !== "active";
-  if (resume) resume.disabled = !collecting || status.collection === "active";
-  if (discard) discard.disabled = !collecting;
-  if (finish) finish.disabled = !collecting || status.collection === "finished" || !status.ready_to_train;
+  showAgentStatus(status.agent);
+  updateEnrollmentButtons();
   showWizard(agentOffline ? 0 : wizardStep);
+  schedulePolling(status.state);
 }
 
 element("createCode")?.addEventListener("click", async () => {
   const button = element("createCode") as HTMLButtonElement | null;
   const target = element("pairingCode");
+  const status = element("pairingStatus");
+  const fail = (message: string) => {
+    if (target) target.textContent = "";
+    if (status) {
+      status.classList.add("error");
+      status.textContent = message;
+    }
+  };
   if (button) {
     button.disabled = true;
     button.textContent = "Creating code…";
+  }
+  if (status) {
+    status.classList.remove("error");
+    status.textContent = "";
   }
   try {
     const response = await post("/api/pairing-codes");
     if (!target) return;
     if (!response.ok) {
-      target.textContent =
+      fail(
         response.status >= 500
           ? "Could not create a code. The server is unavailable."
-          : `Could not create a code (${response.status}).`;
+          : `Could not create a code (${response.status}).`,
+      );
       return;
     }
     const created = (await response.json()) as { code: string; expires_at: string };
@@ -397,7 +448,7 @@ element("createCode")?.addEventListener("click", async () => {
     waitingForPair = true;
     startCountdown(Date.parse(created.expires_at));
   } catch {
-    if (target) target.textContent = "Could not create a code. The server did not respond.";
+    fail("Could not create a code. The server did not respond.");
   } finally {
     if (button) {
       button.disabled = false;
@@ -494,6 +545,17 @@ async function enrollmentControl(path: string, confirmText: string | null) {
     status.classList.remove("error");
     status.textContent = "Please wait.";
   }
+  enrollmentBusy = true;
+  updateEnrollmentButtons();
+  try {
+    await sendEnrollmentControl(path, status);
+  } finally {
+    enrollmentBusy = false;
+    updateEnrollmentButtons();
+  }
+}
+
+async function sendEnrollmentControl(path: string, status: HTMLElement | null) {
   try {
     const response = await post(path);
     if (!response.ok) {
@@ -542,6 +604,8 @@ element("finishEnrollment")?.addEventListener("click", () => {
     "Finish enrollment? The agent stops sending enrollment windows. Training can still use the windows already collected.",
   );
 });
+const modelButtons = ["retrainModel", "activateCandidate", "keepCurrent", "rollbackModel"];
+
 async function modelAction(path: string, confirmText: string, body: Record<string, boolean> = {}) {
   if (!window.confirm(confirmText)) return;
   const status = element("modelStatus");
@@ -549,6 +613,8 @@ async function modelAction(path: string, confirmText: string, body: Record<strin
     status.classList.remove("error");
     status.textContent = "Please wait.";
   }
+  const buttons = modelButtons.map((id) => element(id)).filter((item) => item instanceof HTMLButtonElement);
+  for (const button of buttons) button.disabled = true;
   try {
     const response = await post(path, body);
     if (!response.ok && status) {
@@ -566,6 +632,8 @@ async function modelAction(path: string, confirmText: string, body: Record<strin
       status.classList.add("error");
       status.textContent = error instanceof Error ? error.message : "Could not update your model. Try again.";
     }
+  } finally {
+    for (const button of buttons) button.disabled = false;
   }
 }
 
@@ -606,6 +674,7 @@ if (element("gameProgress")) {
       label.textContent =
         error instanceof Error ? error.message : "Could not load setup status. The server did not respond.";
     });
+  pollTick = tick;
   void tick();
-  window.setInterval(tick, 5000);
+  schedulePolling(null);
 }

@@ -42,6 +42,12 @@ SAMPLE_FEATURE_WINDOW = json.loads(
 )["valid"]["enrollment"]
 app = Flask(__name__, static_folder="static", template_folder="templates")
 security.install(app)
+
+
+@app.context_processor
+def navigation_defaults() -> dict[str, bool | str]:
+    # Local mode has no accounts. Hosted mode registers a processor that overrides these.
+    return {"nav_hosted": False, "nav_signed_in": False, "nav_path": request.path}
 account: AccountStore | None = None
 
 

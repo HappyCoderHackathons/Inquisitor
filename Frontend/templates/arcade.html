@@ -4,7 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="theme-color" content="#09070D">
-    <title>Inquisitor Arcade</title>
+    <meta name="description" content="Short calibration games that record keyboard timing on this machine.">
+    <title>Inquisitor | Activities</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <link rel="icon" href="/static/favicon-32.png" sizes="32x32" type="image/png">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
@@ -12,17 +13,7 @@
   </head>
   <body>
     <div class="arcade-layout">
-      <header class="arcade-header">
-        <a class="brand" href="/">Inquisitor</a>
-        <nav class="arcade-nav" aria-label="Main navigation">
-          <a href="/">Home</a>
-          <a href="/privacy">Privacy</a>
-          <a href="#games">Games</a>
-          <a href="#stats">Stats</a>
-          <a href="/onboarding">Setup</a>
-          <a href="/dashboard">Dashboard</a>
-        </nav>
-      </header>
+      {% include "_header.html" %}
 
       <main id="overview" class="arcade-main">
         <h1>Arcade</h1>
@@ -43,11 +34,11 @@
           <article class="panel data-panel">
             <div class="panel-head">
               <h2>Recent games</h2>
-              <button id="clearBtn" class="text-button">Clear</button>
+              <button id="clearBtn" class="text-button">Clear history</button>
             </div>
             <p id="arcadeStatus" class="collection-status" role="status" aria-live="polite">Loading recent games…</p>
             <a class="button primary back-to-setup" href="/onboarding" hidden>Back to setup: ready to train</a>
-            <div class="sample-total"><strong id="sampleCount">0</strong><span>rounds played</span></div>
+            <div class="sample-total"><strong id="sampleCount">0</strong><span id="sampleCountLabel">rounds played</span></div>
             <div id="recentList" class="recent-list"><div class="empty">No games played yet.</div></div>
             <p class="privacy-note">Scores and input timing are saved locally.</p>
           </article>
@@ -63,11 +54,12 @@
         </div>
         <div class="game-meta">
           <span id="gameInstruction">Click the targets</span>
-          <span class="timer"><b id="gameTimer">150</b><small>SEC</small></span>
+          <span class="timer"><span class="visually-hidden">Time left</span><b id="gameTimer">150</b><small>SEC</small></span>
           <span class="score">SCORE <b id="gameScore">0</b></span>
         </div>
         <div id="gameStage" class="game-stage" tabindex="-1"></div>
-        <div class="modal-foot"><span id="gameHint">Esc to close</span><a class="button secondary-button back-to-setup" href="/onboarding" hidden>Back to setup</a><button id="startGame" class="button primary">Start</button></div>
+        <p id="gameStatus" class="action-status" role="status" aria-live="polite"></p>
+        <div class="modal-foot"><span id="gameHint">Esc to close</span><span class="modal-actions"><a class="button secondary-button back-to-setup" href="/onboarding" hidden>Back to setup</a><button id="pauseGame" class="button secondary-button hidden" type="button">Pause</button><button id="startGame" class="button primary" type="button">Start</button></span></div>
       </section>
     </div>
     <script src="/static/app.js"></script>

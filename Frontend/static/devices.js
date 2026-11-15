@@ -1,5 +1,23 @@
 "use strict";
 (() => {
+  // frontend/format.ts
+  var dateTime = new Intl.DateTimeFormat(void 0, { dateStyle: "medium", timeStyle: "short" });
+  function formatTime(iso, fallback = "Not recorded") {
+    if (!iso) return fallback;
+    const value = new Date(iso);
+    return Number.isNaN(value.getTime()) ? fallback : dateTime.format(value);
+  }
+  function formatAgo(iso, fallback = "never") {
+    if (!iso) return fallback;
+    const value = new Date(iso);
+    if (Number.isNaN(value.getTime())) return fallback;
+    const seconds = Math.max(0, (Date.now() - value.getTime()) / 1e3);
+    if (seconds < 60) return "just now";
+    if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+    if (seconds < 86400) return `${Math.round(seconds / 3600)} h ago`;
+    return formatTime(iso);
+  }
+
   // frontend/devices.ts
   var $ = (selector) => document.querySelector(selector);
   function responseError(payload, status) {
@@ -8,22 +26,30 @@
     }
     return `Request failed (${status}).`;
   }
+  function setStatus(message, isError = false) {
+    const status = $("#deviceListStatus");
+    if (!status) return;
+    status.textContent = message;
+    status.classList.toggle("error", isError);
+  }
+  var deviceName = (device) => device.name && device.name.length > 0 ? device.name : "Unnamed device";
   function renderDevices(devices) {
     const list = $("#deviceList");
-    const status = $("#deviceListStatus");
     if (!list) return;
     list.replaceChildren();
-    if (status)
-      status.textContent = devices.length === 0 ? "No paired devices." : `${devices.length} paired device${devices.length === 1 ? "" : "s"}.`;
+    setStatus(
+      devices.length === 0 ? "No paired devices. Pair one from Setup." : `${devices.length} paired device${devices.length === 1 ? "" : "s"}.`
+    );
     for (const device of devices) {
       const item = document.createElement("li");
       item.className = "alert-item";
       const title = document.createElement("strong");
-      title.textContent = device.name && device.name.length > 0 ? device.name : "Unnamed device";
+      title.textContent = deviceName(device);
       const body = document.createElement("p");
-      const seen = device.last_seen ? `Last check-in ${device.last_seen}.` : "No check-in has been recorded.";
-      const presence = device.revoked ? "Revoked. The agent token no longer works." : device.stale ? "No recent check-in." : "Connected.";
+      const seen = device.last_seen ? `Last check-in ${formatAgo(device.last_seen)}.` : "No check-in has been recorded.";
+      const presence = device.revoked ? "Revoked. The agent's connection no longer works." : device.stale ? "Offline." : "Connected.";
       body.textContent = `${seen} ${presence}`;
+      if (device.last_seen) body.title = formatTime(device.last_seen);
       item.append(title, body);
       if (!device.revoked) {
         const actions = document.createElement("div");
@@ -33,8 +59,12 @@
         button.className = "button secondary-button";
         button.textContent = "Revoke";
         button.addEventListener("click", () => {
+          const confirmed = window.confirm(
+            `Revoke ${deviceName(device)}? Its agent stops sending data and needs a new pairing code to reconnect.`
+          );
+          if (!confirmed) return;
           button.disabled = true;
-          void revokeDevice(device.id);
+          void revokeDevice(device, button);
         });
         actions.append(button);
         item.append(actions);
@@ -42,34 +72,38 @@
       list.append(item);
     }
   }
-  async function revokeDevice(id) {
-    const status = $("#deviceListStatus");
+  async function revokeDevice(device, button) {
     try {
-      const response = await fetch(`/api/devices/${encodeURIComponent(id)}/revoke`, {
+      const response = await fetch(`/api/devices/${encodeURIComponent(device.id)}/revoke`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}"
       });
       if (!response.ok) throw new Error(responseError(await response.json().catch(() => null), response.status));
       await refreshDevices();
+      setStatus(`${deviceName(device)} was revoked.`);
     } catch (error) {
-      if (status) {
-        status.textContent = error instanceof TypeError ? "Could not revoke that device. The server did not respond." : error instanceof Error ? error.message : "Could not revoke that device.";
-      }
+      button.disabled = false;
+      setStatus(
+        error instanceof TypeError ? "Could not revoke that device. The server did not respond." : error instanceof Error ? error.message : "Could not revoke that device.",
+        true
+      );
     }
   }
   async function refreshDevices() {
-    const status = $("#deviceListStatus");
     let response;
     try {
       response = await fetch("/api/devices");
     } catch {
-      if (status) status.textContent = "Could not load devices. The server did not respond.";
+      setStatus("Could not load devices. The server did not respond.", true);
       return;
     }
-    if (response.status === 404) return;
+    if (response.status === 404) {
+      setStatus("Device list is not available on this server.");
+      return;
+    }
     if (!response.ok) {
-      if (status) status.textContent = `Could not load devices (${response.status}).`;
+      setStatus(`Could not load devices (${response.status}).`, true);
       return;
     }
     renderDevices((await response.json()).devices ?? []);

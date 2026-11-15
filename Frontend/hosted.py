@@ -50,7 +50,7 @@ from models import (
 from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError, PyMongoError
-from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
 GAMES = ("aim", "tetris", "typing", "arena")
 # Aim is mouse-only, so its windows never reach the 30 presses training needs. It stays playable but optional.
@@ -820,6 +820,16 @@ def register(
                 except ValueError:
                     abort(503, description="Invalid sign-in service response")
         return g.auth_user
+
+    @app.context_processor
+    def navigation() -> dict[str, bool]:
+        # The shared header shows account links only when signed in. A sign-in service outage
+        # must not break public pages, so it shows the signed-out links instead.
+        try:
+            signed_in = signed_in_user() is not None
+        except HTTPException:
+            signed_in = False
+        return {"nav_hosted": True, "nav_signed_in": signed_in}
 
     def current_user() -> str:
         user_id = signed_in_user()

@@ -1,13 +1,563 @@
 "use strict";
 (() => {
+  // frontend/words.ts
+  var WORDS = [
+    "ABILITY",
+    "ABOUT",
+    "ABOVE",
+    "ACCOUNT",
+    "ACROSS",
+    "ACTION",
+    "ACTIVITY",
+    "ACTUALLY",
+    "ADDITION",
+    "AFTER",
+    "AGAIN",
+    "ALMOST",
+    "ALONE",
+    "ALONG",
+    "ALREADY",
+    "ALSO",
+    "ALWAYS",
+    "AMOUNT",
+    "ANALYSIS",
+    "ANSWER",
+    "ANYTHING",
+    "APPEAR",
+    "APPEARED",
+    "APPLIED",
+    "APPROACH",
+    "AREA",
+    "AREAS",
+    "AROUND",
+    "ASKED",
+    "AVERAGE",
+    "AWAY",
+    "BACK",
+    "BASED",
+    "BASIC",
+    "BASIS",
+    "BECAME",
+    "BECAUSE",
+    "BECOME",
+    "BEEN",
+    "BEFORE",
+    "BEGAN",
+    "BEHAVIOR",
+    "BEHIND",
+    "BEING",
+    "BELIEVE",
+    "BELOW",
+    "BEST",
+    "BETTER",
+    "BETWEEN",
+    "BEYOND",
+    "BODY",
+    "BOOK",
+    "BOOKS",
+    "BOTH",
+    "BROUGHT",
+    "BUILDING",
+    "BUSINESS",
+    "CALLED",
+    "CAME",
+    "CAPACITY",
+    "CAPITAL",
+    "CARE",
+    "CARRIED",
+    "CASE",
+    "CASES",
+    "CAUSE",
+    "CENTER",
+    "CENTURY",
+    "CERTAIN",
+    "CHANGE",
+    "CHANGES",
+    "CHAPTER",
+    "CHILD",
+    "CHILDREN",
+    "CHURCH",
+    "CITY",
+    "CLASS",
+    "CLEAR",
+    "CLEARLY",
+    "CLINICAL",
+    "CLOSE",
+    "COLLEGE",
+    "COME",
+    "COMMON",
+    "COMPANY",
+    "COMPLETE",
+    "COMPLEX",
+    "COMPUTER",
+    "CONCEPT",
+    "CONFLICT",
+    "CONSIDER",
+    "CONSTANT",
+    "CONTENT",
+    "CONTINUE",
+    "CONTRAST",
+    "CONTROL",
+    "COUNCIL",
+    "COUNTRY",
+    "COURSE",
+    "COURT",
+    "CREATED",
+    "CRITICAL",
+    "CULTURAL",
+    "CULTURE",
+    "CURRENT",
+    "DATA",
+    "DAYS",
+    "DECISION",
+    "DEFINED",
+    "DEGREE",
+    "DESIGN",
+    "DESIGNED",
+    "DEVELOP",
+    "DIRECT",
+    "DIRECTLY",
+    "DISEASE",
+    "DISTANCE",
+    "DIVISION",
+    "DONE",
+    "DOWN",
+    "DURING",
+    "EARLIER",
+    "EARLY",
+    "ECONOMY",
+    "EFFECT",
+    "EFFECTS",
+    "EITHER",
+    "ELEMENTS",
+    "ENERGY",
+    "ENOUGH",
+    "EVEN",
+    "EVENTS",
+    "EVER",
+    "EVIDENCE",
+    "EXAMPLE",
+    "EXAMPLES",
+    "EXCHANGE",
+    "EXPECTED",
+    "FACE",
+    "FACT",
+    "FACTORS",
+    "FAMILY",
+    "FATHER",
+    "FEATURES",
+    "FEELING",
+    "FIELD",
+    "FIGURE",
+    "FINALLY",
+    "FIND",
+    "FIRST",
+    "FIVE",
+    "FORCE",
+    "FORCES",
+    "FORM",
+    "FORMS",
+    "FOUND",
+    "FOUR",
+    "FREE",
+    "FRIENDS",
+    "FULL",
+    "FUNCTION",
+    "FURTHER",
+    "FUTURE",
+    "GIVE",
+    "GIVEN",
+    "GOING",
+    "GOOD",
+    "GREAT",
+    "GREATER",
+    "GROUND",
+    "GROUP",
+    "GROUPS",
+    "GROWTH",
+    "HAND",
+    "HANDS",
+    "HAPPENED",
+    "HAVE",
+    "HAVING",
+    "HEAD",
+    "HEALTH",
+    "HEART",
+    "HELP",
+    "HERE",
+    "HIGH",
+    "HIGHER",
+    "HISTORY",
+    "HOME",
+    "HOSPITAL",
+    "HOUSE",
+    "HOWEVER",
+    "HUMAN",
+    "INCLUDE",
+    "INCLUDED",
+    "INCOME",
+    "INCREASE",
+    "INDEED",
+    "INDUSTRY",
+    "INSTANCE",
+    "INSTEAD",
+    "INTEREST",
+    "INTERNAL",
+    "INTO",
+    "INVOLVED",
+    "JOURNAL",
+    "JUST",
+    "KNOW",
+    "KNOWN",
+    "LAND",
+    "LANGUAGE",
+    "LARGE",
+    "LAST",
+    "LATER",
+    "LEARNING",
+    "LEAST",
+    "LEFT",
+    "LESS",
+    "LETTER",
+    "LEVEL",
+    "LEVELS",
+    "LIBRARY",
+    "LIFE",
+    "LIGHT",
+    "LIKE",
+    "LIKELY",
+    "LIMITED",
+    "LINE",
+    "LITTLE",
+    "LIVING",
+    "LOCAL",
+    "LONG",
+    "LONGER",
+    "LOOK",
+    "LOOKED",
+    "LOOKING",
+    "LOVE",
+    "LOWER",
+    "MADE",
+    "MAJOR",
+    "MAJORITY",
+    "MAKE",
+    "MAKES",
+    "MAKING",
+    "MANY",
+    "MARKET",
+    "MARRIAGE",
+    "MATERIAL",
+    "MATTER",
+    "MEANING",
+    "MEANS",
+    "MEASURES",
+    "MEETING",
+    "MEMBERS",
+    "METHOD",
+    "METHODS",
+    "MIDDLE",
+    "MILITARY",
+    "MIND",
+    "MINISTER",
+    "MINUTES",
+    "MODEL",
+    "MODERN",
+    "MOMENT",
+    "MONEY",
+    "MORE",
+    "MORNING",
+    "MOST",
+    "MOTHER",
+    "MOVEMENT",
+    "MUCH",
+    "NAME",
+    "NATURAL",
+    "NATURE",
+    "NEED",
+    "NEEDED",
+    "NEEDS",
+    "NEGATIVE",
+    "NEXT",
+    "NIGHT",
+    "NORMAL",
+    "NORTH",
+    "NOTHING",
+    "NUMBER",
+    "NUMBERS",
+    "OBJECT",
+    "OBSERVED",
+    "OBTAINED",
+    "OFFICE",
+    "OFTEN",
+    "ONCE",
+    "ONLY",
+    "OPEN",
+    "ORDER",
+    "ORIGINAL",
+    "OTHER",
+    "OTHERS",
+    "OUTSIDE",
+    "OVER",
+    "PAPER",
+    "PART",
+    "PARTY",
+    "PATIENT",
+    "PATTERN",
+    "PEOPLE",
+    "PERHAPS",
+    "PERIOD",
+    "PERSON",
+    "PERSONAL",
+    "PERSONS",
+    "PHYSICAL",
+    "PLACE",
+    "PLANNING",
+    "POINT",
+    "POINTS",
+    "POLICY",
+    "POLITICS",
+    "POSITION",
+    "POSITIVE",
+    "POSSIBLE",
+    "POWER",
+    "PRACTICE",
+    "PREPARED",
+    "PRESENCE",
+    "PRESENT",
+    "PRESS",
+    "PRESSURE",
+    "PREVIOUS",
+    "PRIMARY",
+    "PRIVATE",
+    "PROBABLY",
+    "PROBLEM",
+    "PROBLEMS",
+    "PROCESS",
+    "PRODUCE",
+    "PRODUCED",
+    "PRODUCT",
+    "PROGRAM",
+    "PROGRAMS",
+    "PROGRESS",
+    "PROJECT",
+    "PROPERTY",
+    "PROVIDE",
+    "PROVIDED",
+    "PROVIDES",
+    "PUBLIC",
+    "PURPOSE",
+    "QUALITY",
+    "QUESTION",
+    "QUITE",
+    "RANGE",
+    "RATE",
+    "RATHER",
+    "REACTION",
+    "READING",
+    "REAL",
+    "REALLY",
+    "REASON",
+    "RECEIVED",
+    "REGION",
+    "RELATED",
+    "RELATION",
+    "RELATIVE",
+    "RELIGION",
+    "REMAINED",
+    "REMEMBER",
+    "REPORT",
+    "REQUIRED",
+    "REQUIRES",
+    "RESEARCH",
+    "RESPECT",
+    "RESPONSE",
+    "RESULT",
+    "RETURN",
+    "RETURNED",
+    "REVIEW",
+    "RIGHT",
+    "ROLE",
+    "ROOM",
+    "SAID",
+    "SAME",
+    "SCHOOL",
+    "SECOND",
+    "SECTION",
+    "SECURITY",
+    "SEEMED",
+    "SEEN",
+    "SELF",
+    "SENSE",
+    "SEPARATE",
+    "SERIES",
+    "SERVICE",
+    "SERVICES",
+    "SEVERAL",
+    "SHORT",
+    "SHOWS",
+    "SIDE",
+    "SIMILAR",
+    "SIMPLE",
+    "SIMPLY",
+    "SINCE",
+    "SINGLE",
+    "SMALL",
+    "SOCIAL",
+    "SOCIETY",
+    "SOLUTION",
+    "SOME",
+    "SOMEONE",
+    "SOURCE",
+    "SOUTH",
+    "SPACE",
+    "SPECIAL",
+    "SPECIES",
+    "SPECIFIC",
+    "STANDARD",
+    "STATE",
+    "STATES",
+    "STILL",
+    "STORY",
+    "STRENGTH",
+    "STRONG",
+    "STUDIES",
+    "STUDY",
+    "SUBJECT",
+    "SUCCESS",
+    "SUCH",
+    "SUPPORT",
+    "SURFACE",
+    "SYSTEM",
+    "TABLE",
+    "TAKE",
+    "TAKEN",
+    "TAKING",
+    "TEACHING",
+    "THAN",
+    "THAT",
+    "THEN",
+    "THEORY",
+    "THERE",
+    "THEY",
+    "THING",
+    "THINGS",
+    "THINK",
+    "THINKING",
+    "THIRD",
+    "THIS",
+    "THOUGH",
+    "THOUGHT",
+    "THREE",
+    "THROUGH",
+    "THUS",
+    "TIME",
+    "TIMES",
+    "TODAY",
+    "TOGETHER",
+    "TOLD",
+    "TOOK",
+    "TOTAL",
+    "TOWARD",
+    "TOWARDS",
+    "TRADE",
+    "TRAINING",
+    "TRUE",
+    "TURNED",
+    "TYPE",
+    "TYPES",
+    "UNDER",
+    "USED",
+    "USING",
+    "USUALLY",
+    "VALUE",
+    "VALUES",
+    "VARIOUS",
+    "VERY",
+    "VIEW",
+    "VOLUME",
+    "WANT",
+    "WANTED",
+    "WATER",
+    "WELL",
+    "WENT",
+    "WERE",
+    "WHAT",
+    "WHEN",
+    "WHERE",
+    "WHOLE",
+    "WITH",
+    "WITHIN",
+    "WITHOUT",
+    "WOMAN",
+    "WOMEN",
+    "WORDS",
+    "WORK",
+    "WORKERS",
+    "WORKING",
+    "WORKS",
+    "WORLD",
+    "WRITING",
+    "WRITTEN",
+    "YEAR",
+    "YEARS",
+    "YOUNG"
+  ];
+
   // frontend/app.ts
   var modes = [
-    { id: "aim", name: "Aim Trainer", description: "Hit as many targets as you can.", keys: "Mouse, Space, or A" },
-    { id: "tetris", name: "Block Stack", description: "Stack blocks and clear rows.", keys: "Arrow keys" },
-    { id: "typing", name: "Word Sprint", description: "Type each word as quickly as you can.", keys: "Keyboard" },
-    { id: "arena", name: "Arena Rush", description: "Move, aim, and shoot.", keys: "WASD, Q/E, Space" }
+    {
+      id: "aim",
+      name: "Aim Trainer",
+      description: "Hit as many targets as you can.",
+      controls: "Click or tap the target",
+      keyboardOnly: false
+    },
+    {
+      id: "tetris",
+      name: "Block Stack",
+      description: "Stack blocks and clear rows.",
+      controls: "Arrows or WASD to move, \u2191 or W to rotate, Space to drop",
+      keyboardOnly: true
+    },
+    {
+      id: "typing",
+      name: "Word Sprint",
+      description: "Type each word as quickly as you can.",
+      controls: "Type each word; correct letters turn green",
+      keyboardOnly: false
+    },
+    {
+      id: "arena",
+      name: "Arena Rush",
+      description: "Move, aim, and shoot.",
+      controls: "Move with WASD or arrows. Aim with the mouse or Q and E. Fire with click, Space, or F",
+      keyboardOnly: true
+    }
   ];
+  var ROUND_SECONDS = 150;
+  var COUNTDOWN_SECONDS = 3;
+  var SPRINT_BREAK_MS = 2e3;
+  var ARENA_W = 720;
+  var ARENA_H = 316;
+  var ARENA_MAX_ENEMIES = 40;
+  var ARENA_TURN_RATE = 3.2;
+  var SCROLL_KEYS = /* @__PURE__ */ new Set([
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    " ",
+    "PageUp",
+    "PageDown",
+    "Home",
+    "End"
+  ]);
   var $ = (s) => document.querySelector(s);
+  var touchOnly = window.matchMedia("(pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches;
+  var playable = (mode) => !(touchOnly && mode.keyboardOnly);
+  var modeOf = (id) => modes.find((mode) => mode.id === id);
+  var plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
   var grid = $("#gameGrid");
   function gamePreview(id) {
     if (id === "aim")
@@ -18,11 +568,20 @@
       return `<div class="game-preview preview-typing" aria-hidden="true"><small>TYPE THIS WORD</small><strong><i>OR</i>BIT</strong><span>3 WORDS CLEARED</span></div>`;
     return `<div class="game-preview preview-arena" aria-hidden="true"><i class="preview-ship"></i><b></b><b></b><span></span></div>`;
   }
-  grid.innerHTML = modes.map(
-    (m) => `<article class="game-card">${gamePreview(m.id)}<div class="card-copy"><h3>${m.name}</h3><p>${m.description}</p><div class="card-bottom"><span>${m.keys}</span><button class="play-button" data-game="${m.id}" aria-label="Play ${m.name}">Play</button></div></div></article>`
-  ).join("");
+  grid.innerHTML = modes.map((m) => {
+    const available = playable(m);
+    const action = available ? `<button class="play-button" data-game="${m.id}" aria-label="Play ${m.name}">Play</button>` : `<button class="play-button" disabled aria-label="${m.name} needs a keyboard">Keyboard needed</button>`;
+    return `<article class="game-card${available ? "" : " unavailable"}">${gamePreview(m.id)}<div class="card-copy"><h3>${m.name}</h3><p>${m.description}</p><div class="card-bottom"><span>${m.controls}</span>${action}</div></div></article>`;
+  }).join("");
   var overlay = $("#gameOverlay");
   var stage = $("#gameStage");
+  var layout = $(".arcade-layout");
+  var scoreEl = $("#gameScore");
+  var timerEl = $("#gameTimer");
+  var startButton = $("#startGame");
+  var pauseButton = $("#pauseGame");
+  var hintEl = $("#gameHint");
+  var gameStatusEl = $("#gameStatus");
   var returnFocus = null;
   function trapGameFocus(event) {
     if (event.key !== "Tab" || overlay.classList.contains("hidden")) return;
@@ -44,16 +603,20 @@
     }
   }
   overlay.addEventListener("keydown", trapGameFocus);
-  var ROUND_SECONDS = 150;
   var active = null;
   var sprint = false;
-  var running = false;
+  var phase = "idle";
   var remaining = ROUND_SECONDS;
   var score = 0;
+  var shownScore = -1;
   var tick = 0;
   var timerId = 0;
   var gravityTimerId = 0;
+  var countdownId = 0;
+  var breakId = 0;
+  var gamepadId = 0;
   var animation = 0;
+  var isRunning = () => phase === "playing";
   var lastInput = 0;
   var intervals = [];
   var holds = [];
@@ -64,13 +627,19 @@
   var board = [];
   var currentPiece = null;
   var wordDeck = [];
+  var best = /* @__PURE__ */ new Map();
+  var sprintQueue = [];
+  var sprintResults = [];
+  var sprintRestart = false;
   var arenaKeys = /* @__PURE__ */ new Set();
   var arenaEnemies = [];
   var arenaBullets = [];
-  var arenaPlayer = { x: 360, y: 158 };
-  var arenaAim = { x: 500, y: 158 };
-  var arenaHull = 1;
+  var arenaPlayer = { x: ARENA_W / 2, y: ARENA_H / 2 };
+  var arenaAim = { x: 500, y: ARENA_H / 2 };
   var arenaCanvas = null;
+  var arenaContext = null;
+  var arenaGrid = null;
+  var arenaBounds = null;
   var arenaLastFrame = 0;
   var arenaLastSpawn = 0;
   var arenaLastShot = 0;
@@ -80,6 +649,11 @@
     { x: -7, y: 0 },
     { x: -10, y: 9 }
   ];
+  var tetrisCells = [];
+  var tetrisShown = new Uint8Array(200);
+  var tetrisFrame = new Uint8Array(200);
+  var tetrisScoreEl = null;
+  var tetrisLinesEl = null;
   var tetrominoes = [
     [[1, 1, 1, 1]],
     [
@@ -107,46 +681,8 @@
       [1, 1, 1]
     ]
   ];
-  var wordGoals = [
-    "ORBIT",
-    "VELVET",
-    "LANTERN",
-    "MEADOW",
-    "COPPER",
-    "DRIFT",
-    "MANGO",
-    "POCKET",
-    "RIPPLE",
-    "COMET",
-    "GARDEN",
-    "SIGNAL",
-    "BRIDGE",
-    "CANDLE",
-    "PLANET",
-    "MARBLE",
-    "RIVER",
-    "CASTLE",
-    "BREEZE",
-    "PILLOW",
-    "CLOUD",
-    "SPARK",
-    "FOREST",
-    "BUTTON",
-    "CIRCLE",
-    "THUNDER",
-    "PEBBLE",
-    "SILVER",
-    "HARBOR",
-    "MELLOW",
-    "JOURNEY",
-    "ORANGE",
-    "SPRING",
-    "ANCHOR",
-    "STREAM",
-    "GALAXY"
-  ];
   function shuffleWords(previousDeck = []) {
-    const shuffled = [...wordGoals];
+    const shuffled = [...WORDS];
     for (let index = shuffled.length - 1; index > 0; index--) {
       const other = Math.floor(Math.random() * (index + 1));
       [shuffled[index], shuffled[other]] = [shuffled[other], shuffled[index]];
@@ -158,12 +694,37 @@
     return shuffled;
   }
   wordDeck = shuffleWords();
+  function setScore(value) {
+    score = value;
+    if (score === shownScore) return;
+    shownScore = score;
+    scoreEl.textContent = String(score);
+    if (tetrisScoreEl) tetrisScoreEl.textContent = String(score);
+  }
+  function clearTimers() {
+    clearInterval(timerId);
+    clearInterval(gravityTimerId);
+    clearInterval(countdownId);
+    clearTimeout(breakId);
+    cancelAnimationFrame(animation);
+  }
+  function setDialogOpen(open) {
+    overlay.classList.toggle("hidden", !open);
+    overlay.setAttribute("aria-hidden", String(!open));
+    document.body.classList.toggle("game-open", open);
+    layout.inert = open;
+    clearInterval(gamepadId);
+    if (open) gamepadId = window.setInterval(pollGamepad, 100);
+  }
   function openGame(id, isSprint = false) {
+    clearTimers();
     active = id;
     sprint = isSprint;
-    running = false;
+    sprintRestart = false;
+    phase = "idle";
     remaining = ROUND_SECONDS;
-    score = 0;
+    shownScore = -1;
+    setScore(0);
     intervals = [];
     holds = [];
     down.clear();
@@ -173,39 +734,40 @@
     board = [];
     currentPiece = null;
     arenaKeys.clear();
-    const m = modes.find((x) => x.id === id);
-    $("#modalMode").textContent = isSprint ? "Sprint" : "";
+    const m = modeOf(id);
+    const position = sprintResults.length + 1;
+    const total = sprintResults.length + sprintQueue.length + 1;
+    $("#modalMode").textContent = isSprint ? `Sprint \xB7 Game ${position} of ${total}` : "";
     $("#modalTitle").textContent = m.name;
-    $("#gameTimer").textContent = String(ROUND_SECONDS);
-    $("#gameScore").textContent = "0";
-    $("#gameInstruction").textContent = instruction(id);
-    $("#gameHint").textContent = isSprint ? "Next game starts automatically \xB7 Esc to close" : "Esc to close";
-    $("#startGame").classList.remove("hidden");
-    $("#startGame").textContent = "Start";
+    timerEl.textContent = String(ROUND_SECONDS);
+    $("#gameInstruction").textContent = m.controls;
+    const pauseHint = id === "typing" ? "" : " \xB7 P to pause";
+    hintEl.textContent = isSprint ? `The next game starts automatically \xB7 Esc to quit${pauseHint}` : `Esc to close${pauseHint}`;
+    setGameStatus("");
+    startButton.textContent = "Start";
+    startButton.classList.remove("hidden");
+    pauseButton.classList.add("hidden");
     stage.className = `game-stage stage-${id}`;
     renderStage();
-    overlay.classList.remove("hidden");
-    overlay.setAttribute("aria-hidden", "false");
     const current = document.activeElement;
     if (current instanceof HTMLElement && !overlay.contains(current)) returnFocus = current;
-    $("#startGame").focus();
-  }
-  function instruction(id) {
-    return {
-      aim: "Click, tap, or press Space or A",
-      tetris: "\u2190 \u2192 move \xB7 \u2193 soft drop \xB7 \u2191 rotate \xB7 SPACE hard drop",
-      typing: "Type each word; correct letters turn green",
-      arena: "Move with WASD or arrows. Aim with the mouse or Q and E. Fire with click, Space, or F"
-    }[id];
+    setDialogOpen(true);
+    startButton.focus();
   }
   var onboardingActive = false;
   var onboardingQueue = Promise.resolve();
   var serverWarning = null;
   function setArcadeStatus(message, isError = false) {
     const status = document.getElementById("arcadeStatus");
-    if (!status) return;
-    status.textContent = message;
-    status.classList.toggle("error", isError);
+    if (status) {
+      status.textContent = message;
+      status.classList.toggle("error", isError);
+    }
+    if (isError) setGameStatus(message, true);
+  }
+  function setGameStatus(message, isError = false) {
+    gameStatusEl.textContent = message;
+    gameStatusEl.classList.toggle("error", isError);
   }
   function reportRound(path, body = {}) {
     if (!onboardingActive) return;
@@ -238,14 +800,11 @@
   }
   function start() {
     if (!active) return;
-    reportRound("/api/onboarding/rounds", { game: active });
-    clearInterval(timerId);
-    clearInterval(gravityTimerId);
-    cancelAnimationFrame(animation);
-    running = true;
+    clearTimers();
+    phase = "countdown";
     remaining = ROUND_SECONDS;
-    score = 0;
-    tick = Date.now();
+    shownScore = -1;
+    setScore(0);
     intervals = [];
     holds = [];
     lastInput = 0;
@@ -254,75 +813,204 @@
     linesCleared = 0;
     arenaKeys.clear();
     if (active === "typing") wordDeck = shuffleWords(wordDeck);
-    $("#gameTimer").textContent = String(ROUND_SECONDS);
-    $("#gameScore").textContent = "0";
-    $("#startGame").classList.add("hidden");
-    stage.focus();
-    if (active === "tetris") {
-      initBoard();
-      gravityTimerId = window.setInterval(stepTetris, 650);
-    }
+    if (active === "tetris") initBoard();
     if (active === "arena") {
-      arenaPlayer = { x: 360, y: 158 };
-      arenaAim = { x: 500, y: 158 };
-      arenaHull = 1;
+      arenaPlayer.x = ARENA_W / 2;
+      arenaPlayer.y = ARENA_H / 2;
+      arenaAim.x = arenaPlayer.x + 140;
+      arenaAim.y = arenaPlayer.y;
       arenaEnemies = [];
       arenaBullets = [];
-      arenaLastFrame = 0;
       arenaLastSpawn = 0;
       arenaLastShot = 0;
     }
+    timerEl.textContent = String(ROUND_SECONDS);
+    setGameStatus("");
+    startButton.classList.add("hidden");
+    pauseButton.classList.add("hidden");
     renderStage();
-    if (active === "aim") spawnTarget();
-    timerId = window.setInterval(() => {
-      if (!running) return;
-      remaining--;
-      $("#gameTimer").textContent = String(remaining);
-      if (remaining <= 0) finish();
+    stage.focus();
+    let count = COUNTDOWN_SECONDS;
+    showBanner(String(count), "Get ready");
+    countdownId = window.setInterval(() => {
+      count--;
+      if (count > 0) showBanner(String(count), "Get ready");
+      else {
+        clearInterval(countdownId);
+        begin();
+      }
     }, 1e3);
-    if (active === "arena") animation = requestAnimationFrame(updateArena);
   }
-  function finish() {
-    running = false;
-    clearInterval(timerId);
-    clearInterval(gravityTimerId);
-    cancelAnimationFrame(animation);
-    arenaKeys.clear();
-    saveSample();
-    if (sprint && active) {
-      const next = modes[(modes.findIndex((x) => x.id === active) + 1) % modes.length].id;
-      openGame(next, true);
-      start();
-    } else {
-      $("#gameHint").textContent = `Round complete \xB7 ${score} points`;
-      $("#startGame").textContent = "Play again";
-      $("#startGame").classList.remove("hidden");
-      refreshSummary();
+  function begin() {
+    if (!active) return;
+    hideBanner();
+    phase = "playing";
+    tick = Date.now();
+    reportRound("/api/onboarding/rounds", { game: active });
+    pauseButton.textContent = "Pause";
+    pauseButton.classList.remove("hidden");
+    if (active === "aim") {
+      $("#target")?.classList.remove("hidden");
+      spawnTarget();
+    }
+    if (active === "typing") {
+      showWord();
+      $("#typingInput")?.focus();
+    } else stage.focus();
+    if (active === "tetris") renderTetris();
+    timerId = window.setInterval(() => {
+      if (!isRunning()) return;
+      remaining--;
+      timerEl.textContent = String(remaining);
+      if (remaining <= 0) endRound("Time's up");
+    }, 1e3);
+    resumeLoops();
+  }
+  function resumeLoops() {
+    if (active === "tetris") gravityTimerId = window.setInterval(stepTetris, 650);
+    if (active === "arena") {
+      arenaBounds = arenaCanvas?.getBoundingClientRect() ?? null;
+      arenaLastFrame = 0;
+      if (!arenaLastSpawn) arenaLastSpawn = performance.now();
+      animation = requestAnimationFrame(updateArena);
     }
   }
-  function close() {
-    if (running) reportRound("/api/onboarding/rounds/current/cancel");
-    running = false;
-    clearInterval(timerId);
+  function pause() {
+    if (phase !== "playing") return;
+    phase = "paused";
     clearInterval(gravityTimerId);
     cancelAnimationFrame(animation);
     arenaKeys.clear();
-    overlay.classList.add("hidden");
-    overlay.setAttribute("aria-hidden", "true");
+    pauseButton.textContent = "Resume";
+    showBanner("Paused", "Press P or Resume to continue");
+  }
+  function resume() {
+    if (phase !== "paused") return;
+    phase = "playing";
+    hideBanner();
+    pauseButton.textContent = "Pause";
+    if (active === "typing") $("#typingInput")?.focus();
+    else stage.focus();
+    resumeLoops();
+  }
+  var togglePause = () => phase === "paused" ? resume() : pause();
+  function showBanner(title, detail) {
+    let banner = stage.querySelector(".stage-banner");
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.className = "stage-banner";
+      banner.setAttribute("role", "status");
+      stage.append(banner);
+    }
+    banner.innerHTML = `<strong></strong><span></span>`;
+    banner.querySelector("strong").textContent = title;
+    banner.querySelector("span").textContent = detail;
+  }
+  function hideBanner() {
+    stage.querySelector(".stage-banner")?.remove();
+  }
+  function endRound(reason) {
+    if (phase !== "playing" && phase !== "paused") return;
+    phase = "done";
+    clearTimers();
+    arenaKeys.clear();
+    pauseButton.classList.add("hidden");
+    saveSample();
+    if (active) best.set(active, Math.max(best.get(active) ?? 0, score));
+    if (sprint && active) {
+      sprintResults.push({ id: active, score });
+      const next = sprintQueue.shift();
+      if (next) {
+        showBanner(`${reason} \xB7 ${plural(score, "point")}`, `Next: ${modeOf(next).name}`);
+        breakId = window.setTimeout(() => {
+          openGame(next, true);
+          start();
+        }, SPRINT_BREAK_MS);
+        return;
+      }
+      showSprintSummary();
+      return;
+    }
+    showResult(reason);
+  }
+  function roundDetail() {
+    if (active === "typing") return plural(wordIndex, "word") + " cleared";
+    if (active === "tetris") return plural(linesCleared, "line") + " cleared";
+    return "";
+  }
+  function showResult(reason) {
+    const detail = roundDetail();
+    const bestScore = active ? best.get(active) ?? score : score;
+    showBanner(
+      `${reason} \xB7 ${plural(score, "point")}`,
+      [detail, `Best this session: ${plural(bestScore, "point")}`].filter(Boolean).join(" \xB7 ")
+    );
+    hintEl.textContent = "Esc to close";
+    startButton.textContent = "Play again";
+    startButton.classList.remove("hidden");
+    startButton.focus();
+  }
+  function showSprintSummary() {
+    const total = sprintResults.reduce((sum, result) => sum + result.score, 0);
+    showBanner(
+      `Sprint complete \xB7 ${plural(total, "point")}`,
+      sprintResults.map((result) => `${modeOf(result.id).name} ${result.score}`).join(" \xB7 ")
+    );
+    $("#modalMode").textContent = "Sprint";
+    hintEl.textContent = "Esc to close";
+    startButton.textContent = "Play sprint again";
+    startButton.classList.remove("hidden");
+    startButton.focus();
+    sprint = false;
+    sprintQueue = [];
+    sprintRestart = true;
+  }
+  function startSprint() {
+    const order = modes.filter(playable).map((mode) => mode.id);
+    sprintResults = [];
+    sprintQueue = order.slice(1);
+    sprintRestart = false;
+    openGame(order[0], true);
+  }
+  function close() {
+    if (phase === "playing" || phase === "paused" || phase === "countdown") {
+      if (!window.confirm("Quit this round? It will not be saved.")) return;
+      if (phase !== "countdown") reportRound("/api/onboarding/rounds/current/cancel");
+    }
+    phase = "idle";
+    clearTimers();
+    arenaKeys.clear();
+    setDialogOpen(false);
     active = null;
     sprint = false;
+    sprintQueue = [];
+    sprintResults = [];
     const restore = returnFocus;
     returnFocus = null;
-    refreshSummary();
     restore?.focus();
   }
-  $("#gameGrid").addEventListener("click", (e) => {
+  grid.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-game]");
-    if (btn) openGame(btn.dataset.game);
+    if (btn) {
+      sprintResults = [];
+      sprintQueue = [];
+      openGame(btn.dataset.game);
+    }
   });
-  $("#sprintBtn").addEventListener("click", () => openGame("aim", true));
+  $("#sprintBtn").addEventListener("click", startSprint);
   $("#closeGame").addEventListener("click", close);
-  $("#startGame").addEventListener("click", () => running ? start() : start());
+  startButton.addEventListener("click", () => {
+    if (sprintRestart) startSprint();
+    start();
+  });
+  pauseButton.addEventListener("click", togglePause);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) pause();
+  });
+  window.addEventListener("blur", pause);
+  window.addEventListener("resize", () => {
+    arenaBounds = arenaCanvas?.getBoundingClientRect() ?? null;
+  });
   function recordInput(source) {
     const now = performance.now();
     if (lastInput) intervals.push(Math.min(now - lastInput, 3e3));
@@ -330,21 +1018,26 @@
     inputCounts[source]++;
   }
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !overlay.classList.contains("hidden")) {
+    if (overlay.classList.contains("hidden") || !active) return;
+    if (e.key === "Escape") {
       close();
       return;
     }
-    if (!overlay.classList.contains("hidden") && running && active) {
-      const key = e.key.toLowerCase();
-      if (active === "arena" && ["arrowleft", "arrowright", "arrowup", "arrowdown", "a", "d", "w", "s"].includes(key))
-        arenaKeys.add(key);
-      if (active === "arena" && (key === "q" || key === "e")) aimArena(key === "q" ? -0.2 : 0.2);
-      if (e.repeat) return;
-      recordInput("keyboard");
-      down.set(e.code, performance.now());
-      handleAction(e.key);
-      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) e.preventDefault();
+    if (phase !== "idle" && phase !== "done" && SCROLL_KEYS.has(e.key)) e.preventDefault();
+    if ((e.key === "p" || e.key === "P") && !e.repeat && (phase === "playing" || phase === "paused")) {
+      if (active !== "typing" || phase === "paused") {
+        togglePause();
+        return;
+      }
     }
+    if (!isRunning()) return;
+    const key = e.key.toLowerCase();
+    if (active === "arena" && ["arrowleft", "arrowright", "arrowup", "arrowdown", "a", "d", "w", "s", "q", "e"].includes(key))
+      arenaKeys.add(key);
+    if (e.repeat) return;
+    recordInput("keyboard");
+    down.set(e.code, performance.now());
+    handleAction(e.key);
   });
   window.addEventListener("keyup", (e) => {
     arenaKeys.delete(e.key.toLowerCase());
@@ -356,10 +1049,6 @@
   });
   function handleAction(key) {
     if (!active) return;
-    if (active === "aim") {
-      const focusedControl = document.activeElement instanceof HTMLButtonElement;
-      if (key === " " || key.toLowerCase() === "a" || key === "Enter" && !focusedControl) hitTarget();
-    }
     if (active === "arena" && (key === " " || key.toLowerCase() === "f")) fireArena();
     if (active === "tetris") {
       if (["ArrowLeft", "a", "A"].includes(key)) moveTetris(-1);
@@ -371,98 +1060,106 @@
   }
   function renderStage() {
     if (!active) return;
+    tetrisCells = [];
+    tetrisScoreEl = tetrisLinesEl = null;
+    arenaCanvas = arenaContext = null;
     if (active === "aim") {
-      stage.innerHTML = `<div class="aim-field"><div class="aim-cross">+</div><div class="target" id="target" role="button" tabindex="0" aria-label="Hit the target"></div><div class="aim-caption">SPACE, A, OR CLICK</div></div>`;
-      $("#target")?.addEventListener("click", hitTarget);
-    }
-    if (active === "typing") {
-      const word = wordDeck[wordIndex];
-      stage.innerHTML = `<div class="typing-game"><div class="word-label">TYPE THIS WORD</div><div class="word-prompt">${word.split("").map((letter) => `<span>${letter}</span>`).join(
-        ""
-      )}</div><div class="type-progress">${wordIndex} WORDS CLEARED <span>\xB7</span> CORRECT LETTERS TURN GREEN</div><input class="typing-input" id="typingInput" maxlength="${word.length}" autocomplete="off" autocapitalize="characters" placeholder="start typing here\u2026" aria-label="Type the prompt" /></div>`;
-      const input = $("#typingInput");
-      const letters = stage.querySelectorAll(".word-prompt span");
-      let completionPending = false;
-      const updateLetters = () => {
-        if (!running) return;
-        const typed = input.value.toUpperCase();
-        letters.forEach((letter, index) => {
-          const correct = index < typed.length && typed[index] === word[index];
-          letter.className = correct ? "correct-letter" : index < typed.length ? "incorrect-letter" : "";
-        });
-        letters[Math.min(input.value.length, word.length - 1)]?.classList.add("current-letter");
-        if (typed === word && !completionPending) {
-          completionPending = true;
-          window.setTimeout(() => {
-            if (running && active === "typing" && input.isConnected && input.value.toUpperCase() === word) {
-              score += 10;
-              wordIndex++;
-              if (wordIndex === wordDeck.length) {
-                wordDeck = shuffleWords(wordDeck);
-                wordIndex = 0;
-              }
-              renderStage();
-            }
-          }, 250);
-        }
-      };
-      input.addEventListener("input", updateLetters);
-      input.focus();
-      updateLetters();
-    }
-    if (active === "arena") {
-      stage.innerHTML = `<div class="arena-game"><div class="arena-hud"><span>WASD / ARROWS MOVE</span><span>Q / E AIM \xB7 SPACE OR F FIRE</span><b id="arenaHull">HULL 1</b></div><canvas class="arena-canvas" id="arenaCanvas" width="720" height="316" tabindex="0" aria-label="Arena game field"></canvas></div>`;
-      arenaCanvas = $("#arenaCanvas");
-      const updateAim = (event) => {
-        if (!arenaCanvas) return;
-        const bounds = arenaCanvas.getBoundingClientRect();
-        arenaAim = {
-          x: (event.clientX - bounds.left) * arenaCanvas.width / bounds.width,
-          y: (event.clientY - bounds.top) * arenaCanvas.height / bounds.height
-        };
-      };
-      arenaCanvas.addEventListener("pointermove", updateAim);
-      arenaCanvas.addEventListener("pointerdown", (event) => {
-        if (event.pointerType === "mouse" && event.button === 0) {
-          updateAim(event);
-          fireArena();
-          event.preventDefault();
-        }
+      stage.innerHTML = `<div class="aim-field"><div class="aim-cross" aria-hidden="true"></div><div class="target hidden" id="target" aria-label="Target"></div><div class="aim-caption">${modeOf("aim").controls}</div></div>`;
+      $("#target").addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        hitTarget();
       });
     }
-    if (active === "tetris") renderTetris();
+    if (active === "typing") renderTyping();
+    if (active === "arena") renderArena();
+    if (active === "tetris") {
+      stage.innerHTML = `<div class="tetris-wrap"><div class="tetris-board">${'<i class="cell"></i>'.repeat(200)}</div><div class="tetris-aside"><span>SCORE</span><b id="tetrisScore">0</b><hr><span>LINES</span><b id="tetrisLines">0</b><small>\u2190 \u2192 or A D move<br>\u2193 or S soft drop<br>\u2191 or W rotate<br>Space hard drop</small></div></div>`;
+      tetrisCells = Array.from(stage.querySelectorAll(".tetris-board .cell"));
+      tetrisShown.fill(0);
+      tetrisScoreEl = $("#tetrisScore");
+      tetrisLinesEl = $("#tetrisLines");
+      tetrisScoreEl.textContent = String(score);
+      tetrisLinesEl.textContent = String(linesCleared);
+      renderTetris();
+    }
   }
   function spawnTarget() {
     const target = $("#target");
     if (!target) return;
-    target.style.left = `${8 + Math.random() * 84}%`;
-    target.style.top = `${10 + Math.random() * 76}%`;
-    target.style.transform = `translate(-50%, -50%) scale(${1.15 + Math.random() * 0.45})`;
+    const field = target.parentElement;
+    const scale = 1.15 + Math.random() * 0.45;
+    const radius = target.offsetWidth * scale / 2 + 4;
+    const width = field.clientWidth, height = field.clientHeight;
+    const x = radius + Math.random() * Math.max(0, width - 2 * radius);
+    const y = radius + Math.random() * Math.max(0, height - 2 * radius - 28);
+    target.style.left = `${x}px`;
+    target.style.top = `${y}px`;
+    target.style.transform = `translate(-50%, -50%) scale(${scale})`;
   }
   function hitTarget() {
-    if (!running || active !== "aim") return;
-    score += 10;
-    $("#gameScore").textContent = String(score);
+    if (!isRunning() || active !== "aim") return;
+    setScore(score + 10);
     spawnTarget();
+  }
+  function renderTyping() {
+    stage.innerHTML = `<div class="typing-game"><div class="word-label">TYPE THIS WORD</div><div class="word-prompt" id="wordPrompt"></div><div class="type-progress" id="typeProgress"></div><input class="typing-input" id="typingInput" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Start typing here\u2026" aria-label="Type the word shown" /></div>`;
+    const input = $("#typingInput");
+    let completionPending = false;
+    input.addEventListener("input", () => {
+      const word = wordDeck[wordIndex];
+      const typed = input.value.toUpperCase();
+      const letters = stage.querySelectorAll("#wordPrompt span");
+      letters.forEach((letter, index) => {
+        letter.className = index < typed.length ? typed[index] === word[index] ? "correct-letter" : "incorrect-letter" : "";
+      });
+      letters[Math.min(typed.length, word.length - 1)]?.classList.add("current-letter");
+      if (!isRunning() || typed !== word || completionPending) return;
+      completionPending = true;
+      window.setTimeout(() => {
+        completionPending = false;
+        if (!isRunning() || active !== "typing" || input.value.toUpperCase() !== word) return;
+        setScore(score + 10);
+        wordIndex++;
+        if (wordIndex === wordDeck.length) {
+          wordDeck = shuffleWords(wordDeck);
+          wordIndex = 0;
+        }
+        showWord();
+      }, 250);
+    });
+    showWord();
+  }
+  function showWord() {
+    const word = wordDeck[wordIndex];
+    const prompt = $("#wordPrompt");
+    const input = $("#typingInput");
+    if (!prompt || !input) return;
+    prompt.innerHTML = word.split("").map((letter) => `<span>${letter}</span>`).join("");
+    prompt.querySelector("span")?.classList.add("current-letter");
+    $("#typeProgress").textContent = `${plural(wordIndex, "word").toUpperCase()} CLEARED`;
+    input.maxLength = word.length;
+    input.value = "";
   }
   function initBoard() {
     board = Array.from({ length: 20 }, () => Array(10).fill(0));
     spawnPiece();
   }
   function canPlace(shape, x, y) {
-    return shape.every(
-      (row, rowIndex) => row.every((cell, colIndex) => {
-        if (!cell) return true;
+    for (let rowIndex = 0; rowIndex < shape.length; rowIndex++) {
+      const row = shape[rowIndex];
+      for (let colIndex = 0; colIndex < row.length; colIndex++) {
+        if (!row[colIndex]) continue;
         const nextX = x + colIndex, nextY = y + rowIndex;
-        return nextX >= 0 && nextX < 10 && nextY < 20 && (nextY < 0 || !board[nextY][nextX]);
-      })
-    );
+        if (nextX < 0 || nextX >= 10 || nextY >= 20 || nextY >= 0 && board[nextY][nextX]) return false;
+      }
+    }
+    return true;
   }
   function spawnPiece() {
     const type = Math.floor(Math.random() * tetrominoes.length) + 1;
     const shape = tetrominoes[type - 1].map((row) => [...row]);
     currentPiece = { type, shape, x: Math.floor((10 - shape[0].length) / 2), y: 0 };
-    if (!canPlace(shape, currentPiece.x, currentPiece.y)) endTetris();
+    if (!canPlace(shape, currentPiece.x, currentPiece.y)) endRound("Stack topped out");
   }
   function moveTetris(dx) {
     if (currentPiece && canPlace(currentPiece.shape, currentPiece.x + dx, currentPiece.y)) {
@@ -483,26 +1180,28 @@
     }
   }
   function stepTetris() {
-    if (!running || active !== "tetris" || !currentPiece) return;
+    if (!isRunning() || active !== "tetris" || !currentPiece) return;
     if (canPlace(currentPiece.shape, currentPiece.x, currentPiece.y + 1)) currentPiece.y++;
     else lockPiece();
     renderTetris();
   }
   function hardDropTetris() {
     if (!currentPiece) return;
+    let dropped = 0;
     while (canPlace(currentPiece.shape, currentPiece.x, currentPiece.y + 1)) {
       currentPiece.y++;
-      score += 2;
+      dropped++;
     }
+    setScore(score + dropped * 2);
     lockPiece();
-    $("#gameScore").textContent = String(score);
     renderTetris();
   }
   function lockPiece() {
     if (!currentPiece) return;
-    currentPiece.shape.forEach(
+    const piece = currentPiece;
+    piece.shape.forEach(
       (row, rowIndex) => row.forEach((cell, colIndex) => {
-        if (cell) board[currentPiece.y + rowIndex][currentPiece.x + colIndex] = currentPiece.type;
+        if (cell) board[piece.y + rowIndex][piece.x + colIndex] = piece.type;
       })
     );
     const remainingRows = board.filter((row) => row.some((cell) => !cell));
@@ -510,50 +1209,93 @@
     if (cleared) {
       board = Array.from({ length: cleared }, () => Array(10).fill(0)).concat(remainingRows);
       linesCleared += cleared;
-      score += [0, 100, 300, 500, 800][cleared] ?? cleared * 200;
-      $("#gameScore").textContent = String(score);
+      if (tetrisLinesEl) tetrisLinesEl.textContent = String(linesCleared);
+      setScore(score + ([0, 100, 300, 500, 800][cleared] ?? cleared * 200));
     }
     spawnPiece();
   }
-  function endTetris() {
-    if (!running) return;
-    if (sprint) {
-      finish();
-      return;
-    }
-    running = false;
-    clearInterval(timerId);
-    clearInterval(gravityTimerId);
-    cancelAnimationFrame(animation);
-    saveSample();
-    refreshSummary();
-    $("#gameHint").textContent = `Stack topped out \xB7 ${score} points`;
-    $("#startGame").textContent = "Play again";
-    $("#startGame").classList.remove("hidden");
-  }
   function renderTetris() {
-    if (active !== "tetris") return;
-    if (!board.length) initBoard();
-    const visible = board.map((row) => [...row]);
-    currentPiece?.shape.forEach(
-      (row, rowIndex) => row.forEach((cell, colIndex) => {
-        if (cell) visible[currentPiece.y + rowIndex][currentPiece.x + colIndex] = currentPiece.type;
-      })
-    );
-    stage.innerHTML = `<div class="tetris-wrap"><div class="tetris-board">${visible.flat().map((value) => `<i class="cell${value ? ` color-${value}` : ""}"></i>`).join(
-      ""
-    )}</div><div class="tetris-aside"><b>${score}</b><span>POINTS</span><hr><span>LINES</span><b>${linesCleared}</b><small>\u2190 \u2192 MOVE<br>\u2193 SOFT DROP<br>\u2191 ROTATE<br>SPACE HARD DROP</small></div></div>`;
+    if (active !== "tetris" || tetrisCells.length !== 200) return;
+    for (let row = 0; row < 20; row++) {
+      const source = board[row];
+      for (let col = 0; col < 10; col++) tetrisFrame[row * 10 + col] = source ? source[col] : 0;
+    }
+    const piece = currentPiece;
+    if (piece && phase !== "idle") {
+      for (let rowIndex = 0; rowIndex < piece.shape.length; rowIndex++) {
+        const y = piece.y + rowIndex;
+        if (y < 0 || y >= 20) continue;
+        for (let colIndex = 0; colIndex < piece.shape[rowIndex].length; colIndex++)
+          if (piece.shape[rowIndex][colIndex]) tetrisFrame[y * 10 + piece.x + colIndex] = piece.type;
+      }
+    }
+    for (let index = 0; index < 200; index++) {
+      const value = tetrisFrame[index];
+      if (value === tetrisShown[index]) continue;
+      tetrisShown[index] = value;
+      tetrisCells[index].className = value ? `cell color-${value}` : "cell";
+    }
+  }
+  function renderArena() {
+    stage.innerHTML = `<div class="arena-game"><div class="arena-hud"><span>MOVE: WASD OR ARROWS</span><span>AIM: MOUSE OR Q / E \xB7 FIRE: CLICK, SPACE, OR F</span></div><canvas class="arena-canvas" id="arenaCanvas" aria-label="Arena game field"></canvas></div>`;
+    const canvas = $("#arenaCanvas");
+    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    canvas.width = Math.round(ARENA_W * dpr);
+    canvas.height = Math.round(ARENA_H * dpr);
+    arenaCanvas = canvas;
+    arenaContext = canvas.getContext("2d");
+    arenaContext?.setTransform(dpr, 0, 0, dpr, 0, 0);
+    arenaGrid = buildArenaGrid(dpr);
+    const updateAim = (event) => {
+      const bounds = arenaBounds ?? canvas.getBoundingClientRect();
+      arenaAim.x = (event.clientX - bounds.left) * ARENA_W / bounds.width;
+      arenaAim.y = (event.clientY - bounds.top) * ARENA_H / bounds.height;
+    };
+    canvas.addEventListener("pointerenter", () => arenaBounds = canvas.getBoundingClientRect());
+    canvas.addEventListener("pointermove", updateAim);
+    canvas.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse" && event.button === 0) {
+        updateAim(event);
+        fireArena();
+        event.preventDefault();
+      }
+    });
+    drawArena();
+  }
+  function buildArenaGrid(dpr) {
+    const gridCanvas = document.createElement("canvas");
+    gridCanvas.width = Math.round(ARENA_W * dpr);
+    gridCanvas.height = Math.round(ARENA_H * dpr);
+    const context = gridCanvas.getContext("2d");
+    if (!context) return null;
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.fillStyle = "#09070D";
+    context.fillRect(0, 0, ARENA_W, ARENA_H);
+    context.strokeStyle = "#393243";
+    context.lineWidth = 1;
+    context.beginPath();
+    for (let x = 36; x < ARENA_W; x += 36) {
+      context.moveTo(x + 0.5, 0);
+      context.lineTo(x + 0.5, ARENA_H);
+    }
+    for (let y = 36; y < ARENA_H; y += 36) {
+      context.moveTo(0, y + 0.5);
+      context.lineTo(ARENA_W, y + 0.5);
+    }
+    context.stroke();
+    return gridCanvas;
   }
   function aimArena(delta) {
     const dx = arenaAim.x - arenaPlayer.x;
     const dy = arenaAim.y - arenaPlayer.y;
     const angle = Math.atan2(dy, dx) + delta;
     const reach = Math.max(80, Math.min(180, Math.hypot(dx, dy) || 140));
-    arenaAim = { x: arenaPlayer.x + Math.cos(angle) * reach, y: arenaPlayer.y + Math.sin(angle) * reach };
+    arenaAim.x = arenaPlayer.x + Math.cos(angle) * reach;
+    arenaAim.y = arenaPlayer.y + Math.sin(angle) * reach;
   }
   function fireArena() {
     const now = performance.now();
-    if (!running || active !== "arena" || now - arenaLastShot < 160) return;
+    if (!isRunning() || active !== "arena" || now - arenaLastShot < 160) return;
     const dx = arenaAim.x - arenaPlayer.x, dy = arenaAim.y - arenaPlayer.y;
     const distance = Math.hypot(dx, dy) || 1;
     const speed = 440;
@@ -564,25 +1306,24 @@
     const side = Math.floor(Math.random() * 4);
     const enemy = { x: 0, y: 0, radius: 11, speed: 38 + Math.random() * 20 };
     if (side === 0) {
-      enemy.x = Math.random() * 720;
+      enemy.x = Math.random() * ARENA_W;
       enemy.y = -enemy.radius;
     } else if (side === 1) {
-      enemy.x = 720 + enemy.radius;
-      enemy.y = Math.random() * 316;
+      enemy.x = ARENA_W + enemy.radius;
+      enemy.y = Math.random() * ARENA_H;
     } else if (side === 2) {
-      enemy.x = Math.random() * 720;
-      enemy.y = 316 + enemy.radius;
+      enemy.x = Math.random() * ARENA_W;
+      enemy.y = ARENA_H + enemy.radius;
     } else {
       enemy.x = -enemy.radius;
-      enemy.y = Math.random() * 316;
+      enemy.y = Math.random() * ARENA_H;
     }
     arenaEnemies.push(enemy);
   }
-  function enemyTouchesPlayer(enemy) {
-    const angle = Math.atan2(arenaAim.y - arenaPlayer.y, arenaAim.x - arenaPlayer.x);
+  function enemyTouchesPlayer(enemy, cos, sin) {
     const dx = enemy.x - arenaPlayer.x, dy = enemy.y - arenaPlayer.y;
-    const localX = dx * Math.cos(angle) + dy * Math.sin(angle);
-    const localY = -dx * Math.sin(angle) + dy * Math.cos(angle);
+    const localX = dx * cos + dy * sin;
+    const localY = -dx * sin + dy * cos;
     let inside = false, nearestEdgeDistance = Infinity;
     for (let index = 0, previous = arenaPlayerShape.length - 1; index < arenaPlayerShape.length; previous = index++) {
       const start2 = arenaPlayerShape[previous], end = arenaPlayerShape[index];
@@ -597,92 +1338,99 @@
     return inside || nearestEdgeDistance <= enemy.radius * enemy.radius;
   }
   function updateArena(now) {
-    if (!running || active !== "arena") return;
-    const context = arenaCanvas?.getContext("2d");
-    if (!arenaCanvas || !context) {
-      console.error("Arena canvas is unavailable.");
-      return;
-    }
+    if (!isRunning() || active !== "arena" || !arenaContext) return;
     const elapsed = arenaLastFrame ? Math.min((now - arenaLastFrame) / 1e3, 0.05) : 0;
     arenaLastFrame = now;
     const horizontal = Number(arenaKeys.has("arrowright") || arenaKeys.has("d")) - Number(arenaKeys.has("arrowleft") || arenaKeys.has("a"));
     const vertical = Number(arenaKeys.has("arrowdown") || arenaKeys.has("s")) - Number(arenaKeys.has("arrowup") || arenaKeys.has("w"));
     const movementLength = Math.hypot(horizontal, vertical) || 1;
-    arenaPlayer.x = Math.max(13, Math.min(707, arenaPlayer.x + horizontal / movementLength * 190 * elapsed));
-    arenaPlayer.y = Math.max(13, Math.min(303, arenaPlayer.y + vertical / movementLength * 190 * elapsed));
+    arenaPlayer.x = Math.max(13, Math.min(ARENA_W - 13, arenaPlayer.x + horizontal / movementLength * 190 * elapsed));
+    arenaPlayer.y = Math.max(13, Math.min(ARENA_H - 13, arenaPlayer.y + vertical / movementLength * 190 * elapsed));
+    const turn = Number(arenaKeys.has("e")) - Number(arenaKeys.has("q"));
+    if (turn) aimArena(turn * ARENA_TURN_RATE * elapsed);
     const spawnDelay = Math.max(500, 1400 - score * 3);
-    if (now - arenaLastSpawn >= spawnDelay) {
+    if (now - arenaLastSpawn >= spawnDelay && arenaEnemies.length < ARENA_MAX_ENEMIES) {
       spawnArenaEnemy();
       arenaLastSpawn = now;
     }
-    const remainingBullets = [];
-    arenaBullets.forEach((bullet) => {
+    let kept = 0;
+    let gained = 0;
+    for (let index = 0; index < arenaBullets.length; index++) {
+      const bullet = arenaBullets[index];
       bullet.x += bullet.vx * elapsed;
       bullet.y += bullet.vy * elapsed;
-      const hitIndex = arenaEnemies.findIndex(
-        (enemy) => Math.hypot(enemy.x - bullet.x, enemy.y - bullet.y) < enemy.radius + 4
-      );
-      if (hitIndex >= 0) {
-        arenaEnemies.splice(hitIndex, 1);
-        score += 10;
-        $("#gameScore").textContent = String(score);
-      } else if (bullet.x >= 0 && bullet.x <= 720 && bullet.y >= 0 && bullet.y <= 316) remainingBullets.push(bullet);
-    });
-    arenaBullets = remainingBullets;
-    const remainingEnemies = [];
+      let hit = -1;
+      for (let other = 0; other < arenaEnemies.length; other++) {
+        const enemy = arenaEnemies[other];
+        const reach = enemy.radius + 4;
+        const ex = enemy.x - bullet.x, ey = enemy.y - bullet.y;
+        if (ex * ex + ey * ey < reach * reach) {
+          hit = other;
+          break;
+        }
+      }
+      if (hit >= 0) {
+        arenaEnemies[hit] = arenaEnemies[arenaEnemies.length - 1];
+        arenaEnemies.pop();
+        gained += 10;
+      } else if (bullet.x >= 0 && bullet.x <= ARENA_W && bullet.y >= 0 && bullet.y <= ARENA_H)
+        arenaBullets[kept++] = bullet;
+    }
+    arenaBullets.length = kept;
+    if (gained) setScore(score + gained);
+    const aimAngle = Math.atan2(arenaAim.y - arenaPlayer.y, arenaAim.x - arenaPlayer.x);
+    const cos = Math.cos(aimAngle), sin = Math.sin(aimAngle);
     for (const enemy of arenaEnemies) {
       const dx = arenaPlayer.x - enemy.x, dy = arenaPlayer.y - enemy.y;
       const distance = Math.hypot(dx, dy) || 1;
       enemy.x += dx / distance * enemy.speed * elapsed;
       enemy.y += dy / distance * enemy.speed * elapsed;
-      if (enemyTouchesPlayer(enemy)) {
-        arenaHull = 0;
-        $("#arenaHull").textContent = "DESTROYED";
-        endArena();
+      if (enemyTouchesPlayer(enemy, cos, sin)) {
+        drawArena();
+        endRound("Ship destroyed");
         return;
       }
-      remainingEnemies.push(enemy);
     }
-    arenaEnemies = remainingEnemies;
-    context.fillStyle = "#09070D";
-    context.fillRect(0, 0, arenaCanvas.width, arenaCanvas.height);
-    context.strokeStyle = "#393243";
-    context.lineWidth = 1;
-    for (let x = 36; x < arenaCanvas.width; x += 36) {
-      context.beginPath();
-      context.moveTo(x, 0);
-      context.lineTo(x, arenaCanvas.height);
-      context.stroke();
+    drawArena();
+    animation = requestAnimationFrame(updateArena);
+  }
+  function drawArena() {
+    const context = arenaContext;
+    if (!context) return;
+    if (arenaGrid) context.drawImage(arenaGrid, 0, 0, ARENA_W, ARENA_H);
+    else {
+      context.fillStyle = "#09070D";
+      context.fillRect(0, 0, ARENA_W, ARENA_H);
     }
-    for (let y = 36; y < arenaCanvas.height; y += 36) {
-      context.beginPath();
-      context.moveTo(0, y);
-      context.lineTo(arenaCanvas.width, y);
-      context.stroke();
-    }
-    arenaEnemies.forEach((enemy) => {
-      context.beginPath();
+    context.fillStyle = "#FB7185";
+    context.beginPath();
+    for (const enemy of arenaEnemies) {
+      context.moveTo(enemy.x + enemy.radius, enemy.y);
       context.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
-      context.fillStyle = "#FB7185";
-      context.fill();
-      context.beginPath();
+    }
+    context.fill();
+    context.fillStyle = "#F7F4FC";
+    context.beginPath();
+    for (const enemy of arenaEnemies) {
+      context.moveTo(enemy.x + 4, enemy.y);
       context.arc(enemy.x, enemy.y, 4, 0, Math.PI * 2);
-      context.fillStyle = "#F7F4FC";
-      context.fill();
-    });
-    arenaBullets.forEach((bullet) => {
-      context.beginPath();
+    }
+    context.fill();
+    context.fillStyle = "#C4B5FD";
+    context.beginPath();
+    for (const bullet of arenaBullets) {
+      context.moveTo(bullet.x + 3, bullet.y);
       context.arc(bullet.x, bullet.y, 3, 0, Math.PI * 2);
-      context.fillStyle = "#C4B5FD";
-      context.fill();
-    });
+    }
+    context.fill();
     const aimAngle = Math.atan2(arenaAim.y - arenaPlayer.y, arenaAim.x - arenaPlayer.x);
     context.save();
     context.translate(arenaPlayer.x, arenaPlayer.y);
     context.rotate(aimAngle);
     context.beginPath();
     context.moveTo(arenaPlayerShape[0].x, arenaPlayerShape[0].y);
-    arenaPlayerShape.slice(1).forEach((point) => context.lineTo(point.x, point.y));
+    for (let index = 1; index < arenaPlayerShape.length; index++)
+      context.lineTo(arenaPlayerShape[index].x, arenaPlayerShape[index].y);
     context.closePath();
     context.fillStyle = "#A3E635";
     context.fill();
@@ -695,23 +1443,6 @@
     context.lineTo(arenaAim.x, arenaAim.y + 13);
     context.strokeStyle = "#C4B5FD";
     context.stroke();
-    animation = requestAnimationFrame(updateArena);
-  }
-  function endArena() {
-    if (!running) return;
-    if (sprint) {
-      finish();
-      return;
-    }
-    running = false;
-    clearInterval(timerId);
-    cancelAnimationFrame(animation);
-    arenaKeys.clear();
-    saveSample();
-    refreshSummary();
-    $("#gameHint").textContent = `Hull breached \xB7 ${score} points`;
-    $("#startGame").textContent = "Play again";
-    $("#startGame").classList.remove("hidden");
   }
   function saveSample() {
     reportRound("/api/onboarding/rounds/current/finish");
@@ -751,10 +1482,11 @@
       const response = await fetch("/api/summary");
       if (!response.ok) throw new Error(`Could not load recent games (${response.status}).`);
       const data = await response.json();
-      $("#sampleCount").textContent = data.samples;
+      $("#sampleCount").textContent = String(data.samples);
+      $("#sampleCountLabel").textContent = data.samples === 1 ? "round played" : "rounds played";
       const list = $("#recentList");
       list.innerHTML = data.recent.length ? data.recent.map(
-        (item) => `<div class="recent-item"><span><b>${modes.find((mode) => mode.id === item.game)?.name || item.game}</b><small>${new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small></span><strong>${item.score}</strong></div>`
+        (item) => `<div class="recent-item"><span><b>${modes.find((mode) => mode.id === item.game)?.name || item.game}</b><small>${new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small></span><strong>${plural(item.score, "point")}</strong></div>`
       ).join("") : `<div class="empty">No games played yet.</div>`;
       const message = data.samples ? "Recent games loaded from this machine." : "No games saved on this machine yet.";
       setArcadeStatus(serverWarning ? `${message} ${serverWarning}` : message, Boolean(serverWarning));
@@ -766,6 +1498,7 @@
     }
   }
   $("#clearBtn").addEventListener("click", async () => {
+    if (!window.confirm("Clear your game history on this machine?")) return;
     setArcadeStatus("Clearing saved rounds\u2026");
     try {
       const response = await fetch("/api/samples", { method: "DELETE" });
@@ -778,9 +1511,20 @@
       );
     }
   });
-  window.setInterval(() => {
+  var GAMEPAD_KEYS = {
+    0: " ",
+    1: "ArrowDown",
+    2: "ArrowLeft",
+    3: "ArrowRight",
+    12: "ArrowUp",
+    13: "ArrowDown",
+    14: "ArrowLeft",
+    15: "ArrowRight"
+  };
+  function pollGamepad() {
     const pads = navigator.getGamepads?.() || [];
-    const pad = Array.from(pads).find(Boolean);
+    let pad = null;
+    for (const candidate of pads) if (candidate) pad = pad ?? candidate;
     if (!pad) return;
     pad.buttons.forEach((button, index) => {
       const key = `pad${index}`;
@@ -788,26 +1532,14 @@
         if (!down.has(key)) {
           recordInput("controller");
           down.set(key, performance.now());
-          if (running) {
-            const map = {
-              0: " ",
-              1: "ArrowDown",
-              2: "ArrowLeft",
-              3: "ArrowRight",
-              12: "ArrowUp",
-              13: "ArrowDown",
-              14: "ArrowLeft",
-              15: "ArrowRight"
-            };
-            handleAction(map[index] || " ");
-          }
+          if (isRunning() && GAMEPAD_KEYS[index]) handleAction(GAMEPAD_KEYS[index]);
         }
       } else if (down.has(key)) {
         holds.push(performance.now() - down.get(key));
         down.delete(key);
       }
     });
-  }, 100);
+  }
   void (async () => {
     await checkOnboarding();
     await refreshSummary();

@@ -1,9 +1,32 @@
 "use strict";
 (() => {
+  // frontend/format.ts
+  var dateTime = new Intl.DateTimeFormat(void 0, { dateStyle: "medium", timeStyle: "short" });
+  function formatTime(iso, fallback = "Not recorded") {
+    if (!iso) return fallback;
+    const value = new Date(iso);
+    return Number.isNaN(value.getTime()) ? fallback : dateTime.format(value);
+  }
+  function formatScore(value, fallback = "not available") {
+    return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : fallback;
+  }
+  function formatDuration(seconds, fallback = "not recorded") {
+    if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return fallback;
+    const total = Math.round(seconds);
+    if (total < 60) return `${total} s`;
+    const minutes = Math.floor(total / 60), rest = total % 60;
+    if (minutes < 60) return rest ? `${minutes} min ${rest} s` : `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours} h ${minutes % 60} min`;
+  }
+
   // frontend/demo.ts
   var $ = (selector) => document.querySelector(selector);
   var pollMs = 5e3;
   var pollTimer = 0;
+  var refreshing = false;
+  var lastPoints = [];
+  var lastMarks = [];
   function responseError(payload, status) {
     if (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string") {
       return payload.error;
@@ -27,15 +50,15 @@
     const status = $("#demoStatus");
     if (modelLine) {
       const name = model?.available ? recorded(model.algorithm_label ?? model.algorithm) : "Not recorded";
-      const version = model?.available ? recorded(model.model_id) : "Not recorded";
-      modelLine.textContent = `Model: ${version}. Algorithm: ${name}.`;
+      const trained = model?.available ? formatTime(model.trained_at) : "Not recorded";
+      modelLine.textContent = `Model trained: ${trained}. Algorithm: ${name}.`;
     }
     if (samples) {
       samples.textContent = `Training samples: ${model?.available ? recorded(model.window_count) : "Not recorded"}.`;
     }
     if (status) {
-      const label = snapshot?.state ? statusLabels[snapshot.state] ?? snapshot.state : "No signal";
-      const score = snapshot?.score === null || snapshot?.score === void 0 ? "not recorded" : String(snapshot.score);
+      const label = snapshot?.state ? statusLabels[snapshot.state] ?? "Unknown" : "No signal";
+      const score = formatScore(snapshot?.score, "not recorded");
       status.textContent = `Latest state: ${label}. Anomaly score: ${score}.`;
     }
   }
@@ -46,10 +69,10 @@
       status.textContent = "No switch is marked yet.";
       return;
     }
-    const when = mark.switched_at ?? "time not recorded";
+    const when = formatTime(mark.switched_at, "an unrecorded time");
     if (mark.latency_seconds !== null) {
       const prior = mark.alert_before_switch ? " Needs verification was already open before this switch." : "";
-      status.textContent = `Switch marked at ${when}. Needs verification followed ${mark.latency_seconds} seconds later.${prior}`;
+      status.textContent = `Switch marked at ${when}. Needs verification followed ${formatDuration(mark.latency_seconds)} later.${prior}`;
       return;
     }
     status.textContent = mark.alert_before_switch ? `Switch marked at ${when}. Needs verification was already open before this switch.` : `Switch marked at ${when}. Needs verification has not followed yet.`;
@@ -63,8 +86,8 @@
     const latest = scored[scored.length - 1];
     const baselineValues = scored.filter((point) => typeof point.baseline_score === "number");
     if (summary) {
-      const base = latest ? `Latest anomaly score is ${latest.score}. Threshold is ${latest.threshold ?? "not recorded"}.` : "No scored windows yet.";
-      const extra = !showBaseline ? "" : baselineValues.length === 0 ? " No baseline score is recorded for these windows." : ` Baseline score is ${baselineValues[baselineValues.length - 1]?.baseline_score}.`;
+      const base = latest ? `Latest anomaly score is ${formatScore(latest.score)}. Threshold is ${formatScore(latest.threshold, "not recorded")}.` : "No scored windows yet.";
+      const extra = !showBaseline ? "" : baselineValues.length === 0 ? " No baseline score is recorded for these windows." : ` Baseline score is ${formatScore(baselineValues[baselineValues.length - 1]?.baseline_score)}.`;
       summary.textContent = `${base}${extra}`;
     }
     if (scored.length === 0) return;
@@ -134,6 +157,15 @@
     }
   }
   async function refreshDemo() {
+    if (refreshing) return;
+    refreshing = true;
+    try {
+      await loadDemo();
+    } finally {
+      refreshing = false;
+    }
+  }
+  async function loadDemo() {
     const summary = $("#demoChartSummary");
     let modelResponse;
     try {
@@ -150,15 +182,17 @@
     }
     const model = modelResponse.ok ? await modelResponse.json() : null;
     let snapshot = null;
+    let statusFailed = false;
     try {
       const statusResponse = await fetch("/api/monitoring/status");
       if (statusResponse.ok) snapshot = await statusResponse.json();
     } catch {
+      statusFailed = true;
       const status = $("#demoStatus");
       if (status) status.textContent = "Could not load the demo. The server did not respond.";
     }
-    renderFacts(model, snapshot);
-    let points = [];
+    if (snapshot || !statusFailed) renderFacts(model, snapshot);
+    let points = null;
     try {
       const history = await fetch("/api/monitoring/history?limit=60");
       if (history.ok) points = (await history.json()).points ?? [];
@@ -166,7 +200,7 @@
     } catch {
       if (summary) summary.textContent = "Could not load the anomaly score. The server did not respond.";
     }
-    let marks = [];
+    let marks = null;
     try {
       const switches = await fetch("/api/demo/switches");
       if (switches.ok) marks = (await switches.json()).switches ?? [];
@@ -178,12 +212,21 @@
       const status = $("#guestSwitchStatus");
       if (status) status.textContent = "Could not load switch markers. The server did not respond.";
     }
-    renderSwitch(marks[marks.length - 1] ?? null);
+    if (marks) {
+      lastMarks = marks;
+      renderSwitch(marks[marks.length - 1] ?? null);
+    }
+    if (points) {
+      lastPoints = points;
+      redrawChart();
+    }
+  }
+  function redrawChart() {
     const showBaseline = document.querySelector("#baselineToggle")?.checked === true;
-    renderChart(points, marks, showBaseline);
+    renderChart(lastPoints, lastMarks, showBaseline);
   }
   var toggle = $("#baselineToggle");
-  toggle?.addEventListener("change", () => void refreshDemo());
+  toggle?.addEventListener("change", redrawChart);
   $("#markSwitch")?.addEventListener("click", () => {
     const button = $("#markSwitch");
     if (button) button.disabled = true;

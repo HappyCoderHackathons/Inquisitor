@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "esbuild frontend/app.ts frontend/dashboard.ts frontend/onboarding.ts frontend/demo.ts frontend/devices.ts --bundle --outdir=static --target=es2020",
-    "dev": "esbuild frontend/app.ts frontend/dashboard.ts frontend/onboarding.ts frontend/demo.ts frontend/devices.ts --bundle --outdir=static --target=es2020 --watch",
+    "build": "esbuild frontend/app.ts frontend/dashboard.ts frontend/onboarding.ts frontend/demo.ts frontend/devices.ts frontend/nav.ts --bundle --outdir=static --target=es2020",
+    "dev": "esbuild frontend/app.ts frontend/dashboard.ts frontend/onboarding.ts frontend/demo.ts frontend/devices.ts frontend/nav.ts --bundle --outdir=static --target=es2020 --watch",
     "auth": "node --env-file-if-exists=../.env --experimental-strip-types auth/server.mts",
     "test:auth": "node --experimental-strip-types --test auth/*.test.mts",
     "typecheck": "tsc && tsc -p auth/tsconfig.json",

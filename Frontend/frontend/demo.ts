@@ -1,6 +1,9 @@
+import { formatDuration, formatScore, formatTime } from "./format";
+
 type ModelSummary = {
   available: boolean;
   model_id: string | null;
+  trained_at: string | null;
   window_count: number | null;
   algorithm_label: string | null;
   algorithm: string | null;
@@ -23,6 +26,10 @@ type SwitchMark = {
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector);
 const pollMs = 5_000;
 let pollTimer = 0;
+let refreshing = false;
+// The last loaded chart data, so the baseline checkbox can redraw without refetching.
+let lastPoints: HistoryPoint[] = [];
+let lastMarks: SwitchMark[] = [];
 
 function responseError(payload: unknown, status: number) {
   if (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string") {
@@ -50,15 +57,15 @@ function renderFacts(model: ModelSummary | null, snapshot: StatusSnapshot | null
   const status = $("#demoStatus");
   if (modelLine) {
     const name = model?.available ? recorded(model.algorithm_label ?? model.algorithm) : "Not recorded";
-    const version = model?.available ? recorded(model.model_id) : "Not recorded";
-    modelLine.textContent = `Model: ${version}. Algorithm: ${name}.`;
+    const trained = model?.available ? formatTime(model.trained_at) : "Not recorded";
+    modelLine.textContent = `Model trained: ${trained}. Algorithm: ${name}.`;
   }
   if (samples) {
     samples.textContent = `Training samples: ${model?.available ? recorded(model.window_count) : "Not recorded"}.`;
   }
   if (status) {
-    const label = snapshot?.state ? (statusLabels[snapshot.state] ?? snapshot.state) : "No signal";
-    const score = snapshot?.score === null || snapshot?.score === undefined ? "not recorded" : String(snapshot.score);
+    const label = snapshot?.state ? (statusLabels[snapshot.state] ?? "Unknown") : "No signal";
+    const score = formatScore(snapshot?.score, "not recorded");
     status.textContent = `Latest state: ${label}. Anomaly score: ${score}.`;
   }
 }
@@ -70,10 +77,10 @@ function renderSwitch(mark: SwitchMark | null) {
     status.textContent = "No switch is marked yet.";
     return;
   }
-  const when = mark.switched_at ?? "time not recorded";
+  const when = formatTime(mark.switched_at, "an unrecorded time");
   if (mark.latency_seconds !== null) {
     const prior = mark.alert_before_switch ? " Needs verification was already open before this switch." : "";
-    status.textContent = `Switch marked at ${when}. Needs verification followed ${mark.latency_seconds} seconds later.${prior}`;
+    status.textContent = `Switch marked at ${when}. Needs verification followed ${formatDuration(mark.latency_seconds)} later.${prior}`;
     return;
   }
   status.textContent = mark.alert_before_switch
@@ -91,13 +98,13 @@ function renderChart(points: HistoryPoint[], marks: SwitchMark[], showBaseline: 
   const baselineValues = scored.filter((point) => typeof point.baseline_score === "number");
   if (summary) {
     const base = latest
-      ? `Latest anomaly score is ${latest.score}. Threshold is ${latest.threshold ?? "not recorded"}.`
+      ? `Latest anomaly score is ${formatScore(latest.score)}. Threshold is ${formatScore(latest.threshold, "not recorded")}.`
       : "No scored windows yet.";
     const extra = !showBaseline
       ? ""
       : baselineValues.length === 0
         ? " No baseline score is recorded for these windows."
-        : ` Baseline score is ${baselineValues[baselineValues.length - 1]?.baseline_score}.`;
+        : ` Baseline score is ${formatScore(baselineValues[baselineValues.length - 1]?.baseline_score)}.`;
     summary.textContent = `${base}${extra}`;
   }
   if (scored.length === 0) return;
@@ -177,6 +184,17 @@ async function markSwitch() {
 }
 
 async function refreshDemo() {
+  // A slow server must not stack overlapping polls.
+  if (refreshing) return;
+  refreshing = true;
+  try {
+    await loadDemo();
+  } finally {
+    refreshing = false;
+  }
+}
+
+async function loadDemo() {
   const summary = $("#demoChartSummary");
   let modelResponse: Response;
   try {
@@ -193,15 +211,18 @@ async function refreshDemo() {
   }
   const model = modelResponse.ok ? ((await modelResponse.json()) as ModelSummary) : null;
   let snapshot: StatusSnapshot | null = null;
+  let statusFailed = false;
   try {
     const statusResponse = await fetch("/api/monitoring/status");
     if (statusResponse.ok) snapshot = (await statusResponse.json()) as StatusSnapshot;
   } catch {
+    statusFailed = true;
     const status = $("#demoStatus");
     if (status) status.textContent = "Could not load the demo. The server did not respond.";
   }
-  renderFacts(model, snapshot);
-  let points: HistoryPoint[] = [];
+  // Each part renders only when it loaded, so an error message is not replaced by an empty state.
+  if (snapshot || !statusFailed) renderFacts(model, snapshot);
+  let points: HistoryPoint[] | null = null;
   try {
     const history = await fetch("/api/monitoring/history?limit=60");
     if (history.ok) points = ((await history.json()) as { points: HistoryPoint[] }).points ?? [];
@@ -209,7 +230,7 @@ async function refreshDemo() {
   } catch {
     if (summary) summary.textContent = "Could not load the anomaly score. The server did not respond.";
   }
-  let marks: SwitchMark[] = [];
+  let marks: SwitchMark[] | null = null;
   try {
     const switches = await fetch("/api/demo/switches");
     if (switches.ok) marks = ((await switches.json()) as { switches: SwitchMark[] }).switches ?? [];
@@ -221,13 +242,23 @@ async function refreshDemo() {
     const status = $("#guestSwitchStatus");
     if (status) status.textContent = "Could not load switch markers. The server did not respond.";
   }
-  renderSwitch(marks[marks.length - 1] ?? null);
+  if (marks) {
+    lastMarks = marks;
+    renderSwitch(marks[marks.length - 1] ?? null);
+  }
+  if (points) {
+    lastPoints = points;
+    redrawChart();
+  }
+}
+
+function redrawChart() {
   const showBaseline = document.querySelector<HTMLInputElement>("#baselineToggle")?.checked === true;
-  renderChart(points, marks, showBaseline);
+  renderChart(lastPoints, lastMarks, showBaseline);
 }
 
 const toggle = $("#baselineToggle");
-toggle?.addEventListener("change", () => void refreshDemo());
+toggle?.addEventListener("change", redrawChart);
 $("#markSwitch")?.addEventListener("click", () => {
   const button = $("#markSwitch") as HTMLButtonElement | null;
   if (button) button.disabled = true;
