@@ -393,6 +393,8 @@
     const method = form.dataset.method ?? "POST";
     const path = form.dataset.path ?? "";
     const success = form.dataset.success ?? "Done.";
+    const retrain = form.hasAttribute("data-retrain");
+    const actionStatus = retrain ? $("#retrainStatus") : dataActionStatus;
     const input = form.querySelector("input");
     const submit = form.querySelector('button[type="submit"]');
     const opener = document.querySelector(`[aria-controls="${form.id}"]`);
@@ -415,21 +417,22 @@
       event.preventDefault();
       if (!input || input.value !== phrase || !submit) return;
       submit.disabled = true;
-      if (dataActionStatus) {
-        dataActionStatus.classList.remove("error");
-        dataActionStatus.textContent = "Please wait.";
+      if (actionStatus) {
+        actionStatus.classList.remove("error");
+        actionStatus.textContent = "Please wait.";
       }
       void fetch(path, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmation: phrase })
+        body: JSON.stringify(retrain ? { approve: true } : { confirmation: phrase })
       }).then(async (response) => {
         if (!response.ok) throw new Error(responseError(await response.json().catch(() => null), response.status));
         closeDangerForms();
-        if (dataActionStatus) {
-          dataActionStatus.classList.remove("error");
-          dataActionStatus.textContent = success;
+        if (actionStatus) {
+          actionStatus.classList.remove("error");
+          actionStatus.textContent = success;
         }
+        if (retrain) return;
         try {
           await refreshCollectionSummary();
         } catch (error) {
@@ -439,9 +442,9 @@
           }
         }
       }).catch((error) => {
-        if (dataActionStatus) {
-          dataActionStatus.classList.add("error");
-          dataActionStatus.textContent = error instanceof TypeError ? "Could not reach the server. Nothing was changed." : error instanceof Error ? error.message : "Could not complete that action.";
+        if (actionStatus) {
+          actionStatus.classList.add("error");
+          actionStatus.textContent = error instanceof TypeError ? "Could not reach the server. Nothing was changed." : error instanceof Error ? error.message : "Could not complete that action.";
         }
         if (submit) submit.disabled = !input || input.value !== phrase;
       });

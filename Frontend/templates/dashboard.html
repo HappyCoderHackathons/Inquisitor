@@ -38,6 +38,19 @@
             <div class="connection-card-heading"><span class="status-indicator pending"></span><span class="eyebrow">BEHAVIOR MODEL</span></div>
             <h2 id="modelConnectionStatus">Not connected</h2>
             <p>No live model or inference status is available in this prototype.</p>
+            <button class="button secondary-button" type="button" data-danger-open aria-controls="retrainModelConfirm" aria-expanded="false">Retrain model</button>
+            <form id="retrainModelConfirm" class="typed-confirm" hidden data-phrase="RETRAIN" data-path="/api/onboarding/retrain" data-success="Retraining started. Continue in Setup to collect new game rounds." data-retrain>
+              <p>Retraining requires new game rounds. Your current model remains active until you choose to switch.</p>
+              <label for="retrainModelInput">Type RETRAIN to confirm
+                <input id="retrainModelInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
+              </label>
+              <div class="typed-confirm-actions">
+                <button class="button secondary-button" type="submit" disabled>Start retraining</button>
+                <button class="button secondary-button typed-cancel" type="button">Cancel</button>
+              </div>
+            </form>
+            <p id="retrainStatus" class="action-status" role="status" aria-live="polite"></p>
+            <a href="/onboarding">Go to Setup</a>
           </article>
           <article class="connection-card">
             <div class="connection-card-heading"><span class="status-indicator pending"></span><span class="eyebrow">ACCOUNT</span></div>
