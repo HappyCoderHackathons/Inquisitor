@@ -30,6 +30,61 @@ def retention_seconds_from_env() -> int:
     return value
 
 
+DEVICE_KEY = "FOREIGN KEY (user_id, device_id) REFERENCES devices (user_id, device_id) ON DELETE CASCADE"
+CHILD_TABLES = ("windows", "inference_results", "alerts", "models")
+SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS devices (
+        user_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        PRIMARY KEY (user_id, device_id)
+    )""",
+    f"""CREATE TABLE IF NOT EXISTS windows (
+        id INTEGER PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        mode TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        window_json TEXT NOT NULL,
+        UNIQUE(user_id, device_id, session_id, sequence),
+        {DEVICE_KEY}
+    )""",
+    f"""CREATE TABLE IF NOT EXISTS inference_results (
+        id INTEGER PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        model_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        result_json TEXT NOT NULL,
+        {DEVICE_KEY}
+    )""",
+    f"""CREATE TABLE IF NOT EXISTS alerts (
+        id INTEGER PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        alert_json TEXT NOT NULL,
+        {DEVICE_KEY}
+    )""",
+    f"""CREATE TABLE IF NOT EXISTS models (
+        model_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        active INTEGER NOT NULL,
+        job_state TEXT NOT NULL DEFAULT 'ready',
+        algorithm TEXT,
+        created_at TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{{}}',
+        {DEVICE_KEY}
+    )""",
+    """CREATE TABLE IF NOT EXISTS retention_policy (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        monitoring_retention_seconds INTEGER NOT NULL
+    )""",
+)
+
+
 class AccountStore:
     def __init__(self, database: Path, artifact_root: Path, retention_seconds: int) -> None:
         if retention_seconds <= 0:
@@ -40,68 +95,34 @@ class AccountStore:
         self.database.parent.mkdir(parents=True, exist_ok=True)
         self.artifact_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self._lock, closing(self._connect()) as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS windows (
-                    id INTEGER PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    device_id TEXT NOT NULL,
-                    session_id TEXT NOT NULL,
-                    sequence INTEGER NOT NULL,
-                    mode TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    window_json TEXT NOT NULL,
-                    UNIQUE(user_id, device_id, session_id, sequence)
-                );
-                CREATE TABLE IF NOT EXISTS inference_results (
-                    id INTEGER PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    device_id TEXT NOT NULL,
-                    model_id TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    result_json TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS alerts (
-                    id INTEGER PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    device_id TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    alert_json TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS models (
-                    model_id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    device_id TEXT NOT NULL,
-                    active INTEGER NOT NULL,
-                    job_state TEXT NOT NULL DEFAULT 'ready',
-                    algorithm TEXT,
-                    created_at TEXT NOT NULL,
-                    metadata_json TEXT NOT NULL DEFAULT '{}'
-                );
-                CREATE TABLE IF NOT EXISTS retention_policy (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    monitoring_retention_seconds INTEGER NOT NULL
-                );
-                """
-            )
+            conn.isolation_level = None
+            conn.execute("BEGIN IMMEDIATE")
+            legacy = [
+                table for table in CHILD_TABLES
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()
+                and not conn.execute(f"PRAGMA foreign_key_list({table})").fetchall()
+            ]
+            for table in legacy:
+                conn.execute(f"ALTER TABLE {table} RENAME TO {table}_legacy")
+            for statement in SCHEMA:
+                conn.execute(statement)
+            for table in legacy:
+                old = f"{table}_legacy"
+                conn.execute(f"INSERT OR IGNORE INTO devices SELECT DISTINCT user_id, device_id FROM {old}")
+                current = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+                columns = ", ".join(row["name"] for row in conn.execute(f"PRAGMA table_info({old})") if row["name"] in current)
+                conn.execute(f"INSERT INTO {table} ({columns}) SELECT {columns} FROM {old}")
+                conn.execute(f"DROP TABLE {old}")
             conn.execute(
                 "INSERT OR IGNORE INTO retention_policy (id, monitoring_retention_seconds) VALUES (1, ?)",
                 (retention_seconds,),
             )
-            for statement in (
-                "ALTER TABLE models ADD COLUMN job_state TEXT NOT NULL DEFAULT 'ready'",
-                "ALTER TABLE models ADD COLUMN algorithm TEXT",
-                "ALTER TABLE models ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'",
-            ):
-                try:
-                    conn.execute(statement)
-                except sqlite3.OperationalError:
-                    pass
-            conn.commit()
+            conn.execute("COMMIT")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.database)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
     def check_available(self) -> None:
@@ -112,6 +133,10 @@ class AccountStore:
             ).fetchone()
             if policy is None:
                 raise sqlite3.DatabaseError("account database retention policy is unavailable")
+
+    @staticmethod
+    def _ensure_device(conn: sqlite3.Connection, user_id: str, device_id: str) -> None:
+        conn.execute("INSERT OR IGNORE INTO devices (user_id, device_id) VALUES (?, ?)", (user_id, device_id))
 
     def _artifact_path(self, model_id: str) -> Path:
         try:
@@ -132,6 +157,7 @@ class AccountStore:
             raise ValueError("window does not belong to this device")
         stamp = self._stamp(created_at)
         with self._lock, closing(self._connect()) as conn:
+            self._ensure_device(conn, user_id, device_id)
             try:
                 conn.execute(
                     """INSERT INTO windows
@@ -157,6 +183,7 @@ class AccountStore:
         stamp = self._stamp(created_at)
         payload = json.dumps(result, allow_nan=False, separators=(",", ":"))
         with self._lock, closing(self._connect()) as conn:
+            self._ensure_device(conn, user_id, device_id)
             conn.execute(
                 """INSERT INTO inference_results (user_id, device_id, model_id, created_at, result_json)
                 VALUES (?, ?, ?, ?, ?)""",
@@ -183,6 +210,7 @@ class AccountStore:
         stamp = self._stamp(None)
         payload = json.dumps(metadata, allow_nan=False, separators=(",", ":"))
         with self._lock, closing(self._connect()) as conn:
+            self._ensure_device(conn, user_id, device_id)
             if active:
                 conn.execute(
                     "UPDATE models SET active = 0 WHERE user_id = ? AND device_id = ?",
@@ -252,37 +280,16 @@ class AccountStore:
             return deleted
 
     def delete_device(self, user_id: str, device_id: str) -> None:
-        with self._lock, closing(self._connect()) as conn:
-            model_ids = [
-                cast(str, row["model_id"])
-                for row in conn.execute(
-                    "SELECT model_id FROM models WHERE user_id = ? AND device_id = ?",
-                    (user_id, device_id),
-                )
-            ]
-            for model_id in model_ids:
-                self._remove_artifact(model_id)
-            conn.execute("DELETE FROM windows WHERE user_id = ? AND device_id = ?", (user_id, device_id))
-            conn.execute(
-                "DELETE FROM inference_results WHERE user_id = ? AND device_id = ?",
-                (user_id, device_id),
-            )
-            conn.execute("DELETE FROM alerts WHERE user_id = ? AND device_id = ?", (user_id, device_id))
-            conn.execute("DELETE FROM models WHERE user_id = ? AND device_id = ?", (user_id, device_id))
-            conn.commit()
+        self._delete_devices("user_id = ? AND device_id = ?", (user_id, device_id))
 
     def delete_user(self, user_id: str) -> None:
+        self._delete_devices("user_id = ?", (user_id,))
+
+    def _delete_devices(self, where: str, parameters: tuple[str, ...]) -> None:
         with self._lock, closing(self._connect()) as conn:
-            model_ids = [
-                cast(str, row["model_id"])
-                for row in conn.execute("SELECT model_id FROM models WHERE user_id = ?", (user_id,))
-            ]
-            for model_id in model_ids:
-                self._remove_artifact(model_id)
-            conn.execute("DELETE FROM windows WHERE user_id = ?", (user_id,))
-            conn.execute("DELETE FROM inference_results WHERE user_id = ?", (user_id,))
-            conn.execute("DELETE FROM alerts WHERE user_id = ?", (user_id,))
-            conn.execute("DELETE FROM models WHERE user_id = ?", (user_id,))
+            for row in conn.execute(f"SELECT model_id FROM models WHERE {where}", parameters).fetchall():
+                self._remove_artifact(cast(str, row["model_id"]))
+            conn.execute(f"DELETE FROM devices WHERE {where}", parameters)
             conn.commit()
 
     def retention_seconds(self) -> int:

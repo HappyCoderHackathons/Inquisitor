@@ -1,7 +1,9 @@
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -181,6 +183,36 @@ class AccountControlTests(unittest.TestCase):
         self.assertEqual(self.account.counts("synthetic-user")["enrollment"], 1)
         self.assertEqual(self.account.counts("synthetic-user")["inference_results"], 1)
         self.assertEqual(self.account.counts("synthetic-user")["alerts"], 0)
+
+    def test_legacy_database_gains_device_foreign_keys_and_keeps_rows(self) -> None:
+        database = Path(self.temporary.name) / "legacy.sqlite3"
+        with closing(sqlite3.connect(database)) as conn:
+            conn.executescript("""
+                CREATE TABLE windows (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL, sequence INTEGER NOT NULL, mode TEXT NOT NULL, created_at TEXT NOT NULL,
+                    window_json TEXT NOT NULL, UNIQUE(user_id, device_id, session_id, sequence));
+                CREATE TABLE inference_results (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
+                    model_id TEXT NOT NULL, created_at TEXT NOT NULL, result_json TEXT NOT NULL);
+                CREATE TABLE alerts (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL, alert_json TEXT NOT NULL);
+                CREATE TABLE models (model_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
+                    active INTEGER NOT NULL, created_at TEXT NOT NULL);
+                INSERT INTO windows VALUES (1, 'u', 'd', 's', 1, 'enrollment', 't', '{}');
+                INSERT INTO inference_results VALUES (1, 'u', 'd2', 'm', 't', '{}');
+                INSERT INTO alerts VALUES (1, 'u', 'd2', 't', '{}');
+                INSERT INTO models VALUES ('m', 'u', 'd', 1, 't');
+            """)
+        store = AccountStore(database, Path(self.temporary.name) / "legacy-artifacts", 604800)
+        self.assertEqual(store.counts("u"), {
+            "windows": 1, "enrollment": 1, "monitoring": 0, "inference_results": 1,
+            "alerts": 1, "models": 1, "active_models": 1,
+        })
+        with closing(sqlite3.connect(database)) as conn:
+            for table in ("windows", "inference_results", "alerts", "models"):
+                self.assertEqual(conn.execute(f"PRAGMA foreign_key_list({table})").fetchone()[2], "devices")
+            self.assertEqual(conn.execute("SELECT job_state FROM models").fetchone()[0], "ready")
+        store.delete_device("u", "d2")
+        self.assertEqual((store.counts("u")["inference_results"], store.counts("u")["windows"]), (0, 1))
 
     def test_invalid_retention_env_refuses_to_start(self) -> None:
         with (

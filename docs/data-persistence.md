@@ -16,6 +16,14 @@ Monitoring windows produce an inference result with model ID, score, threshold, 
 classification (`NORMAL`, `UNUSUAL`, or `INSUFFICIENT_DATA`). `UNUSUAL` also creates an
 alert row for dashboard review.
 
+## Foreign keys
+
+In SQLite, `devices` holds each `(user_id, device_id)` pair. `windows`, `inference_results`,
+`alerts`, and `models` reference it with `ON DELETE CASCADE`, so deleting a device row
+removes its dependent rows. Opening an older database rebuilds those tables with the keys
+and keeps existing rows. Atlas has no foreign keys; every document stores `user_id` and
+`device_id`, and the application deletes dependents explicitly.
+
 ## Deletion cascade
 
 | Trigger | Removed data |
