@@ -1,8 +1,8 @@
 # Dashboard integration handoff
 
 The user dashboard supports opt-in local feature-window collection and JSONL
-export. It does not currently authenticate users, connect to a model, detect
-non-user activity, or open a WebSocket. Connection labels remain disconnected
+export. It does not currently authenticate users, connect to a model, show an
+anomaly signal, or open a WebSocket. Connection labels remain disconnected
 so the page does not present placeholder data as live.
 
 ## Code locations
@@ -12,7 +12,7 @@ so the page does not present placeholder data as live.
 - `templates/index.html`: landing pitch, Create Account, Log In, the timing-summary diagram, the Windows agent requirement, and the limitations section.
 - `templates/privacy.html`: accepted feature-window fields and units, the checked-in version 2 sample payload, and the prohibited collection list. `GET /privacy` renders it.
 - `templates/dashboard.html`: local collection controls, connection status,
-  detection summary, Better Auth profile fields, and data/account controls.
+  anomaly-signal summary, Better Auth profile fields, and data/account controls.
 - `frontend/dashboard.ts`: browser-only timing aggregation, opt-in collection,
   and API calls. It keeps key identifiers transient and sends only feature
   windows that match the v1 contract.
@@ -41,15 +41,15 @@ the browser connect directly to a private PC or expose the local detector.
 The follow-up implementer should:
 
 1. Define and version messages for agent/model health, timestamps, disconnects,
-   and detection summaries before wiring status updates into the dashboard.
+   and anomaly-signal summaries before wiring status updates into the dashboard.
 2. Authenticate the dashboard with Better Auth and authorize every status/event
    against the same account and paired device. Keep device credentials on the
    agent/service, not in browser JavaScript.
 3. Keep raw key identity, typed content, and ordered input events out of
    WebSocket messages, logs, and persistence. Send only the approved aggregate
    features and result summaries.
-4. Mark stale connections offline and avoid showing old detection results as
-   current. A detection is a verification prompt, not proof of identity.
+4. Mark stale connections offline and avoid showing old anomaly signals as
+   current. A signal is a verification prompt, not proof of identity.
 5. Forward the website `DELETE /me/data` action to the model service with the
    server-side credential. The website already deletes its own rows and local
    artifact files after a typed phrase. The model service deletes that account's

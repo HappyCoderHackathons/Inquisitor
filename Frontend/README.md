@@ -23,7 +23,7 @@ A local Flask + TypeScript arcade prototype for collecting opt-in behavioral inp
 - The home page (`/`) states the product pitch, links to Create Account and Log In, says a Windows agent is required, and explains that scores are anomaly signals rather than identity.
 - The privacy page (`/privacy`) lists the accepted feature-window fields and units, a valid sample payload, and what is never collected.
 - The arcade (`/arcade`) contains the playable games and recent round summaries.
-- The user dashboard (`/dashboard`) shows the planned account, model, and agent status areas. Its profile and agent/model status connections are not integrated yet. Sign in and pair devices at `/onboarding`.
+- The user dashboard (`/dashboard`) shows account, model, and agent status as not connected until those services exist. Anomaly signals are prompts to verify. The page does not name a person or quote a measured accuracy. Sign in and pair devices at `/onboarding`.
 - Use the navigation on each page to move between home, activities, and the dashboard.
 
 See [INTEGRATION_HANDOFF.md](INTEGRATION_HANDOFF.md) for dashboard code locations and the remaining authenticated WebSocket, profile, model-status, and account-deletion work.
