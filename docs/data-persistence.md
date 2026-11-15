@@ -44,7 +44,7 @@ On Atlas, `delete_device_records` in `Frontend/atlas_persistence.py` applies the
 `model_versions`, `inference_results`, `alerts`, `windows`, and `monitoring_windows`. The hosted
 `DELETE /api/me/data` route deletes the account on the ML service first, then runs that cascade for
 each paired device, removes onboarding rounds, and revokes every device credential. If the ML service
-is unavailable it returns 502 and deletes nothing. `POST /api/devices/<id>/revoke` revokes one device
+is unavailable it returns 502 and deletes nothing. `POST /api/devices/<id>/revoke` (or `DELETE /api/devices/<id>`) revokes one device
 without deleting data. Both are on the setup page.
 
 Enrollment windows stay until reset or account deletion. Model artifact files on the ML
