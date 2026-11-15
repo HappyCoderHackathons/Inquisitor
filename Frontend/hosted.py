@@ -1453,9 +1453,11 @@ def register(
                     break
                 for reply in link.receive(raw):
                     ws.send(json.dumps(reply))
+                publish_device_monitoring(g.agent_device["_id"])
             ws.close(reason=link.close_code or 1000)
         finally:
             link.closed()
+            publish_device_monitoring(g.agent_device["_id"])
 
     @blueprint.post("/api/agent/windows")
     def upload_window():
@@ -1626,6 +1628,11 @@ def register(
             ).sort("started_at", -1)
         ]
         return payload
+
+    def publish_device_monitoring(device_id: str) -> None:
+        device = database.devices.find_one({"_id": device_id})
+        if device is not None:
+            publish_monitoring(device["user_id"], device_id, stream_payload(device["user_id"], device))
 
     @blueprint.get("/monitoring/status")
     @blueprint.get("/api/monitoring/status")

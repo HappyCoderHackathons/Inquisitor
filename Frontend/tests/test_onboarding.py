@@ -1391,21 +1391,28 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.database.demo_switches.count_documents({}), 0)
 
     def test_agent_socket_reports_status_presence_and_revocation(self):
-        device_id, _agent = self.pair()
+        device_id, agent = self.ready_monitor()
+        self.upload_scores(device_id, agent, ["NORMAL"])
         link = hosted.AgentLink(self.database, device_id)
         hello = link.receive('{"v": 1, "type": "hello", "paused": false, "agent_version": "0.1.0"}')
-        self.assertEqual(hello, [{"v": 1, "type": "status", "state": "collecting", "session_id": None,
+        self.assertEqual(hello, [{"v": 1, "type": "status", "state": "ready", "session_id": None,
                                   "collection": "active"}])
         device = self.database.devices.find_one({"_id": device_id})
         self.assertTrue(device["ws_connected"])
         self.assertEqual(device["last_heartbeat_at"], self.clock)
         self.assertEqual(self.client.get("/api/devices").get_json()["devices"][0]["stale"], False)
+        active = self.client.get("/api/monitoring/status").get_json()
+        self.assertEqual((active["state"], active["agent"], active["window_state"]), ("normal", "active", "NORMAL"))
         # An unchanged status is not resent; pausing shows on the dashboard.
         self.assertEqual(link.receive('{"v": 1, "type": "heartbeat", "paused": true}'), [])
         self.assertEqual(self.client.get("/api/onboarding").get_json()["agent"], "paused")
+        paused = self.client.get("/api/monitoring/status").get_json()
+        self.assertEqual((paused["state"], paused["agent"], paused["score"]), ("paused", "paused", -0.4))
         # A closed socket is offline at once, without waiting out the 90-second heartbeat window.
         link.closed()
         self.assertEqual(self.client.get("/api/onboarding").get_json()["agent"], "offline")
+        offline = self.client.get("/api/monitoring/status").get_json()
+        self.assertEqual((offline["state"], offline["agent"], offline["score"]), ("offline", "offline", -0.4))
         self.assertTrue(self.client.get("/api/devices").get_json()["devices"][0]["stale"])
         again = hosted.AgentLink(self.database, device_id)
         again.receive('{"v": 1, "type": "hello", "paused": false}')

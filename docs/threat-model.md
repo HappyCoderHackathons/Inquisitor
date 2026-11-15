@@ -138,7 +138,7 @@ The agent socket carries presence only, as JSON text frames with `"v": 1`:
 
 | Direction | Message | Effect |
 | --- | --- | --- |
-| Agent to server | `hello {paused, agent_version?}`, then `heartbeat {paused}` every 30 seconds | Sets `last_heartbeat_at`, `ws_connected`, and `agent_paused` on the device |
+| Agent to server | `hello {paused, agent_version?}`, then `heartbeat {paused}` every 30 seconds | Sets `last_heartbeat_at`, `ws_connected`, and `agent_paused` on the device; publishes an updated owner-scoped monitoring snapshot |
 | Server to agent | `status {state, collection, session_id}` | Sent after `hello` and whenever it changes. The same fields as `GET /api/agent/onboarding` |
 | Server to agent | `revoked` | The device was revoked. The agent deletes its credential and stops |
 
