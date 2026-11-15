@@ -93,6 +93,7 @@ def progress(database: Database, onboarding: Document) -> Document:
     training = sum(usable.values()) - validation
     return {
         "state": onboarding["state"], "error": onboarding.get("error"), "model_id": onboarding.get("model_id"),
+        "device_id": onboarding["device_id"],
         "seconds": seconds, "required_seconds": GAME_SECONDS,
         "sessions": sorted(usable), "validation_sessions": sorted(latest.values()),
         "training_windows": training, "validation_windows": validation,
