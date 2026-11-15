@@ -1,13 +1,21 @@
 # Remote ML service
 
 Python 3.13+, Flask, and one selected model per user/device. The backend
-uses the provisional contract in `shared/feature-window-v1.schema.json`.
+uses schema-v4 native keyboard/mouse aggregates for the deployed model;
+legacy schemas remain available for archived profiles.
 Training and inference belong on the designated remote model host. Hostnames,
 accounts, and credentials must stay in local/server configuration.
 
 The trained numeric weights are checked in at
-[`artifacts/labeled-overlap-v2.json`](artifacts/labeled-overlap-v2.json).
+[`artifacts/tray-two-device-v1.json`](artifacts/tray-two-device-v1.json).
 For inference without retraining, follow the [published API deployment guide](deploy/README.md).
+
+The deployed shared two-computer model is
+[`artifacts/tray-two-device-v1.json`](artifacts/tray-two-device-v1.json). Its
+`tray-multimodal` profile consumes schema-v4 native keyboard/mouse aggregates and
+supports one owned model with an explicit device allowlist. Earlier numeric models
+are retired under [`archive_models/`](../archive_models/). See the
+[model card and CSV conversion instructions](../docs/multimodal-model.md).
 
 From the repository root, install the locked environment:
 
@@ -94,7 +102,7 @@ UNUSUAL results from labeled-overlap models include an `explanation`. Each featu
 `contribution` is its scaled value times the model weight, so the features are
 ranked by how much they pushed the score toward the second-user class. Models trained
 with this version also save a `genuine_baseline` (median and 1.4826 x MAD of genuine
-training windows) and add each feature's `baseline_z`. The published
+training windows) and add each feature's `baseline_z`. The archived
 `labeled-overlap-v2` artifact includes the baseline; v1 predates it and reports
 contributions only. Isolation Forest models do not return explanations.
 Explanations describe the model's decision, not the cause of a user's behavior.

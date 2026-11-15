@@ -42,6 +42,20 @@ class Device(TypedDict):
     revoked_at: datetime | None
 
 
+EnrollmentSessionStatus = Literal["active", "completed", "cancelled"]
+
+class EnrollmentSession(TypedDict):
+    _id: str
+    onboarding_id: str
+    device_id: str
+    game: str
+    started_at: datetime
+    ended_at: datetime | None
+    status: EnrollmentSessionStatus
+    valid_window_count: int
+    credited_ms: int
+
+
 DEFAULT_PRIVACY_PREFERENCES: PrivacyPreferences = {
     "keyboard_collection": False,
     "mouse_collection": False,

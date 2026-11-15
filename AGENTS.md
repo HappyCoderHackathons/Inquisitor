@@ -19,7 +19,7 @@
   component boundaries. It supersedes open options in the original project spec.
 - Windows client: Rust owns native keyboard and mouse I/O, local orchestration, and transport.
 - ML: Python 3.13+ with scikit-learn. The current labeled pilot uses logistic
-  regression on hold-time variability and press overlap; Isolation Forest artifacts
+  regression on keyboard timing and mouse motion/click aggregates; Isolation Forest artifacts
   remain supported for comparison and rollback. Training and inference run
   on the designated remote host behind an authenticated Flask service. Keep model
   artifacts there; keep deployment identities and credentials out of the repository.

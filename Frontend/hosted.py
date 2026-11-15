@@ -32,7 +32,12 @@ from flask import (
     request,
     url_for,
 )
-from models import DEFAULT_PRIVACY_PREFERENCES, DevicePairingState
+from models import (
+    DEFAULT_PRIVACY_PREFERENCES,
+    DevicePairingState,
+    EnrollmentSession,
+    EnrollmentSessionStatus,
+)
 from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
@@ -159,9 +164,9 @@ def progress(database: Database, onboarding: Document) -> Document:
     # The latest keyboard-active round of each game calibrates the threshold; earlier rounds train.
     latest = {}
     for item in sorted(rounds, key=lambda r: r["started_at"]):
-        if item["usable_windows"]:
+        if item["valid_window_count"]:
             latest[item["game"]] = item["_id"]
-    usable = {item["_id"]: item["usable_windows"] for item in rounds}
+    usable = {item["_id"]: item["valid_window_count"] for item in rounds}
     validation = sum(usable[session_id] for session_id in latest.values())
     training = sum(usable.values()) - validation
     return {
@@ -175,7 +180,9 @@ def progress(database: Database, onboarding: Document) -> Document:
         and training >= MIN_TRAINING_WINDOWS and validation >= MIN_VALIDATION_WINDOWS,
         "collection": collection_state(onboarding),
         "agent": agent_presence(database, onboarding),
-        "usable_windows": sum(int(item.get("usable_windows") or 0) for item in all_rounds),
+        "usable_windows": sum(
+            int(item.get("valid_window_count") or item.get("usable_windows") or 0) for item in all_rounds
+        ),
         "duration_seconds": sum(int(item.get("credited_ms") or 0) for item in all_rounds) // 1000,
         "required_windows": REQUIRED_WINDOWS,
     }
@@ -220,6 +227,30 @@ def register(
         {"$set": {"privacy_preferences": DEFAULT_PRIVACY_PREFERENCES}},
     )
     database.onboarding.create_index([("user_id", ASCENDING), ("device_id", ASCENDING)], unique=True)
+    database.rounds.create_index([("device_id", ASCENDING), ("started_at", ASCENDING)])
+    for session in database.rounds.find({
+        "$or": [
+            {"device_id": {"$exists": False}},
+            {"status": {"$exists": False}},
+            {"valid_window_count": {"$exists": False}},
+        ],
+    }):
+        updates: Document = {}
+        if "device_id" not in session:
+            onboarding = database.onboarding.find_one({"_id": session["onboarding_id"]}, {"device_id": 1})
+            if onboarding is not None:
+                updates["device_id"] = onboarding["device_id"]
+        if "status" not in session:
+            if session.get("ended_at") is None:
+                updates["status"] = "active"
+            elif session.get("credited_ms", 0) > 0:
+                updates["status"] = "completed"
+            else:
+                updates["status"] = "cancelled"
+        if "valid_window_count" not in session:
+            updates["valid_window_count"] = session.get("usable_windows", 0)
+        if updates:
+            database.rounds.update_one({"_id": session["_id"]}, {"$set": updates})
     for collection in (database.windows, database.monitoring_windows):
         collection.create_index(
             [("device_id", ASCENDING), ("session_id", ASCENDING), ("sequence", ASCENDING)], unique=True
@@ -436,11 +467,25 @@ def register(
         game = json_body().get("game")
         if game not in GAMES or onboarding["state"] != "collecting" or collection_state(onboarding) != "active":
             abort(409 if game in GAMES else 422)
-        database.rounds.update_many({"onboarding_id": onboarding["_id"], "ended_at": None},
-                                    {"$set": {"ended_at": now(), "credited_ms": 0}})
+        started = now()
+        database.rounds.update_many(
+            {"onboarding_id": onboarding["_id"], "status": "active"},
+            {"$set": {"ended_at": started, "credited_ms": 0, "status": "cancelled"}},
+        )
         session_id = uuid4().hex
-        database.rounds.insert_one({"_id": session_id, "onboarding_id": onboarding["_id"], "game": game,
-                                    "started_at": now(), "ended_at": None, "credited_ms": 0, "usable_windows": 0})
+        session_status: EnrollmentSessionStatus = "active"
+        session: EnrollmentSession = {
+            "_id": session_id,
+            "onboarding_id": onboarding["_id"],
+            "device_id": onboarding["device_id"],
+            "game": game,
+            "started_at": started,
+            "ended_at": None,
+            "status": session_status,
+            "credited_ms": 0,
+            "valid_window_count": 0,
+        }
+        database.rounds.insert_one(session)
         return jsonify(session_id=session_id), 201
 
     @blueprint.post("/api/onboarding/rounds/current/<outcome>")
@@ -449,13 +494,17 @@ def register(
         json_body()
         if outcome not in ("finish", "cancel"):
             abort(404)
-        active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "ended_at": None})
+        active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "status": "active"})
         if active is None:
             abort(409)
         ended = now()
         started = cast(datetime, active["started_at"]).replace(tzinfo=UTC)
         credited = min(int((ended - started).total_seconds() * 1000), ROUND_MS) if outcome == "finish" else 0
-        database.rounds.update_one({"_id": active["_id"]}, {"$set": {"ended_at": ended, "credited_ms": credited}})
+        status: EnrollmentSessionStatus = "completed" if outcome == "finish" else "cancelled"
+        database.rounds.update_one(
+            {"_id": active["_id"]},
+            {"$set": {"ended_at": ended, "credited_ms": credited, "status": status}},
+        )
         return jsonify(progress(database, onboarding))
 
     @blueprint.post("/api/onboarding/train")
@@ -469,17 +518,22 @@ def register(
         return jsonify(progress(database, user_onboarding(onboarding["user_id"]))), 202
 
     def close_open_round(onboarding: Document, *, credit: bool) -> None:
-        active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "ended_at": None})
+        active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "status": "active"})
         if active is None:
             return
         ended = now()
         credited = 0
+        status: EnrollmentSessionStatus = "cancelled"
         if credit:
             started = cast(datetime, active["started_at"])
             if started.tzinfo is None:
                 started = started.replace(tzinfo=UTC)
             credited = min(int((ended - started).total_seconds() * 1000), ROUND_MS)
-        database.rounds.update_one({"_id": active["_id"]}, {"$set": {"ended_at": ended, "credited_ms": credited}})
+            status = "completed"
+        database.rounds.update_one(
+            {"_id": active["_id"]},
+            {"$set": {"ended_at": ended, "credited_ms": credited, "status": status}},
+        )
 
     def mark_collection(onboarding: Document, value: str) -> Document:
         database.onboarding.update_one({"_id": onboarding["_id"]}, {"$set": {"collection": value}})
@@ -513,7 +567,8 @@ def register(
         close_open_round(onboarding, credit=False)
         database.windows.delete_many({"onboarding_id": onboarding["_id"]})
         database.rounds.update_many(
-            {"onboarding_id": onboarding["_id"]}, {"$set": {"usable_windows": 0, "credited_ms": 0}}
+            {"onboarding_id": onboarding["_id"]},
+            {"$set": {"usable_windows": 0, "valid_window_count": 0, "credited_ms": 0}},
         )
         return jsonify(mark_collection(onboarding, "active"))
 
@@ -606,7 +661,7 @@ def register(
             abort(404)
         active = None
         if onboarding["state"] == "collecting" and collection_state(onboarding) == "active":
-            active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "ended_at": None})
+            active = database.rounds.find_one({"onboarding_id": onboarding["_id"], "status": "active"})
         return jsonify(
             state=onboarding["state"],
             session_id=active["_id"] if active else None,
@@ -629,7 +684,7 @@ def register(
         if onboarding is None or collection_state(onboarding) != "active":
             return jsonify(error="enrollment is not collecting"), 409
         active = database.rounds.find_one(
-            {"_id": window["session_id"], "onboarding_id": onboarding["_id"], "ended_at": None}
+            {"_id": window["session_id"], "onboarding_id": onboarding["_id"], "status": "active"}
         )
         if not active:
             return jsonify(error="no active game round for this session"), 409
@@ -642,7 +697,7 @@ def register(
         except DuplicateKeyError:
             return jsonify(error="This device/session/sequence window already exists"), 409
         if usable:
-            database.rounds.update_one({"_id": active["_id"]}, {"$inc": {"usable_windows": 1}})
+            database.rounds.update_one({"_id": active["_id"]}, {"$inc": {"valid_window_count": 1}})
         return jsonify(ok=True, usable=usable), 201
 
     def score_window(device: Document, window: Document):

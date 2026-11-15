@@ -100,7 +100,7 @@ class AccountControlTests(unittest.TestCase):
         self.assertEqual(self.account.counts("other-user")["windows"], 1)
         self.assertEqual(self.account.counts("other-user")["inference_results"], 1)
         self.assertEqual(self.account.counts("other-user")["alerts"], 0)
-        published = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v2.json"
+        published = Path(__file__).resolve().parents[1] / "backend/artifacts/tray-two-device-v1.json"
         self.assertTrue(published.is_file())
 
     def test_reset_clears_enrollment_and_active_model_only(self) -> None:

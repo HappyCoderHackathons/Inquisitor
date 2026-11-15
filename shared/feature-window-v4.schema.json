@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InputPrint native keyboard and mouse window v4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "device_id",
+    "session_id",
+    "sequence",
+    "mode",
+    "started_at",
+    "duration_ms",
+    "features"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 4,
+      "type": "integer"
+    },
+    "device_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "mode": {
+      "enum": [
+        "enrollment",
+        "monitoring"
+      ]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key_count",
+        "hold_mean_ms",
+        "hold_std_ms",
+        "press_interval_mean_ms",
+        "press_interval_std_ms",
+        "hold_sample_count",
+        "mouse_sample_count",
+        "mouse_click_count",
+        "mouse_speed_mean_counts_s",
+        "mouse_speed_std_counts_s",
+        "mouse_click_interval_mean_ms",
+        "mouse_click_interval_std_ms",
+        "mouse_turn_mean_rad",
+        "mouse_turn_std_rad",
+        "mouse_path_straightness"
+      ],
+      "properties": {
+        "key_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hold_mean_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "hold_std_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "press_interval_mean_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "press_interval_std_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "hold_sample_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mouse_sample_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mouse_click_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mouse_speed_mean_counts_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "mouse_speed_std_counts_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "mouse_click_interval_mean_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "mouse_click_interval_std_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "mouse_turn_mean_rad": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 3.141592653589793
+        },
+        "mouse_turn_std_rad": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 3.141592653589793
+        },
+        "mouse_path_straightness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    }
+  }
+}

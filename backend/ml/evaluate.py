@@ -11,7 +11,7 @@ from typing import cast
 
 import numpy as np
 
-from .evaluation import MedianMAD, split_sessions, window_metrics
+from .evaluation import MedianMAD, split_sessions, switch_latency, window_metrics
 from .model import FEATURE_NAMES, ModelStore, validate_window
 
 
@@ -36,9 +36,12 @@ def evaluate(
         baseline = MedianMAD.fit(training)
         scores = baseline.scores(validation)
         threshold = float(np.sort(scores)[ceil(0.95 * len(scores)) - 1])
+        holdout.sort(key=lambda window: (cast(str, window["session_id"]), cast(int, window["sequence"])))
+        impostor.sort(key=lambda window: (cast(str, window["session_id"]), cast(int, window["sequence"])))
         results = {}
         for name in ("IsolationForest", "MedianMAD"):
             groups = {}
+            timeline: dict[str, list[tuple[str, int]]] = {}
             for label, windows in (("genuine", holdout), ("impostor", impostor)):
                 states = []
                 for window in windows:
@@ -51,8 +54,10 @@ def evaluate(
                         state = "UNUSUAL" if baseline.scores([window])[0] > threshold else "NORMAL"
                     states.append(state)
                 groups[label] = window_metrics(states, impostor=label == "impostor")
+                timeline[label] = [(state, cast(int, window["duration_ms"])) for state, window in zip(states, windows)]
             results[name] = {
                 "threshold": metadata["threshold"] if name == "IsolationForest" else threshold, **groups,
+                "switch": switch_latency(timeline["genuine"], timeline["impostor"]),
             }
         return {
             "data_kind": data_kind,
@@ -96,12 +101,28 @@ def render_report(report: dict[str, object]) -> str:
     lines.extend([
         "", "FRR is the fraction of usable genuine windows marked unusual. FAR is the fraction of usable",
         "impostor windows marked normal; recall is the fraction marked unusual. Insufficient-data windows",
-        "are excluded from rates and counted in the details below. Correlated windows are not independent samples.",
-        "No session-level verification or user-switch latency is measured by this window-level comparison.", "",
+        "are excluded from rates and counted in the details below. Correlated windows are not independent samples.", "",
         "Median/MAD scores average absolute robust z-scores (scale = 1.4826 × MAD). Varying features with",
         "zero MAD use training standard deviation. Constant features are dropped. Scores from different",
         "algorithms are not directly comparable. Threshold ties are normal, matching the service.", "",
-        "## Reproduction details", "", "```json", json.dumps(report, indent=2, allow_nan=False), "```", "",
+        "## Simulated user switch", "",
+        "Holdout genuine windows are replayed, then impostor windows, each in session/sequence order.",
+        "NEEDS_VERIFICATION is raised when 3 of the last 4 usable windows are unusual (spec 7.6).",
+        "Latency counts impostor windows, including insufficient-data ones, up to the alert. Seconds sum",
+        "their durations and ignore gaps between windows. One replayed switch is not a latency distribution.", "",
+        "| Model | Windows to alert | Seconds to alert | Alert before switch |",
+        "| --- | --- | --- | --- |",
+    ])
+    for name, result in results.items():
+        switch = cast(dict[str, int | float | bool | None], result["switch"])
+        never = "Not raised" if cast(dict[str, int], result["impostor"])["total"] else "Unavailable"
+        lines.append(
+            f"| {name} | {never if switch['windows'] is None else switch['windows']} | "
+            f"{never if switch['seconds'] is None else switch['seconds']} | "
+            f"{'Yes' if switch['alert_before_switch'] else 'No'} |"
+        )
+    lines.extend([
+        "", "## Reproduction details", "", "```json", json.dumps(report, indent=2, allow_nan=False), "```", "",
     ])
     return "\n".join(lines)
 

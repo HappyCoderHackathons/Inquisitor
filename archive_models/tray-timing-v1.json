@@ -1,0 +1,51 @@
+{
+  "format_version": 1,
+  "model_version": "tray-timing-v1",
+  "algorithm": "LogisticRegression",
+  "schema_version": 3,
+  "schema_sha256": "ea527053e55ada5f9d381645c325e8a13d509043228bbfafde7765570ca72dbe",
+  "feature_profile": "tray-timing",
+  "feature_names": [
+    "hold_cv",
+    "press_interval_cv"
+  ],
+  "feature_transform": "timing ratios with denominator floor 1e-8; log1p; standard scaling",
+  "scaler_mean": [
+    0.405269228461746,
+    0.709185776659181
+  ],
+  "scaler_scale": [
+    0.19477099152318983,
+    0.21969494460320813
+  ],
+  "coefficient": [
+    -0.061458933621518254,
+    0.25541265760000015
+  ],
+  "intercept": 0.009243961441055111,
+  "threshold": 0.14707068703826723,
+  "threshold_percentile": 98,
+  "parameters": {
+    "C": 0.1,
+    "class_weight": "balanced",
+    "random_state": 49,
+    "max_iter": 1000
+  },
+  "training_summary": {
+    "genuine_windows": 10,
+    "impostor_windows": 12,
+    "genuine_sessions": 1,
+    "impostor_sessions": 1
+  },
+  "genuine_baseline": {
+    "median": [
+      0.6443214142380038,
+      0.8399874884403692
+    ],
+    "scale": [
+      0.3834425555653654,
+      0.12161468343752709
+    ]
+  },
+  "limitations": "Tray keyboard-timing pilot. One recording per class is permitted. Threshold uses genuine training data. No independent evaluation or mouse inference; no performance guarantee for other people, activities, or devices."
+}
