@@ -357,6 +357,10 @@ if hosted.configured():
         deactivator,
     )
 else:
+    @app.get("/health")
+    def health():
+        return jsonify(state="ok")
+
     @app.get("/onboarding")
     def onboarding_unavailable():
         return render_template("auth-unavailable.html")

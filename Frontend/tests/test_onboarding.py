@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -6,7 +7,7 @@ from unittest.mock import Mock, patch
 
 import mongomock
 from flask import Flask
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import ConnectionFailure, DuplicateKeyError
 
 import hosted
 import server
@@ -189,6 +190,32 @@ class OnboardingTests(unittest.TestCase):
         body = paired.get_json()
         return body["device_id"], {"Authorization": "Bearer " + body["token"]}
 
+    def test_health_reports_database_readiness_without_authentication(self):
+        with patch.object(self.database, "command", return_value={"ok": 1}) as ping:
+            healthy = self.client.get("/health")
+        self.assertEqual((healthy.status_code, healthy.get_json()), (200, {
+            "state": "ok",
+            "database": "available",
+        }))
+        ping.assert_called_once_with("ping")
+
+        with (
+            patch.object(self.database, "command", side_effect=ConnectionFailure("private connection detail")),
+            self.assertLogs(hosted.__name__, level="WARNING") as logs,
+        ):
+            degraded = self.client.get("/health")
+        self.assertEqual((degraded.status_code, degraded.get_json()), (503, {
+            "state": "degraded",
+            "database": "unavailable",
+        }))
+        event = json.loads(logs.records[0].getMessage())
+        self.assertEqual(event, {
+            "component": "database",
+            "event": "health_check",
+            "outcome": "unavailable",
+        })
+        self.assertNotIn("private connection detail", logs.output[0])
+
     def test_pairing_requires_sign_in_json_and_live_codes(self):
         self.assertEqual(self.client.post("/api/pairing-codes", json={}).status_code, 401)
         self.sign_in()
@@ -228,6 +255,75 @@ class OnboardingTests(unittest.TestCase):
             self.database.devices.find_one({"_id": device_id})["last_heartbeat_at"],
             expected_heartbeat,
         )
+
+    def test_id_scoped_endpoints_reject_another_accounts_ids(self):
+        device_id, _agent = self.pair()
+        enrollment = self.client.post(
+            "/api/enrollments", json={"device_id": device_id, "game": "typing"},
+        )
+        self.assertEqual(enrollment.status_code, 201, enrollment.get_json())
+        enrollment_id = enrollment.get_json()["id"]
+        alert_id = "user-a-alert"
+        self.database.alerts.insert_one({
+            "_id": alert_id,
+            "user_id": "better-auth:user-a",
+            "device_id": device_id,
+            "status": "open",
+            "started_at": self.clock,
+        })
+
+        self.sign_in("user-b")
+        requests = [
+            ("GET model", lambda: self.client.get(f"/api/model?device_id={device_id}")),
+            ("POST enrollment", lambda: self.client.post(
+                "/api/enrollments", json={"device_id": device_id, "game": "typing"},
+            )),
+            ("GET enrollment", lambda: self.client.get(f"/api/enrollments/{enrollment_id}")),
+            ("complete enrollment", lambda: self.client.post(
+                f"/api/enrollments/{enrollment_id}/complete", json={},
+            )),
+            ("revoke device", lambda: self.client.post(f"/api/devices/{device_id}/revoke", json={})),
+            ("monitoring status API", lambda: self.client.get(f"/api/monitoring/status?device_id={device_id}")),
+            ("monitoring status alias", lambda: self.client.get(f"/monitoring/status?device_id={device_id}")),
+            ("monitoring history API", lambda: self.client.get(f"/api/monitoring/history?device_id={device_id}")),
+            ("monitoring history alias", lambda: self.client.get(f"/monitoring/history?device_id={device_id}")),
+            ("alerts API", lambda: self.client.get(f"/api/alerts?status=open&device_id={device_id}")),
+            ("alerts alias", lambda: self.client.get(f"/alerts?status=open&device_id={device_id}")),
+            ("monitoring stream", lambda: self.client.get(f"/api/monitoring/stream?device_id={device_id}")),
+            ("demo switch list", lambda: self.client.get(f"/api/demo/switches?device_id={device_id}")),
+            ("create demo switch", lambda: self.client.post(
+                f"/api/demo/switches?device_id={device_id}", json={},
+            )),
+            ("acknowledge alert", lambda: self.client.post(
+                f"/api/alerts/{alert_id}/acknowledge", json={"label": "expected"},
+            )),
+        ]
+        for endpoint, send in requests:
+            with self.subTest(endpoint=endpoint):
+                self.assertEqual(send().status_code, 404)
+
+        self.assertEqual(self.client.get("/api/devices").get_json()["devices"], [])
+        self.assertIsNone(self.database.devices.find_one({"_id": device_id})["revoked_at"])
+        self.assertIsNone(self.database.alerts.find_one({"_id": alert_id}).get("acknowledgement"))
+        self.assertEqual(self.database.rounds.find_one({"_id": enrollment_id})["status"], "active")
+
+    def test_agent_heartbeat_stores_online_status_and_last_seen(self):
+        device_id, agent = self.pair()
+        self.assertEqual(self.client.post("/agent/heartbeat").status_code, 401)
+        self.assertEqual(
+            self.client.post("/api/agent/heartbeat", headers={"Authorization": "Bearer nope"}).status_code, 401,
+        )
+        self.clock += timedelta(seconds=1)
+        response = self.client.post("/agent/heartbeat", headers=agent)
+        expected_heartbeat = self.clock.replace(microsecond=(self.clock.microsecond // 1000) * 1000)
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json(), {
+            "status": "online",
+            "last_seen": expected_heartbeat.isoformat(),
+        })
+        stored = self.database.devices.find_one({"_id": device_id})
+        self.assertEqual(stored["status"], "online")
+        self.assertEqual(stored["last_heartbeat_at"], expected_heartbeat)
 
     def play(self, game, windows, device_id, agent):
         session_id = self.client.post("/api/onboarding/rounds", json={"game": game}).get_json()["session_id"]
@@ -343,10 +439,15 @@ class OnboardingTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(self.database.windows.count_documents({}), 0)
-        log_output = "\n".join(logs.output)
-        self.assertIn("reason=invalid_payload", log_output)
-        self.assertNotIn("private_field", log_output)
-        self.assertNotIn("sensitive-window-content", log_output)
+        event = json.loads(logs.records[0].getMessage())
+        self.assertEqual(event, {
+            "device_id": device_id,
+            "event": "agent_window_ingestion",
+            "outcome": "rejected",
+            "reason": "invalid_payload",
+        })
+        self.assertNotIn("private_field", logs.output[0])
+        self.assertNotIn("sensitive-window-content", logs.output[0])
 
     def test_agent_window_request_size_is_limited_before_persistence(self):
         device_id, agent = self.pair()
@@ -363,9 +464,11 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 413)
         self.assertEqual(self.database.windows.count_documents({}), 0)
         self.assertEqual(self.database.monitoring_windows.count_documents({}), 0)
-        log_output = "\n".join(logs.output)
-        self.assertIn("reason=request_too_large", log_output)
-        self.assertNotIn("x" * 100, log_output)
+        event = json.loads(logs.records[0].getMessage())
+        self.assertEqual(event["event"], "agent_window_ingestion")
+        self.assertEqual(event["outcome"], "rejected")
+        self.assertEqual(event["reason"], "request_too_large")
+        self.assertNotIn("x" * 100, logs.output[0])
 
     def test_legacy_round_documents_are_migrated_to_enrollment_sessions(self):
         device_id, _ = self.pair()
@@ -965,11 +1068,32 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(decide(
             ["NORMAL", "NORMAL", "NORMAL", "UNUSUAL"], window=4, unusual_needed=3, normal_needed=3,
         ), "close")
-        self.assertEqual(hosted.alert_rule(), (4, 3, 3))
-        with patch.dict(os.environ, {"ALERT_WINDOW": "0", "ALERT_UNUSUAL_COUNT": "nope", "ALERT_NORMAL_COUNT": ""}):
+        self.assertEqual(decide(["NORMAL", "UNUSUAL", "UNUSUAL", "UNUSUAL"], window=4,
+                                unusual_needed=3, normal_needed=3), "open")
+        self.assertEqual(decide(["UNUSUAL"] * 4 + ["NORMAL"] * 4, window=4,
+                                unusual_needed=3, normal_needed=3), "close")
+        self.assertEqual(decide(["UNUSUAL"], window=1, unusual_needed=1, normal_needed=1), "open")
+        self.assertEqual(decide(["NORMAL"], window=1, unusual_needed=1, normal_needed=1), "close")
+        with self.assertRaises(ValueError):
+            decide([], window=0, unusual_needed=1, normal_needed=1)
+        with self.assertRaises(ValueError):
+            decide([], window=4, unusual_needed=5, normal_needed=3)
+        with self.assertRaises(ValueError):
+            decide([], window=4, unusual_needed=3, normal_needed=5)
+        with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(hosted.alert_rule(), (4, 3, 3))
-        with patch.dict(os.environ, {"ALERT_WINDOW": "2", "ALERT_UNUSUAL_COUNT": "2", "ALERT_NORMAL_COUNT": "2"}):
+        with patch.dict(os.environ, {"ALERT_WINDOW": "0", "ALERT_UNUSUAL_COUNT": "nope", "ALERT_NORMAL_COUNT": ""},
+                        clear=True):
+            self.assertEqual(hosted.alert_rule(), (4, 3, 3))
+        with patch.dict(os.environ, {"ALERT_WINDOW": "2", "ALERT_UNUSUAL_COUNT": "2", "ALERT_NORMAL_COUNT": "2"},
+                        clear=True):
             self.assertEqual(hosted.alert_rule(), (2, 2, 2))
+        with patch.dict(os.environ, {"ALERT_WINDOW": "invalid", "ALERT_UNUSUAL_COUNT": "2", "ALERT_NORMAL_COUNT": "2"},
+                        clear=True):
+            self.assertEqual(hosted.alert_rule(), (4, 2, 2))
+        with patch.dict(os.environ, {"ALERT_WINDOW": "2", "ALERT_UNUSUAL_COUNT": "3", "ALERT_NORMAL_COUNT": "2"},
+                        clear=True):
+            self.assertEqual(hosted.alert_rule(), (4, 3, 3))
 
     def test_monitoring_status_history_and_alerts_follow_the_persistence_rule(self):
         self.assertEqual(self.client.get("/api/monitoring/status").status_code, 401)
@@ -977,6 +1101,7 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/monitoring/status").status_code, 401)
         self.assertEqual(self.client.get("/monitoring/history").status_code, 401)
         self.assertEqual(self.client.get("/api/alerts").status_code, 401)
+        self.assertEqual(self.client.get("/alerts").status_code, 401)
         self.assertEqual(
             self.client.post("/api/alerts/missing/acknowledge", json={"label": "expected"}).status_code, 401,
         )
@@ -988,11 +1113,14 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/monitoring/history").get_json(), {"axis": "Anomaly score", "points": []})
         self.assertEqual(self.client.get("/monitoring/status").get_json(), empty)
         self.assertEqual(self.client.get("/monitoring/history").get_json(), {"axis": "Anomaly score", "points": []})
+        self.assertEqual(self.client.get("/alerts").get_json(), {"alerts": []})
         for query in ("limit=0", "limit=201", "since=yesterday"):
             self.assertEqual(self.client.get(f"/api/monitoring/history?{query}").status_code, 422)
         self.assertEqual(self.client.get("/api/alerts?status=nope").status_code, 422)
+        self.assertEqual(self.client.get("/alerts?status=nope").status_code, 422)
         self.assertEqual(self.client.get("/api/monitoring/status?device_id=other").status_code, 404)
         self.assertEqual(self.client.get("/api/alerts?device_id=other").status_code, 404)
+        self.assertEqual(self.client.get("/alerts?device_id=other").status_code, 404)
 
         device_id, agent = self.ready_monitor()
         self.upload_scores(device_id, agent, ["UNUSUAL"])
@@ -1008,6 +1136,9 @@ class OnboardingTests(unittest.TestCase):
         self.upload_scores(device_id, agent, ["UNUSUAL", "UNUSUAL", "NORMAL"])
         opened = self.client.get("/api/alerts").get_json()["alerts"]
         self.assertEqual(len(opened), 1)
+        self.assertEqual(self.client.get(f"/alerts?status=open&device_id={device_id}").get_json(), {
+            "alerts": opened,
+        })
         self.assertEqual(opened[0]["status"], "open")
         self.assertTrue(opened[0]["ongoing"])
         self.assertIsNone(opened[0]["duration_seconds"])
@@ -1056,7 +1187,9 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 403)
         self.sign_in("user-b")
         self.assertEqual(self.client.get("/api/alerts").get_json()["alerts"], [])
+        self.assertEqual(self.client.get("/alerts").get_json()["alerts"], [])
         self.assertEqual(self.client.get(f"/api/alerts?device_id={device_id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/alerts?device_id={device_id}").status_code, 404)
         self.assertEqual(self.client.get(f"/api/monitoring/status?device_id={device_id}").status_code, 404)
         self.assertEqual(self.client.get(f"/monitoring/status?device_id={device_id}").status_code, 404)
         self.assertEqual(self.client.get(f"/monitoring/history?device_id={device_id}").status_code, 404)
@@ -1230,6 +1363,68 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/agent/ws", headers=wrong).status_code, 401)
         foreign = {**upgrade, **agent, "Origin": "https://evil.example.test"}
         self.assertEqual(self.client.get("/api/agent/ws", headers=foreign).status_code, 403)
+
+    def test_each_device_has_its_own_model_and_monitoring_view(self):
+        first, first_agent = self.pair()
+        self.clock += timedelta(seconds=1)
+        second, _second_agent = self.pair()
+        self.assertEqual(self.database.onboarding.count_documents({"user_id": "better-auth:user-a"}), 2)
+        self.database.onboarding.update_one(
+            {"device_id": first}, {"$set": {"state": "ready", "model_id": "model-a"}},
+        )
+        for device_id, model_id, samples in ((first, "model-a", 20), (second, "model-b", 30)):
+            self.database.model_versions.insert_one({
+                "_id": model_id,
+                "user_id": "better-auth:user-a",
+                "device_id": device_id,
+                "active": True,
+                "created_at": self.clock,
+                "metadata": {
+                    "algorithm": "IsolationForest",
+                    "training_window_count": samples,
+                    "validation_window_count": 10,
+                },
+            })
+        self.assertEqual(self.client.get(f"/api/model?device_id={first}").get_json()["model_id"], "model-a")
+        self.assertEqual(self.client.get(f"/api/model?device_id={second}").get_json()["model_id"], "model-b")
+        self.assertEqual(self.client.get("/api/model").get_json()["model_id"], "model-b")
+        self.database.onboarding.delete_one({"device_id": second})
+        missing = self.client.get(f"/api/model?device_id={second}").get_json()
+        self.assertFalse(missing["available"])
+        self.assertEqual(missing["device_id"], second)
+        self.assertEqual(missing["device_name"], "keyboard")
+        self.sign_in("user-b")
+        self.assertEqual(self.client.get(f"/api/model?device_id={first}").status_code, 404)
+        self.sign_in()
+        self.upload_scores(first, first_agent, ["NORMAL"])
+        seen = self.client.get(f"/api/monitoring/status?device_id={first}").get_json()
+        self.assertEqual(seen["score"], -0.4)
+        self.assertNotIn("alerts", seen)
+        other = self.client.get(f"/api/monitoring/status?device_id={second}").get_json()
+        self.assertIsNone(other["score"])
+        self.assertEqual(other["device_id"], second)
+
+    def test_monitoring_stream_requires_the_owner_and_publishes_scores(self):
+        self.assertEqual(self.client.get("/api/monitoring/stream").status_code, 401)
+        self.sign_in()
+        self.assertEqual(self.client.get("/api/monitoring/stream").status_code, 404)
+        device_id, agent = self.ready_monitor()
+        self.sign_in("user-b")
+        self.assertEqual(self.client.get(f"/api/monitoring/stream?device_id={device_id}").status_code, 404)
+        self.sign_in()
+        with patch("hosted.listen_monitoring", return_value=iter([{"state": "normal", "score": -0.4}])):
+            response = self.client.get("/api/monitoring/stream")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("text/event-stream", response.content_type)
+            body = response.get_data(as_text=True)
+        self.assertIn("event: monitoring", body)
+        self.assertIn("normal", body)
+        self.assertIn("-0.4", body)
+        with patch("hosted.publish_monitoring") as published:
+            self.upload_scores(device_id, agent, ["NORMAL"])
+        user_id, published_device, payload = published.call_args.args
+        self.assertEqual((user_id, published_device, payload["score"]), ("better-auth:user-a", device_id, -0.4))
+        self.assertIn("alerts", payload)
 
 
 if __name__ == "__main__":

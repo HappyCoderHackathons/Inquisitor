@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import queue
 import secrets
 import threading
 import urllib.error
@@ -26,12 +27,14 @@ from atlas_persistence import (
 from flask import (
     Blueprint,
     Flask,
+    Response,
     abort,
     g,
     jsonify,
     redirect,
     render_template,
     request,
+    stream_with_context,
     url_for,
 )
 from flask_sock import Sock
@@ -43,7 +46,7 @@ from models import (
 )
 from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, PyMongoError
 from werkzeug.exceptions import RequestEntityTooLarge
 
 GAMES = ("aim", "tetris", "typing", "arena")
@@ -100,22 +103,47 @@ ALGORITHM_LABELS = {
 logger = logging.getLogger(__name__)
 
 
+def audit_agent_event(
+    event: str,
+    *,
+    device_id: str,
+    outcome: str,
+    reason: str | None = None,
+    sequence: int | None = None,
+    schema_version: int | None = None,
+    mode: str | None = None,
+) -> None:
+    metadata: dict[str, str | int] = {
+        "device_id": device_id,
+        "event": event,
+        "outcome": outcome,
+    }
+    if reason is not None:
+        metadata["reason"] = reason
+    if sequence is not None:
+        metadata["sequence"] = sequence
+    if schema_version is not None:
+        metadata["schema_version"] = schema_version
+    if mode is not None:
+        metadata["mode"] = mode
+    logger.info(json.dumps(metadata, allow_nan=False, separators=(",", ":"), sort_keys=True))
+
+
 def audit_agent_window(
     device_id: str,
     outcome: str,
     reason: str | None = None,
     window: Document | None = None,
 ) -> None:
-    metadata = [f"outcome={outcome}", f"device_id={device_id}"]
-    if reason is not None:
-        metadata.append(f"reason={reason}")
-    if window is not None:
-        metadata.extend((
-            f"sequence={window['sequence']}",
-            f"schema_version={window['schema_version']}",
-            f"mode={window['mode']}",
-        ))
-    logger.info("agent_window_ingestion %s", " ".join(metadata))
+    audit_agent_event(
+        "agent_window_ingestion",
+        device_id=device_id,
+        outcome=outcome,
+        reason=reason,
+        sequence=window["sequence"] if window is not None else None,
+        schema_version=window["schema_version"] if window is not None else None,
+        mode=window["mode"] if window is not None else None,
+    )
 
 
 def configured() -> bool:
@@ -141,14 +169,21 @@ def alert_rule() -> tuple[int, int, int]:
             return default
         return int(raw)
 
-    return read("ALERT_WINDOW", ALERT_WINDOW), read("ALERT_UNUSUAL_COUNT", ALERT_UNUSUAL_COUNT), read(
-        "ALERT_NORMAL_COUNT", ALERT_NORMAL_COUNT,
-    )
+    window = read("ALERT_WINDOW", ALERT_WINDOW)
+    unusual_needed = read("ALERT_UNUSUAL_COUNT", ALERT_UNUSUAL_COUNT)
+    normal_needed = read("ALERT_NORMAL_COUNT", ALERT_NORMAL_COUNT)
+    if unusual_needed > window or normal_needed > window:
+        return ALERT_WINDOW, ALERT_UNUSUAL_COUNT, ALERT_NORMAL_COUNT
+    return window, unusual_needed, normal_needed
 
 
 def persistence_decision(
     states: list[str], *, window: int, unusual_needed: int, normal_needed: int,
 ) -> str | None:
+    if window < 1:
+        raise ValueError("window must be positive")
+    if not 1 <= unusual_needed <= window or not 1 <= normal_needed <= window:
+        raise ValueError("persistence thresholds must be between 1 and window")
     recent = [state for state in states if state in {"NORMAL", "UNUSUAL"}][-window:]
     if len(recent) < window:
         return None
@@ -178,6 +213,39 @@ def verification_delay(
             continue
         return alert_before, max(int((seen - mark).total_seconds()), 0)
     return alert_before, None
+
+
+_listener_lock = threading.Lock()
+_listeners: dict[tuple[str, str], list[queue.Queue[Document]]] = {}
+
+
+def publish_monitoring(user_id: str, device_id: str, payload: Document) -> None:
+    with _listener_lock:
+        listeners = list(_listeners.get((user_id, device_id), ()))
+    for listener in listeners:
+        listener.put(payload)
+
+
+def listen_monitoring(user_id: str, device_id: str):
+    updates: queue.Queue[Document] = queue.Queue()
+    key = (user_id, device_id)
+    with _listener_lock:
+        _listeners.setdefault(key, []).append(updates)
+    try:
+        while True:
+            try:
+                yield updates.get(timeout=15)
+            except queue.Empty:
+                yield None
+    finally:
+        with _listener_lock:
+            current = _listeners.get(key, [])
+            if updates in current:
+                current.remove(updates)
+
+
+def monitoring_event(payload: Document) -> str:
+    return f"event: monitoring\ndata: {json.dumps(payload)}\n\n"
 
 
 def whole_count(value: object) -> int | None:
@@ -242,10 +310,17 @@ def paired_count(metadata: Document, alerts_key: str, windows_key: str) -> tuple
     return alerts, windows
 
 
-def model_summary(database: Database, user_id: str) -> Document:
-    onboarding = database.onboarding.find_one({"user_id": user_id}, sort=[("created_at", -1)])
-    if onboarding is None:
-        return empty_model_summary()
+def model_summary(database: Database, user_id: str, device_id: str | None = None) -> Document:
+    if device_id is None:
+        onboarding = database.onboarding.find_one({"user_id": user_id}, sort=[("created_at", -1)])
+        if onboarding is None:
+            return empty_model_summary()
+    else:
+        onboarding = database.onboarding.find_one({"user_id": user_id, "device_id": device_id})
+        if onboarding is None:
+            device = database.devices.find_one({"_id": device_id, "user_id": user_id})
+            name = device.get("name") if device and isinstance(device.get("name"), str) else None
+            return empty_model_summary(device_id, name)
     device = database.devices.find_one({"_id": onboarding["device_id"], "user_id": user_id})
     device_name = device.get("name") if device and isinstance(device.get("name"), str) else None
     version = database.model_versions.find_one(
@@ -598,6 +673,19 @@ def register(
     blueprint = Blueprint("hosted", __name__)
     sock = Sock()
 
+    @blueprint.get("/health")
+    def health():
+        try:
+            database.command("ping")
+        except PyMongoError:
+            logger.warning(json.dumps({
+                "component": "database",
+                "event": "health_check",
+                "outcome": "unavailable",
+            }, separators=(",", ":"), sort_keys=True))
+            return jsonify(state="degraded", database="unavailable"), 503
+        return jsonify(state="ok", database="available")
+
     def start_training(onboarding: Document, status: Document) -> None:
         claimed = database.onboarding.find_one_and_update(
             {"_id": onboarding["_id"], "state": "collecting"}, {"$set": {"state": "training", "error": None}}
@@ -772,7 +860,7 @@ def register(
                 "pairing_state": "paired",
                 "revoked_at": None,
             },
-            {"$set": {"last_heartbeat_at": now()}},
+            {"$set": {"status": "online", "last_heartbeat_at": now()}},
             return_document=ReturnDocument.AFTER,
         )
         if device is None:
@@ -1019,7 +1107,14 @@ def register(
 
     @blueprint.get("/api/model")
     def model_details():
-        return jsonify(model_summary(database, current_user()))
+        user_id = current_user()
+        device_id = request.args.get("device_id")
+        if device_id not in (None, ""):
+            if database.devices.find_one({"_id": device_id, "user_id": user_id}) is None:
+                abort(404)
+        else:
+            device_id = None
+        return jsonify(model_summary(database, user_id, device_id))
 
     @blueprint.post("/api/models/reset")
     def reset_model_enrollment():
@@ -1266,6 +1361,16 @@ def register(
                                         "state": "collecting", "created_at": now()})
         return jsonify(device_id=device_id, token=token), 201
 
+    @blueprint.post("/agent/heartbeat")
+    @blueprint.post("/api/agent/heartbeat")
+    def agent_heartbeat():
+        device = device_auth()
+        audit_agent_event("agent_heartbeat", device_id=device["_id"], outcome="accepted")
+        return jsonify(
+            status=device["status"],
+            last_seen=timestamp_text(device.get("last_heartbeat_at")),
+        )
+
     @blueprint.get("/api/agent/onboarding")
     def agent_onboarding():
         device = device_auth()
@@ -1439,11 +1544,7 @@ def register(
             "acknowledged_at": timestamp_text(alert.get("acknowledged_at")),
         }
 
-    @blueprint.get("/monitoring/status")
-    @blueprint.get("/api/monitoring/status")
-    def monitoring_status():
-        user_id = current_user()
-        device = owned_device(user_id, request.args.get("device_id"))
+    def status_document(user_id: str, device: Document | None) -> Document:
         presence, stale = agent_state(device)
         latest = None
         if device is not None:
@@ -1452,17 +1553,51 @@ def register(
             )
         score = finite_number(latest.get("score")) if latest else None
         threshold = finite_number(latest.get("threshold")) if latest else None
-        return jsonify(
-            state=monitoring_state(user_id, device, presence),
-            window_state=latest.get("classification") if latest else None,
-            score=score,
-            threshold=threshold,
-            scored_at=timestamp_text(latest.get("created_at")) if latest else None,
-            agent=presence if device is not None else "offline",
-            last_seen=timestamp_text(device.get("last_heartbeat_at")) if device else None,
-            stale=stale if device is not None else True,
-            device_id=device["_id"] if device else None,
-            device_name=device.get("name") if device else None,
+        return {
+            "state": monitoring_state(user_id, device, presence),
+            "window_state": latest.get("classification") if latest else None,
+            "score": score,
+            "threshold": threshold,
+            "scored_at": timestamp_text(latest.get("created_at")) if latest else None,
+            "agent": presence if device is not None else "offline",
+            "last_seen": timestamp_text(device.get("last_heartbeat_at")) if device else None,
+            "stale": stale if device is not None else True,
+            "device_id": device["_id"] if device else None,
+            "device_name": device.get("name") if device else None,
+        }
+
+    def stream_payload(user_id: str, device: Document) -> Document:
+        payload = status_document(user_id, device)
+        payload["alerts"] = [
+            alert_payload(item) for item in database.alerts.find(
+                {"user_id": user_id, "device_id": device["_id"], "status": "open"},
+            ).sort("started_at", -1)
+        ]
+        return payload
+
+    @blueprint.get("/monitoring/status")
+    @blueprint.get("/api/monitoring/status")
+    def monitoring_status():
+        user_id = current_user()
+        device = owned_device(user_id, request.args.get("device_id"))
+        return jsonify(status_document(user_id, device))
+
+    @blueprint.get("/api/monitoring/stream")
+    def monitoring_stream():
+        user_id = current_user()
+        device = owned_device(user_id, request.args.get("device_id"))
+        if device is None:
+            abort(404)
+
+        def generate():
+            yield monitoring_event(stream_payload(user_id, device))
+            for payload in listen_monitoring(user_id, device["_id"]):
+                yield ": keep-alive\n\n" if payload is None else monitoring_event(payload)
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
         )
 
     @blueprint.get("/monitoring/history")
@@ -1500,6 +1635,7 @@ def register(
             "state": item.get("classification"),
         } for item in rows])
 
+    @blueprint.get("/alerts")
     @blueprint.get("/api/alerts")
     def list_alerts():
         user_id = current_user()
@@ -1532,6 +1668,9 @@ def register(
         )
         alert["acknowledgement"] = label
         alert["acknowledged_at"] = stamp
+        device = database.devices.find_one({"_id": alert["device_id"], "user_id": user_id})
+        if device is not None:
+            publish_monitoring(user_id, device["_id"], stream_payload(user_id, device))
         return jsonify(alert_payload(alert))
 
     def device_payload(device: Document) -> Document:
@@ -1631,6 +1770,7 @@ def register(
             database, user_id=device["user_id"], device_id=device["_id"], window=window, result=result, created_at=stamp,
         )
         apply_alert_rule(device["user_id"], device["_id"], stamp)
+        publish_monitoring(device["user_id"], device["_id"], stream_payload(device["user_id"], device))
         database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"result": result}})
         audit_agent_window(device["_id"], "accepted", window=window)
         return jsonify(result), 201

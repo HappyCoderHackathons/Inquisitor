@@ -85,6 +85,7 @@ There is no login. The dev server binds `127.0.0.1`. Fixed ids `local-user` and
 | `GET /`, `/arcade`, `/dashboard`, `/privacy` | Public page |
 | `GET /onboarding` when hosted auth is off | Public notice that sign-in is not configured |
 | `GET /api/summary`, `/api/feature-windows`, `/api/feature-windows/export`, `/api/retention` | The local process. Anyone who can open the port can read those aggregates |
+| `GET /health` | Public liveness status in local-only mode |
 | `POST /api/feature-windows` | The local process. `device_id` is a field of the feature window |
 | `POST /api/samples` | The local arcade sample table. No user id |
 | `DELETE /api/samples` | Clears that local sample table |
@@ -102,15 +103,19 @@ auth user id. An empty id is rejected.
 | --- | --- |
 | `POST /api/auth/sign-in/email`, `/api/auth/sign-up/email`, `/api/auth/sign-out` | The email and password, or the session being revoked. Unknown auth paths are 404 |
 | `GET /api/auth/get-session` | Proxied session read |
+| `GET /health` | Public readiness status. Reports only whether Atlas is available |
 | `GET /api/me`, `GET /api/onboarding` | The signed-in account |
 | `GET /onboarding`, `GET /login` | Page, or redirect to onboarding |
 | `POST /api/pairing-codes` | The signed-in account. The code is stored as a hash |
+| `POST /agent/heartbeat` and `POST /api/agent/heartbeat` | The paired device identified by its bearer token. Updates online status and heartbeat time |
+| `GET /api/agent/onboarding` and `POST /api/agent/windows` | The paired device identified by its bearer token |
 | `POST /api/enrollments`, `GET /api/enrollments/<id>`, `POST /api/enrollments/<id>/complete` | The signed-in account, and only sessions associated with its owned device |
 | `POST /api/onboarding/rounds` and `POST /api/onboarding/rounds/current/<outcome>` | The signed-in account's round. The body selects a game or an outcome |
 | `POST /api/onboarding/train` | The signed-in account's onboarding |
-| `GET /api/model` | The signed-in account's active model. Counts and evaluation come from that model's stored metadata |
+| `GET /api/model` | The signed-in account's active model. An optional `device_id` must belong to that account. Counts and evaluation come from that model's stored metadata |
 | `GET /api/monitoring/status`, `GET /api/monitoring/history`, `GET /monitoring/status`, and `GET /monitoring/history` | The signed-in account's latest score and chart points. A `device_id` must belong to that account |
-| `GET /api/alerts` | The signed-in account's alerts, optionally filtered by status and device |
+| `GET /api/monitoring/stream` | The signed-in account, using the session cookie. A `device_id` must belong to that account. Pushes that device's score and open alerts |
+| `GET /api/alerts` and `GET /alerts` | The signed-in account's alerts, optionally filtered by status and owned device |
 | `POST /api/alerts/<id>/acknowledge` | One alert owned by the signed-in account. The label is `expected` or `unexpected`. It does not retrain |
 | `POST /api/onboarding/retrain` | Requires `{"approve": true}`. Starts a new collection generation and does not activate a model |
 | `POST /api/models/reset` | Requires `RESET`. Clears that account's enrollment windows and active model |
@@ -140,6 +145,8 @@ The agent socket carries presence only, as JSON text frames with `"v": 1`:
 Any other message, an extra field, or a message over 4 KiB closes the socket with 1008. A socket silent for
 90 seconds is dropped. When it closes, `ws_connected` becomes false and the device shows offline at once.
 Feature windows still go over `POST /api/agent/windows`, never over the socket.
+
+Hosted agent audit records are single-line JSON with allowlisted event metadata only. They may include device ID, outcome, controlled rejection reason, and validated window schema, mode, and sequence. They never include window contents, feature values, bearer tokens, or authorization headers.
 
 ### Model service bearer
 
