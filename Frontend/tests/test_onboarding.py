@@ -208,6 +208,77 @@ class OnboardingTests(unittest.TestCase):
         })
         self.assertNotIn("private connection detail", logs.output[0])
 
+    def test_pairing_revocation_and_deletion_emit_metadata_only_json_audits(self):
+        user_id = "better-auth:user-a"
+        self.sign_in()
+        with self.assertLogs(hosted.__name__, level="INFO") as issued_logs:
+            code = self.client.post("/api/pairing-codes", json={}).get_json()["code"]
+        self.assertEqual(json.loads(issued_logs.records[0].getMessage()), {
+            "event": "pairing_code_issued",
+            "outcome": "accepted",
+            "user_id": user_id,
+        })
+
+        device_name = "private device name"
+        with self.assertLogs(hosted.__name__, level="INFO") as pairing_logs:
+            paired = self.client.post("/api/agent/pair", json={"code": code, "name": device_name})
+        self.assertEqual(paired.status_code, 201)
+        device_id, token = paired.get_json()["device_id"], paired.get_json()["token"]
+        self.assertEqual(json.loads(pairing_logs.records[0].getMessage()), {
+            "device_id": device_id,
+            "event": "agent_paired",
+            "outcome": "accepted",
+            "user_id": user_id,
+        })
+        for secret in (code, device_name, token):
+            self.assertNotIn(secret, pairing_logs.output[0])
+
+        with self.assertLogs(hosted.__name__, level="INFO") as rejected_pairing_logs:
+            rejected_pairing = self.client.post("/api/agent/pair", json={"code": code, "name": device_name})
+        self.assertEqual(rejected_pairing.status_code, 404)
+        self.assertEqual(json.loads(rejected_pairing_logs.records[0].getMessage()), {
+            "event": "agent_pairing",
+            "outcome": "rejected",
+            "reason": "invalid_expired_or_used_code",
+        })
+        self.assertNotIn(code, rejected_pairing_logs.output[0])
+
+        with self.assertLogs(hosted.__name__, level="INFO") as revoke_logs:
+            revoked = self.client.post(f"/api/devices/{device_id}/revoke", json={})
+        self.assertEqual(revoked.status_code, 200)
+        self.assertEqual(json.loads(revoke_logs.records[0].getMessage()), {
+            "device_id": device_id,
+            "event": "device_revocation",
+            "outcome": "accepted",
+            "user_id": user_id,
+        })
+        for secret in (device_name, token, code):
+            self.assertNotIn(secret, revoke_logs.output[0])
+
+        self.delete_error = RuntimeError("private model-service detail")
+        with self.assertLogs(hosted.__name__, level="INFO") as failed_deletion_logs:
+            failed_deletion = self.client.delete("/api/me/data", json={})
+        self.assertEqual(failed_deletion.status_code, 502)
+        self.assertEqual(json.loads(failed_deletion_logs.records[0].getMessage()), {
+            "device_count": 1,
+            "event": "behavioral_data_deletion",
+            "outcome": "failed",
+            "reason": "model_service_unavailable",
+            "user_id": user_id,
+        })
+        self.assertNotIn("private model-service detail", failed_deletion_logs.output[0])
+
+        self.delete_error = None
+        with self.assertLogs(hosted.__name__, level="INFO") as deletion_logs:
+            deleted = self.client.delete("/api/me/data", json={})
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(json.loads(deletion_logs.records[0].getMessage()), {
+            "device_count": 1,
+            "event": "behavioral_data_deletion",
+            "outcome": "accepted",
+            "user_id": user_id,
+        })
+
     def test_pairing_requires_sign_in_json_and_live_codes(self):
         self.assertEqual(self.client.post("/api/pairing-codes", json={}).status_code, 401)
         self.sign_in()
