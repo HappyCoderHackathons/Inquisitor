@@ -231,6 +231,32 @@ class OnboardingTests(unittest.TestCase):
         paired = self.client.post("/api/agent/pair", json={"code": code, "name": "mouse"})
         self.assertEqual(paired.status_code, 201)
 
+    def test_pairing_audit_records_exclude_codes_names_and_tokens(self):
+        self.sign_in()
+        with self.assertLogs(hosted.__name__, level="INFO") as issue_logs:
+            issued = self.client.post("/api/pairing-codes", json={})
+        code = issued.get_json()["code"]
+        self.assertEqual(json.loads(issue_logs.records[0].getMessage()), {
+            "event": "pairing_code_issued",
+            "outcome": "accepted",
+            "user_id": "better-auth:user-a",
+        })
+        self.assertNotIn(code, issue_logs.output[0])
+
+        with self.assertLogs(hosted.__name__, level="INFO") as pair_logs:
+            paired = self.client.post("/api/agent/pair", json={"code": code, "name": "keyboard"})
+        self.assertEqual(paired.status_code, 201)
+        event = json.loads(pair_logs.records[0].getMessage())
+        self.assertEqual(event, {
+            "device_id": paired.get_json()["device_id"],
+            "event": "device_pairing",
+            "outcome": "accepted",
+            "user_id": "better-auth:user-a",
+        })
+        self.assertNotIn(code, pair_logs.output[0])
+        self.assertNotIn(paired.get_json()["token"], pair_logs.output[0])
+        self.assertNotIn("keyboard", pair_logs.output[0])
+
     def test_paired_device_belongs_to_code_owner_and_stores_only_token_hash(self):
         device_id, agent = self.pair()
         token = agent["Authorization"].removeprefix("Bearer ")
@@ -814,7 +840,15 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/agent/onboarding", headers=agent).status_code, 200)
         self.sign_in("user-a")
         self.assertEqual(self.client.post(f"/api/devices/{device_id}/revoke", data="{}").status_code, 415)
-        self.assertEqual(self.client.post(f"/api/devices/{device_id}/revoke", json={}).status_code, 200)
+        with self.assertLogs(hosted.__name__, level="INFO") as logs:
+            response = self.client.post(f"/api/devices/{device_id}/revoke", json={})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(logs.records[0].getMessage()), {
+            "device_id": device_id,
+            "event": "device_revocation",
+            "outcome": "accepted",
+            "user_id": "better-auth:user-a",
+        })
         self.assertEqual(self.database.devices.find_one({"_id": device_id})["pairing_state"], "revoked")
         self.assertEqual(self.client.get("/api/agent/onboarding", headers=agent).status_code, 401)
         self.assertEqual(self.client.post(f"/api/devices/{device_id}/revoke", json={}).status_code, 404)
@@ -829,11 +863,26 @@ class OnboardingTests(unittest.TestCase):
                 {"user_id": user_id, "device_id": device_id}, {"user_id": "other-user", "device_id": "other-device"},
             ])
         self.delete_error = RuntimeError("model service returned 503")
-        self.assertEqual(self.client.delete("/api/me/data", json={}).status_code, 502)
+        with self.assertLogs(hosted.__name__, level="INFO") as failed_logs:
+            failed = self.client.delete("/api/me/data", json={})
+        self.assertEqual(failed.status_code, 502)
+        self.assertEqual(json.loads(failed_logs.records[0].getMessage()), {
+            "event": "behavioral_data_deletion",
+            "outcome": "failed",
+            "reason": "model_service_unavailable",
+            "user_id": user_id,
+        })
         self.assertEqual(self.database.windows.count_documents({"user_id": user_id}), 1)
         self.delete_error = None
-        response = self.client.delete("/api/me/data", json={})
+        with self.assertLogs(hosted.__name__, level="INFO") as deletion_logs:
+            response = self.client.delete("/api/me/data", json={})
         self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(json.loads(deletion_logs.records[0].getMessage()), {
+            "device_count": 1,
+            "event": "behavioral_data_deletion",
+            "outcome": "accepted",
+            "user_id": user_id,
+        })
         self.assertEqual(self.deleted, [(user_id, device_id)])
         for collection in ("windows", "model_versions", "inference_results", "alerts", "monitoring_windows",
                            "onboarding"):

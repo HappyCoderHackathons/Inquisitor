@@ -100,29 +100,30 @@ ALGORITHM_LABELS = {
 logger = logging.getLogger(__name__)
 
 
-def audit_agent_event(
+def audit_event(
     event: str,
     *,
-    device_id: str,
     outcome: str,
+    user_id: str | None = None,
+    device_id: str | None = None,
     reason: str | None = None,
+    device_count: int | None = None,
     sequence: int | None = None,
     schema_version: int | None = None,
     mode: str | None = None,
 ) -> None:
-    metadata: dict[str, str | int] = {
-        "device_id": device_id,
-        "event": event,
-        "outcome": outcome,
-    }
-    if reason is not None:
-        metadata["reason"] = reason
-    if sequence is not None:
-        metadata["sequence"] = sequence
-    if schema_version is not None:
-        metadata["schema_version"] = schema_version
-    if mode is not None:
-        metadata["mode"] = mode
+    metadata: dict[str, str | int] = {"event": event, "outcome": outcome}
+    for key, value in (
+        ("user_id", user_id),
+        ("device_id", device_id),
+        ("reason", reason),
+        ("device_count", device_count),
+        ("sequence", sequence),
+        ("schema_version", schema_version),
+        ("mode", mode),
+    ):
+        if value is not None:
+            metadata[key] = value
     logger.info(json.dumps(metadata, allow_nan=False, separators=(",", ":"), sort_keys=True))
 
 
@@ -132,7 +133,7 @@ def audit_agent_window(
     reason: str | None = None,
     window: Document | None = None,
 ) -> None:
-    audit_agent_event(
+    audit_event(
         "agent_window_ingestion",
         device_id=device_id,
         outcome=outcome,
@@ -864,6 +865,7 @@ def register(
         expires = now() + PAIRING_TTL
         database.pairing_codes.insert_one({"code_hash": digest(code), "user_id": user_id, "expires_at": expires,
                                            "used_at": None})
+        audit_event("pairing_code_issued", user_id=user_id, outcome="accepted")
         return jsonify(code=code, expires_at=expires.isoformat()), 201
 
     @blueprint.get("/api/onboarding")
@@ -1212,7 +1214,12 @@ def register(
             {"$set": {"revoked_at": now(), "pairing_state": "revoked"}},
         )
         if revoked.matched_count == 0:
+            audit_event(
+                "device_revocation", outcome="rejected", user_id=user_id, device_id=device_id,
+                reason="device_not_owned_or_already_revoked",
+            )
             abort(404)
+        audit_event("device_revocation", outcome="accepted", user_id=user_id, device_id=device_id)
         return jsonify(ok=True)
 
     @blueprint.delete("/api/me/data")
@@ -1224,6 +1231,10 @@ def register(
             try:
                 deleter(user_id, device_ids[0])
             except (RuntimeError, OSError):
+                audit_event(
+                    "behavioral_data_deletion", outcome="failed", user_id=user_id,
+                    reason="model_service_unavailable",
+                )
                 return jsonify(error="model service is unavailable; nothing was deleted"), 502
         onboarding_ids = [item["_id"] for item in database.onboarding.find({"user_id": user_id}, {"_id": 1})]
         database.rounds.delete_many({"onboarding_id": {"$in": onboarding_ids}})
@@ -1233,6 +1244,7 @@ def register(
         database.devices.update_many(
             {"user_id": user_id, "revoked_at": None}, {"$set": {"revoked_at": now(), "pairing_state": "revoked"}}
         )
+        audit_event("behavioral_data_deletion", outcome="accepted", user_id=user_id, device_count=len(device_ids))
         return jsonify(ok=True, devices=len(device_ids))
 
     @blueprint.post("/api/agent/pair")
@@ -1256,6 +1268,7 @@ def register(
             {"$set": {"used_at": now()}},
         )
         if pairing is None:
+            audit_event("device_pairing", outcome="rejected", reason="invalid_expired_or_used_code")
             return jsonify(error="pairing code is invalid, expired, or already used"), 404
         device_id, token = uuid4().hex, secrets.token_urlsafe(32)
         pairing_state: DevicePairingState = "paired"
@@ -1271,13 +1284,16 @@ def register(
         })
         database.onboarding.insert_one({"_id": uuid4().hex, "user_id": pairing["user_id"], "device_id": device_id,
                                         "state": "collecting", "created_at": now()})
+        audit_event(
+            "device_pairing", outcome="accepted", user_id=pairing["user_id"], device_id=device_id,
+        )
         return jsonify(device_id=device_id, token=token), 201
 
     @blueprint.post("/agent/heartbeat")
     @blueprint.post("/api/agent/heartbeat")
     def agent_heartbeat():
         device = device_auth()
-        audit_agent_event("agent_heartbeat", device_id=device["_id"], outcome="accepted")
+        audit_event("agent_heartbeat", device_id=device["_id"], outcome="accepted")
         return jsonify(
             status=device["status"],
             last_seen=timestamp_text(device.get("last_heartbeat_at")),

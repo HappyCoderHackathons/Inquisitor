@@ -133,7 +133,7 @@ auth user id. An empty id is rejected.
 | `GET /api/agent/onboarding` | The device for that bearer token. A revoked device is rejected |
 | `POST /api/agent/windows` | That device. The stored `user_id` comes from the device record. `window.device_id` must equal the device id |
 
-Hosted agent audit records are single-line JSON with allowlisted event metadata only. They may include device ID, outcome, controlled rejection reason, and validated window schema, mode, and sequence. They never include window contents, feature values, bearer tokens, or authorization headers.
+Hosted audit records for agent activity, pairing, revocation, and behavioral-data deletion are single-line JSON with allowlisted metadata only. They may include event, outcome, pseudonymous user/device IDs, a controlled reason, device count, and validated window schema, mode, and sequence. They never include request bodies, input or feature values, pairing codes, device names, bearer tokens, or authorization headers.
 
 ### Model service bearer
 
