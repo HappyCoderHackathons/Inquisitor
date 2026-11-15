@@ -1,6 +1,8 @@
 # Published model API deployment
 
-The deployed numeric artifact is `backend/artifacts/labeled-overlap-v2.json`; v1 is kept for rollback.
+The deployed numeric artifact is `backend/artifacts/tray-two-device-v1.json`.
+Previous numeric versions are retired under [`archive_models/`](../../archive_models/)
+in the repository. They are not selected by the service.
 It contains learned coefficients, scaler mean/scale, the fixed threshold, and the
 genuine baseline median/scale used for alert explanations.
 It contains no enrollment rows, account/device/session IDs, credentials, or hostnames.
@@ -20,10 +22,12 @@ Set these values to real server-local paths and authorized identity values:
 ```text
 ML_TOKEN_FILE=/absolute/private/path/to/service.token
 ML_DATA_DIR=/absolute/private/path/to/model-artifacts
-ML_PUBLISHED_MODEL_FILE=/absolute/path/to/app/backend/artifacts/labeled-overlap-v2.json
+ML_PUBLISHED_MODEL_FILE=/absolute/path/to/app/backend/artifacts/tray-two-device-v1.json
 ML_PUBLISHED_USER_ID=the-enrolled-account-id
 ML_PUBLISHED_DEVICE_ID=the-paired-device-id
+ML_PUBLISHED_MODEL_ID=the-owned-service-model-id
 ML_ALLOW_TRAINING=0
+ML_TRAIN_ASYNC=0
 ```
 
 The token file must contain a dedicated random URL-safe token of at least 32
@@ -63,7 +67,9 @@ curl --fail-with-body "$ML_API_URL/score" -X POST \
 
 `request.json` must contain `{"window": <authorized-device aggregate window>}`.
 The application backend must derive identity headers from its authenticated user
-or paired device. The model API checks its configured owner/device; these headers
+or paired device. The model API checks its configured owner and the private owned model's device
+allowlist. The primary device validates that binding at startup, and both
+allowlisted devices may use `/model` and `/score`. These headers
 alone are not end-user authentication.
 
 Responses include `model_version`, the canonical artifact SHA-256, `state`, `score`,
@@ -74,16 +80,17 @@ magnitudes are not comparable across different model families. Low activity retu
 ownership returns 403, and invalid windows return 422. Inference performs no fitting.
 
 Replace the versioned artifact path and restart the service to deploy another
-published version. The artifact is validated and loaded once at startup. Keep
-previous artifacts for rollback. Confirm user-service persistence under the host's
+published version. The artifact is validated and loaded once at startup. Retired
+versions are kept in `archive_models/`; restoring one requires an explicit
+configuration change and restart. Confirm user-service persistence under the host's
 policy; lingering may be required. Never disable TLS or SSH host-key validation.
 
 To export a future trusted service-created labeled artifact on the model host:
 
 ```sh
 uv run --project backend python -m backend.ml.export_weights \
-  --model-dir "$ML_DATA_DIR/MODEL_ID" --version labeled-overlap-v3 \
-  --output backend/artifacts/labeled-overlap-v3.json
+  --model-dir "$ML_DATA_DIR/MODEL_ID" --version tray-two-device-v2 \
+  --output backend/artifacts/tray-two-device-v2.json
 ```
 
 The exporter reads a trusted local joblib artifact, never a user-uploaded pickle.

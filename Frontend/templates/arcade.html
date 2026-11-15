@@ -13,6 +13,7 @@
         <a class="brand" href="/">Inquisitor</a>
         <nav class="arcade-nav" aria-label="Main navigation">
           <a href="/">Home</a>
+          <a href="/privacy">Privacy</a>
           <a href="#games">Games</a>
           <a href="#stats">Stats</a>
           <a href="/dashboard">Dashboard</a>
@@ -40,6 +41,7 @@
               <h2>Recent games</h2>
               <button id="clearBtn" class="text-button">Clear</button>
             </div>
+            <p id="arcadeStatus" class="collection-status" role="status" aria-live="polite">Loading recent games…</p>
             <div class="sample-total"><strong id="sampleCount">0</strong><span>rounds played</span></div>
             <div id="recentList" class="recent-list"><div class="empty">No games played yet.</div></div>
             <p class="privacy-note">Scores and input timing are saved locally.</p>
@@ -48,7 +50,7 @@
       </main>
     </div>
 
-    <div id="gameOverlay" class="overlay hidden">
+    <div id="gameOverlay" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-hidden="true">
       <section class="game-modal">
         <div class="modal-head">
           <div><span id="modalMode" class="eyebrow"></span><h2 id="modalTitle">Aim Trainer</h2></div>
@@ -59,7 +61,7 @@
           <span class="timer"><b id="gameTimer">60</b><small>SEC</small></span>
           <span class="score">SCORE <b id="gameScore">0</b></span>
         </div>
-        <div id="gameStage" class="game-stage"></div>
+        <div id="gameStage" class="game-stage" tabindex="-1"></div>
         <div class="modal-foot"><span id="gameHint">Esc to close</span><button id="startGame" class="button primary">Start</button></div>
       </section>
     </div>

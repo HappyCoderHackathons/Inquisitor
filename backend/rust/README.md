@@ -107,7 +107,7 @@ touch screens, pens; `io_type` names the kind):
 This client follows the rules in [`../AGENTS.md`](../AGENTS.md):
 
 - Authentication v1 is keyboard-only. Mouse and controller capture support
-  the arcade prototype in [`../test/`](../test/) and do not expand that
+  the arcade in [`../../Frontend/`](../../Frontend/) and do not expand that
   scope.
 - Keyboards emit press and release with timing only. The key identity,
   typed content, and ordered event stream are not persisted, logged, or

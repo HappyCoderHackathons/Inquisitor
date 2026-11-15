@@ -3,15 +3,23 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "esbuild frontend/app.ts frontend/dashboard.ts --bundle --outdir=static --target=es2020",
-    "dev": "esbuild frontend/app.ts frontend/dashboard.ts --bundle --outdir=static --target=es2020 --watch",
-    "typecheck": "tsc",
-    "format": "prettier --write frontend",
-    "format:check": "prettier --check frontend"
+    "build": "esbuild frontend/app.ts frontend/dashboard.ts frontend/onboarding.ts --bundle --outdir=static --target=es2020",
+    "dev": "esbuild frontend/app.ts frontend/dashboard.ts frontend/onboarding.ts --bundle --outdir=static --target=es2020 --watch",
+    "auth": "node --env-file-if-exists=../.env --experimental-strip-types auth/server.mts",
+    "test:auth": "node --experimental-strip-types --test auth/*.test.mts",
+    "typecheck": "tsc && tsc -p auth/tsconfig.json",
+    "format": "prettier --write frontend auth",
+    "format:check": "prettier --check frontend auth"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
     "prettier": "3.10.1",
-    "typescript": "^5.7.0"
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@better-auth/mongo-adapter": "1.7.25",
+    "better-auth": "1.7.25",
+    "mongodb": "7.9.0"
   }
 }

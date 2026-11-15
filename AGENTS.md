@@ -19,7 +19,7 @@
   component boundaries. It supersedes open options in the original project spec.
 - Windows client: Rust owns native keyboard and mouse I/O, local orchestration, and transport.
 - ML: Python 3.13+ with scikit-learn. The current labeled pilot uses logistic
-  regression on hold-time variability and press overlap; Isolation Forest artifacts
+  regression on keyboard timing and mouse motion/click aggregates; Isolation Forest artifacts
   remain supported for comparison and rollback. Training and inference run
   on the designated remote host behind an authenticated Flask service. Keep model
   artifacts there; keep deployment identities and credentials out of the repository.
@@ -31,7 +31,9 @@
   based on general stack preferences.
 - Storage: MongoDB Atlas. Use server-side credentials; do not introduce PostgreSQL
   or Drizzle based on general stack preferences.
-- Authentication: SSOJet. Enforce account/device authorization in the application;
+- Authentication: Better Auth in the local Node service, with MongoDB-backed password accounts and sessions.
+  Flask forwards same-origin authentication requests and validates sessions through that service.
+  Enforce account/device authorization in the application;
   use short-lived, single-use pairing codes and revocable device credentials.
 - Hosting: HTTPS for the hosted service and authenticated outbound WSS from the
   Windows client. Do not require inbound Internet access to the user's PC.

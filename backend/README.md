@@ -1,13 +1,21 @@
 # Remote ML service
 
 Python 3.13+, Flask, and one selected model per user/device. The backend
-uses the provisional contract in `shared/feature-window-v1.schema.json`.
+uses schema-v4 native keyboard/mouse aggregates for the deployed model;
+legacy schemas remain available for archived profiles.
 Training and inference belong on the designated remote model host. Hostnames,
 accounts, and credentials must stay in local/server configuration.
 
 The trained numeric weights are checked in at
-[`artifacts/labeled-overlap-v2.json`](artifacts/labeled-overlap-v2.json).
+[`artifacts/tray-two-device-v1.json`](artifacts/tray-two-device-v1.json).
 For inference without retraining, follow the [published API deployment guide](deploy/README.md).
+
+The deployed shared two-computer model is
+[`artifacts/tray-two-device-v1.json`](artifacts/tray-two-device-v1.json). Its
+`tray-multimodal` profile consumes schema-v4 native keyboard/mouse aggregates and
+supports one owned model with an explicit device allowlist. Earlier numeric models
+are retired under [`archive_models/`](../archive_models/). See the
+[model card and CSV conversion instructions](../docs/multimodal-model.md).
 
 From the repository root, install the locked environment:
 
@@ -33,11 +41,16 @@ backend, which checks the logged-in user or paired device before forwarding work
 Every request requires `Authorization: Bearer <service-token>`. Model endpoints
 also require `X-User-ID` and `X-Device-ID`, derived by the trusted application
 backend from its authorized principal. These headers are not a replacement for
-the application's user/device authentication.
+the application's user/device authentication. A `user_id` field in the JSON body
+does not match the endpoint contract and is rejected. Retention is one
+process-wide policy. Responses set `Content-Security-Policy` (`default-src 'none'`,
+`frame-ancestors 'none'`, `base-uri 'none'`), `X-Content-Type-Options: nosniff`,
+and `Strict-Transport-Security` only on HTTPS. The service has no browser session.
+See [the threat model](../docs/threat-model.md).
 
 | Endpoint | Request | Result |
 | --- | --- | --- |
-| `GET /health` | No body | Authenticated readiness |
+| `GET /health` | No body | Authenticated dependency readiness; returns database and model-store availability, HTTP 503 if either is unavailable |
 | `GET /model` | Configured published owner/device headers | Published model version, hash, threshold, and summary |
 | `POST /score` | `window` object and configured owner/device headers | Published model inference without a private model ID |
 | `POST /models/train` | `windows` array and `validation_session_id` or `validation_session_ids`; optional `profile` | Ready model metadata, HTTP 201 |
@@ -46,6 +59,13 @@ the application's user/device authentication.
 | `POST /models/active/score` | `window` object | Score using the active model |
 | `GET /models/{id}` | No body | Owned model metadata |
 | `POST /models/{id}/score` | `window` object | Score, threshold, model ID, and state |
+| `POST /windows` | `window` object | Stores one authorized feature window, HTTP 201 |
+| `POST /models/active/deactivate` | No body | Leaves the model files in place and clears the active model |
+| `POST /enrollment/reset` | No body | Deletes this device's enrollment windows and active model artifact |
+| `DELETE /me/data` | No body | Deletes this account's windows, scores, alerts, and model artifact files |
+| `GET /retention` | No body | Monitoring retention period in seconds |
+| `PUT /retention` | `monitoring_retention_seconds` | Replaces the retention period. The initial value comes from `INQUISITOR_MONITORING_RETENTION_SECONDS`, defaulting to 604800 |
+| `POST /retention/purge` | No body | Deletes monitoring windows, inference results, and alerts older than the configured period |
 | `DELETE /models/{id}` | No body | Removes owned artifacts and cached model, HTTP 204 |
 
 For the `labeled-overlap` profile, training takes `windows` for genuine examples
@@ -82,7 +102,7 @@ UNUSUAL results from labeled-overlap models include an `explanation`. Each featu
 `contribution` is its scaled value times the model weight, so the features are
 ranked by how much they pushed the score toward the second-user class. Models trained
 with this version also save a `genuine_baseline` (median and 1.4826 x MAD of genuine
-training windows) and add each feature's `baseline_z`. The published
+training windows) and add each feature's `baseline_z`. The archived
 `labeled-overlap-v2` artifact includes the baseline; v1 predates it and reports
 contributions only. Isolation Forest models do not return explanations.
 Explanations describe the model's decision, not the cause of a user's behavior.
@@ -140,8 +160,13 @@ low activity, model deletion, and health after service restart. A user service
 with lingering enabled supervises it. Host details and token files are local-only.
 A host reboot has not been tested.
 
+Account deletion, enrollment reset, model deactivation, and the monitoring
+retention period are implemented on this service. `INQUISITOR_MONITORING_RETENTION_SECONDS`
+sets the initial period; `PUT /retention` changes it without editing code.
+`POST /retention/purge` removes monitoring rows older than that period.
+
 Still required: real session data, a finalized collector aggregation contract,
-application ingestion and auth integration, enrollment retention/deletion policy,
+application ingestion and auth integration,
 and the hosted application's HTTPS or SSH-tunnel connection to the model service.
 The workstation's development tunnel is not that deployed application connection.
 Never upload the collector's raw per-event log directly to this service.

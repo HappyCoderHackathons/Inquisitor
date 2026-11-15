@@ -1,6 +1,13 @@
 # Model evaluation
 
-## Labeled pilot: model-selection cross-validation
+The deployed shared two-computer model is `tray-two-device-v1`. Its
+computer-grouped selection CV reached 87.88% accuracy on the original PC and
+96.77% on the second PC, with 0/32 genuine windows falsely flagged. Overall
+impostor recall was 84.38%, below the earlier 85% recall target. Both computer
+pairs were used in model/cutoff selection and final fitting, so these are not
+untouched final-test results. See the [model card](multimodal-model.md).
+
+## Archived keyboard pilot: model-selection cross-validation
 
 The existing real dataset contains 60 genuine windows from four sessions and 30
 second-user windows from two sessions. It represents one enrolled person and one
@@ -80,5 +87,13 @@ Forest. No additional scaler is needed for Isolation Forest.
 
 Small or overlapping window sets are correlated, and their window counts are not
 independent sample counts. Evaluate separate real sessions before making detection
-claims. User-switch latency and session-level verification remain separate work
-in issue #141.
+claims.
+
+When `--impostor` is given, the report also replays a simulated user switch per
+model: holdout genuine windows, then impostor windows, each in session/sequence
+order. It applies the spec's persistence rule (`NEEDS_VERIFICATION` when 3 of the
+last 4 usable windows are unusual) and reports impostor windows and summed window
+seconds until the alert, plus whether an alert already fired before the switch.
+Gaps between windows are not counted. One replayed switch is a single observation,
+not a latency distribution, and the rule is evaluation-only; the service and
+dashboard do not yet raise this state.

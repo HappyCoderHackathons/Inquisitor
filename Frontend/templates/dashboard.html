@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="theme-color" content="#09070D">
-    <meta name="description" content="Account, model, and agent connection dashboard for Inquisitor.">
+    <meta name="description" content="Account, model connection, and anomaly signals for Inquisitor. A signal is a prompt to verify, not a named person.">
     <title>Inquisitor | User Dashboard</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="/static/dashboard.js" defer></script>
@@ -15,6 +15,7 @@
         <a class="brand" href="/">Inquisitor</a>
         <nav class="arcade-nav" aria-label="Main navigation">
           <a href="/">Home</a>
+          <a href="/privacy">Privacy</a>
           <a href="/arcade">Activities</a>
           <a href="/dashboard" aria-current="page">Dashboard</a>
         </nav>
@@ -24,7 +25,7 @@
         <section class="dashboard-heading">
           <p class="eyebrow"><span class="eyebrow-line"></span> PERSONAL OVERVIEW</p>
           <h1>Your dashboard</h1>
-          <p>Review your account, model connection, and activity detections.</p>
+          <p>Review your account, the model connection, and anomaly signals.</p>
         </section>
 
         <section class="connection-grid" aria-label="Connection status">
@@ -41,7 +42,7 @@
           <article class="connection-card">
             <div class="connection-card-heading"><span class="status-indicator pending"></span><span class="eyebrow">ACCOUNT</span></div>
             <h2 id="accountConnectionStatus">Sign-in unavailable</h2>
-            <p>SSOJet is not configured. Account details will appear here after authentication is implemented.</p>
+            <p>Account details will appear here after the dashboard profile is connected. Sign in from Setup.</p>
           </article>
         </section>
 
@@ -86,15 +87,15 @@
         <section class="dashboard-panel detection-panel" aria-labelledby="detectionTitle">
           <div class="dashboard-panel-heading">
             <div>
-              <p class="eyebrow">DETECTION ACTIVITY</p>
-              <h2 id="detectionTitle">Non-user activity</h2>
+              <p class="eyebrow">ANOMALY SIGNAL</p>
+              <h2 id="detectionTitle">Needs verification</h2>
             </div>
             <span id="detectionConnectionStatus" class="status-label pending-label">NO LIVE SIGNAL</span>
           </div>
-          <p class="dashboard-panel-copy">This area is reserved for agent/model alerts when activity differs from the enrolled user's baseline. The prototype cannot currently identify or confirm another person.</p>
+          <p class="dashboard-panel-copy">This area is reserved for an alert when a window differs from this device's enrollment. An alert asks you to verify. It does not name a person, and this prototype has no live model connection.</p>
           <div class="detection-empty">
             <span class="empty-mark" aria-hidden="true">—</span>
-            <div><strong>No detection data</strong><span>Agent and model connections are not configured.</span></div>
+            <div><strong>No anomaly signal</strong><span>Agent and model connections are not configured.</span></div>
           </div>
           <p class="dashboard-footnote">Any future alert should be treated as a prompt to verify, not proof of identity. The user must remain in control of pause and exit actions.</p>
         </section>
@@ -103,27 +104,72 @@
           <article class="dashboard-panel account-panel" aria-labelledby="accountTitle">
             <div class="dashboard-panel-heading">
               <div><p class="eyebrow">PROFILE</p><h2 id="accountTitle">User information</h2></div>
-              <span class="status-label pending-label">SSOJET PENDING</span>
+              <span class="status-label pending-label">PROFILE PENDING</span>
             </div>
             <dl class="profile-list">
               <div><dt>Name</dt><dd id="accountName">Available after sign-in</dd></div>
               <div><dt>Email</dt><dd id="accountEmail">Available after sign-in</dd></div>
               <div><dt>Account ID</dt><dd id="accountId">Not linked</dd></div>
             </dl>
-            <p class="dashboard-footnote">No example identity or account data is shown. The profile must come from a verified SSOJet session.</p>
+            <p class="dashboard-footnote">No example identity or account data is shown. The profile must come from a verified Better Auth session.</p>
           </article>
 
           <article class="dashboard-panel data-panel" aria-labelledby="dataTitle">
             <div class="dashboard-panel-heading">
               <div><p class="eyebrow">DATA &amp; ACCOUNT CONTROLS</p><h2 id="dataTitle">Your choices</h2></div>
             </div>
+            <h3 class="danger-heading" id="dangerTitle">Danger zone</h3>
+            <p class="dashboard-footnote danger-note">These actions change this machine's local prototype database. Type the requested phrase before each one runs. They do not delete a Better Auth account or a remote model.</p>
             <div class="data-action">
-              <div><strong>Delete local data</strong><p>Removes arcade rounds and feature windows stored by this local prototype.</p></div>
-              <button id="deleteLocalData" class="button danger-button" type="button">Delete data</button>
+              <div class="data-action-row">
+                <div><strong>Delete data</strong><p>Removes arcade rounds, feature windows, scores, alerts, and local model files for this prototype.</p></div>
+                <button id="deleteLocalData" class="button danger-button" type="button" data-danger-open aria-controls="deleteLocalDataConfirm" aria-expanded="false">Delete data</button>
+              </div>
+              <form id="deleteLocalDataConfirm" class="typed-confirm" hidden data-phrase="DELETE" data-method="DELETE" data-path="/me/data" data-success="Local arcade rounds, feature windows, scores, alerts, and model files deleted.">
+                <label for="deleteLocalDataInput">Type DELETE to confirm
+                  <input id="deleteLocalDataInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
+                </label>
+                <div class="typed-confirm-actions">
+                  <button class="button danger-button" type="submit" disabled>Delete data</button>
+                  <button class="button secondary-button typed-cancel" type="button">Cancel</button>
+                </div>
+              </form>
             </div>
             <div class="data-action">
-              <div><strong>Delete account</strong><p>Account deletion will be available after SSOJet and user-scoped storage are connected.</p></div>
-              <button class="button disabled-button" type="button" disabled aria-describedby="accountDeleteHelp">Unavailable</button>
+              <div class="data-action-row">
+                <div><strong>Reset enrollment</strong><p>Removes enrollment windows and the active model. Monitoring windows, arcade rounds, and inactive models stay.</p></div>
+                <button id="resetEnrollment" class="button danger-button" type="button" data-danger-open aria-controls="resetEnrollmentConfirm" aria-expanded="false">Reset</button>
+              </div>
+              <form id="resetEnrollmentConfirm" class="typed-confirm" hidden data-phrase="RESET" data-method="POST" data-path="/api/enrollment/reset" data-success="Enrollment windows and the active model were cleared. Monitoring data was kept.">
+                <label for="resetEnrollmentInput">Type RESET to confirm
+                  <input id="resetEnrollmentInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
+                </label>
+                <div class="typed-confirm-actions">
+                  <button class="button danger-button" type="submit" disabled>Reset enrollment</button>
+                  <button class="button secondary-button typed-cancel" type="button">Cancel</button>
+                </div>
+              </form>
+            </div>
+            <div class="data-action">
+              <div class="data-action-row">
+                <div><strong>Deactivate model</strong><p>Marks the active local model inactive and keeps saved windows and model files.</p></div>
+                <button id="deactivateModel" class="button danger-button" type="button" data-danger-open aria-controls="deactivateModelConfirm" aria-expanded="false">Deactivate</button>
+              </div>
+              <form id="deactivateModelConfirm" class="typed-confirm" hidden data-phrase="DEACTIVATE" data-method="POST" data-path="/api/model/deactivate" data-success="Model deactivated. Saved windows and model files were kept.">
+                <label for="deactivateModelInput">Type DEACTIVATE to confirm
+                  <input id="deactivateModelInput" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
+                </label>
+                <div class="typed-confirm-actions">
+                  <button class="button danger-button" type="submit" disabled>Deactivate model</button>
+                  <button class="button secondary-button typed-cancel" type="button">Cancel</button>
+                </div>
+              </form>
+            </div>
+            <div class="data-action">
+              <div class="data-action-row">
+                <div><strong>Delete account</strong><p>Account deletion will be available after Better Auth and user-scoped storage are connected.</p></div>
+                <button class="button disabled-button" type="button" disabled aria-describedby="accountDeleteHelp">Unavailable</button>
+              </div>
             </div>
             <p id="accountDeleteHelp" class="dashboard-footnote">Account deletion is disabled; there is no authenticated account or account data connected here.</p>
             <p id="dataActionStatus" class="action-status" role="status" aria-live="polite"></p>
@@ -135,6 +181,7 @@
         <span>INQUISITOR · USER DASHBOARD</span>
         <nav aria-label="Footer navigation">
           <a href="/">Home</a>
+          <a href="/privacy">Privacy</a>
           <a href="/arcade">Activities</a>
           <a href="/dashboard">Dashboard</a>
         </nav>

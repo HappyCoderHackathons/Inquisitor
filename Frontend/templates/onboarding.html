@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#09070D">
+    <meta name="description" content="Sign in, pair the Inquisitor agent, and complete calibration games.">
+    <title>Inquisitor | {% if signed_in %}Setup{% elif mode|default('login') == 'signup' %}Create account{% else %}Log in{% endif %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/onboarding.js" defer></script>
+  </head>
+  <body>
+    <div class="arcade-layout">
+      <header class="arcade-header">
+        <a class="brand" href="/">Inquisitor</a>
+        <nav class="arcade-nav" aria-label="Main navigation">
+          <a href="/">Home</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/arcade">Activities</a>
+          <a href="/onboarding" aria-current="page">{% if signed_in %}Setup{% elif mode|default('login') == 'signup' %}Create account{% else %}Log in{% endif %}</a>
+        </nav>
+      </header>
+
+      <main class="dashboard-main">
+        <section class="dashboard-heading">
+          <p class="eyebrow"><span class="eyebrow-line"></span> {% if signed_in %}SETUP{% elif mode|default('login') == 'signup' %}CREATE ACCOUNT{% else %}LOG IN{% endif %}</p>
+          <h1>{% if signed_in %}Set up your model{% elif mode|default('login') == 'signup' %}Create an account{% else %}Sign in{% endif %}</h1>
+          <p>{% if signed_in %}Sign in, connect the Windows agent, then play each of the four games for 2.5 minutes. The agent measures aggregate keyboard and mouse timing while you play; your model trains when enough data is collected.{% elif mode|default('login') == 'signup' %}Create an account to pair the Windows agent and keep this PC's calibration with you. A password needs at least 8 characters.{% else %}Sign in to link the agent and your calibration data to your account.{% endif %}</p>
+        </section>
+
+        <section class="dashboard-panel" aria-labelledby="signInTitle">
+          <h2 id="signInTitle">{% if not signed_in and mode|default('login') == 'signup' %}1. Create an account{% else %}1. Sign in{% endif %}</h2>
+          {% if signed_in %}
+            <p class="dashboard-panel-copy">You are signed in.</p>
+            <button id="signOut" class="button secondary-button" type="button">Sign out</button>
+            <p id="authStatus" class="action-status" role="status" aria-live="polite"></p>
+          {% else %}
+            <p class="dashboard-panel-copy">{% if mode|default('login') == 'signup' %}Use your email and a password of at least 8 characters.{% else %}Use the email and password for your account.{% endif %}</p>
+            <form id="authForm" class="auth-form" data-next="{{ next_path|default('') }}" novalidate>
+              <label id="authNameLabel" class="mode-label" {% if mode|default('login') != 'signup' %}hidden{% endif %}>Name
+                <input id="authName" name="name" autocomplete="name" maxlength="100" {% if mode|default('login') == 'signup' %}required{% endif %} aria-describedby="nameError">
+                <span id="nameError" class="field-error" aria-live="polite"></span>
+              </label>
+              <label class="mode-label">Email
+                <input id="authEmail" name="email" type="email" autocomplete="username" maxlength="254" required aria-describedby="emailError">
+                <span id="emailError" class="field-error" aria-live="polite"></span>
+              </label>
+              <label class="mode-label">Password
+                <input id="authPassword" name="password" type="password" autocomplete="{{ 'new-password' if mode|default('login') == 'signup' else 'current-password' }}" minlength="8" maxlength="128" required aria-describedby="passwordError">
+                <span id="passwordError" class="field-error" aria-live="polite"></span>
+              </label>
+              <div class="auth-actions">
+                <button id="authSubmit" class="button primary" type="submit">{% if mode|default('login') == 'signup' %}Create account{% else %}Sign in{% endif %}</button>
+                <a id="authToggle" class="text-button" href="/onboarding{% if toggle_query|default('') %}?{{ toggle_query }}{% endif %}">{% if mode|default('login') == 'signup' %}I already have an account{% else %}Create an account{% endif %}</a>
+              </div>
+              <p id="authStatus" class="action-status" role="status" aria-live="polite"></p>
+            </form>
+          {% endif %}
+        </section>
+
+        {% if signed_in %}
+        <section class="dashboard-panel" aria-labelledby="pairTitle">
+          <h2 id="pairTitle">2. Connect the agent</h2>
+          <p class="dashboard-panel-copy">Start the agent on this PC and enter the code when it asks. Codes expire after 10 minutes and work once.</p>
+          <button id="createCode" class="button primary" type="button">Get pairing code</button>
+          <p><strong id="pairingCode" class="pairing-code"></strong> <span id="pairingExpiry" role="timer"></span></p>
+        </section>
+
+        <section class="dashboard-panel" aria-labelledby="gamesTitle">
+          <h2 id="gamesTitle">3. Play the calibration games</h2>
+          <p id="onboardingState" class="collection-status" role="status" aria-live="polite">Loading setup status…</p>
+          <ul id="gameProgress" class="collection-summary"></ul>
+          <p id="windowProgress" class="dashboard-footnote"></p>
+          <a id="playGames" class="button primary" href="/arcade" hidden>Open the games</a>
+          <button id="trainModel" class="button primary" type="button" disabled>Train my model</button>
+        </section>
+
+        <section class="dashboard-panel" aria-labelledby="dataTitle">
+          <h2 id="dataTitle">Your data</h2>
+          <p class="dashboard-panel-copy">Disconnecting stops the agent's credential from working. Deleting removes your calibration and monitoring data and trained models, and disconnects every agent. Your account stays.</p>
+          <div class="auth-actions">
+            <button id="revokeDevice" class="button secondary-button" type="button" hidden>Disconnect this agent</button>
+            <button id="deleteData" class="button secondary-button" type="button">Delete my data</button>
+          </div>
+          <p id="dataStatus" class="action-status" role="status" aria-live="polite"></p>
+        </section>
+        {% endif %}
+      </main>
+    </div>
+  </body>
+</html>

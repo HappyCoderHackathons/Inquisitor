@@ -8,7 +8,12 @@ from unittest.mock import patch
 import numpy as np
 
 from backend.ml.evaluate import evaluate, main, render_report
-from backend.ml.evaluation import MedianMAD, split_sessions, window_metrics
+from backend.ml.evaluation import (
+    MedianMAD,
+    split_sessions,
+    switch_latency,
+    window_metrics,
+)
 from backend.ml.model import FEATURE_NAMES
 from scripts.generate_sample_windows import generate_windows
 
@@ -51,6 +56,15 @@ class EvaluationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             window_metrics(["OFFLINE"])
 
+    def test_switch_latency_counts_windows_and_seconds_until_alert(self):
+        genuine = [("NORMAL", 30_000), ("UNUSUAL", 30_000), ("NORMAL", 30_000)]
+        impostor = [("UNUSUAL", 30_000), ("INSUFFICIENT_DATA", 20_000), ("UNUSUAL", 40_000), ("NORMAL", 30_000)]
+        self.assertEqual(switch_latency(genuine, impostor),
+                         {"alert_before_switch": False, "windows": 3, "seconds": 90.0})
+        self.assertEqual(switch_latency([("UNUSUAL", 1000)] * 3, [("NORMAL", 1000)] * 4),
+                         {"alert_before_switch": True, "windows": 1, "seconds": 1.0})
+        self.assertIsNone(switch_latency(genuine, [])["windows"])
+
     def test_robust_deviations_and_aggregate_score(self):
         mask = np.zeros(len(FEATURE_NAMES), dtype=bool)
         mask[:2] = True
@@ -86,7 +100,9 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in scores.call_args_list[1:]], [[w] for w in holdout[:-1]])
         self.assertEqual(report["results"]["MedianMAD"]["genuine"]["frr"], 0)
         self.assertEqual(report["results"]["IsolationForest"]["genuine"]["frr"], 0.25)
+        self.assertIsNone(report["results"]["IsolationForest"]["switch"]["windows"])
         rendered = render_report(report)
+        self.assertIn("| IsolationForest | Unavailable | Unavailable | No |", rendered)
         self.assertIn("synthetic", rendered)
         self.assertIn("Unavailable", rendered)
         self.assertIn("4/5", rendered)

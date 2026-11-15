@@ -16,8 +16,8 @@
   var windowCount = $("#featureWindowCount");
   var sessionCount = $("#featureSessionCount");
   var exportLink = $("#exportFeatureWindows");
-  var deleteLocalDataButton = $("#deleteLocalData");
   var dataActionStatus = $("#dataActionStatus");
+  var dangerForms = document.querySelectorAll(".typed-confirm");
   var collectionWindowMs = 3e4;
   var mouseSegmentMs = 20;
   var mouseStrokeGapMs = 250;
@@ -66,7 +66,11 @@
     }
     if (stopButton) stopButton.disabled = !collectionActive;
     if (retryButton) retryButton.hidden = pendingWindow === null;
-    if (deleteLocalDataButton) deleteLocalDataButton.disabled = collectionActive || pendingWindow !== null;
+    const storedDataLocked = collectionActive || pendingWindow !== null;
+    document.querySelectorAll("[data-danger-open]").forEach((button) => {
+      button.disabled = storedDataLocked;
+    });
+    if (storedDataLocked) closeDangerForms();
     if (collectionMode) collectionMode.disabled = collectionActive;
     if (collectionConsent) collectionConsent.disabled = collectionActive;
     if (mouseConsent) mouseConsent.disabled = collectionActive;
@@ -207,7 +211,12 @@
     return created;
   }
   async function refreshCollectionSummary() {
-    const response = await fetch("/api/feature-windows");
+    let response;
+    try {
+      response = await fetch("/api/feature-windows");
+    } catch {
+      throw new Error("Could not load saved windows. The server did not respond.");
+    }
     if (!response.ok) throw new Error(`Could not load feature-window summary (${response.status}).`);
     const data = await response.json();
     if (windowCount) windowCount.textContent = String(data.windows);
@@ -251,7 +260,10 @@
     } catch (error) {
       resumeAfterRetry = collectionActive && !collectionPaused;
       collectionPaused = true;
-      setCollectionStatus(error instanceof Error ? error.message : "Could not save feature window.", true);
+      setCollectionStatus(
+        error instanceof TypeError ? "Could not save feature window. The server did not respond." : error instanceof Error ? error.message : "Could not save feature window.",
+        true
+      );
     } finally {
       updateControls();
     }
@@ -359,30 +371,94 @@
       setCollectionStatus("Collect at least one feature window before exporting.");
     }
   });
-  deleteLocalDataButton?.addEventListener("click", async () => {
-    if (collectionActive || pendingWindow) {
-      setCollectionStatus("Stop collection and save or discard any pending window before deleting data.", true);
-      return;
+  function closeDangerForms() {
+    dangerForms.forEach((form) => {
+      form.hidden = true;
+      const opener = document.querySelector(`[aria-controls="${form.id}"]`);
+      if (opener) opener.setAttribute("aria-expanded", "false");
+      const input = form.querySelector("input");
+      if (input) input.value = "";
+      const submit = form.querySelector('button[type="submit"]');
+      if (submit) submit.disabled = true;
+    });
+  }
+  function responseError(payload, status) {
+    if (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string") {
+      return payload.error;
     }
-    if (!window.confirm("Delete all locally stored arcade rounds and feature windows? This cannot be undone.")) return;
-    if (dataActionStatus) dataActionStatus.textContent = "";
-    try {
-      const response = await fetch("/api/local-data", { method: "DELETE" });
-      if (!response.ok) throw new Error(`Request failed (${response.status}).`);
+    return `Request failed (${status}).`;
+  }
+  function wireDangerForm(form) {
+    const phrase = form.dataset.phrase ?? "";
+    const method = form.dataset.method ?? "POST";
+    const path = form.dataset.path ?? "";
+    const success = form.dataset.success ?? "Done.";
+    const input = form.querySelector("input");
+    const submit = form.querySelector('button[type="submit"]');
+    const opener = document.querySelector(`[aria-controls="${form.id}"]`);
+    input?.addEventListener("input", () => {
+      if (submit && input) submit.disabled = input.value !== phrase;
+    });
+    opener?.addEventListener("click", () => {
+      if (collectionActive || pendingWindow) {
+        setCollectionStatus("Stop collection and save or discard any pending window before changing stored data.", true);
+        return;
+      }
+      const opening = form.hidden;
+      closeDangerForms();
+      form.hidden = !opening;
+      opener.setAttribute("aria-expanded", opening ? "true" : "false");
+      if (opening) input?.focus();
+    });
+    form.querySelector(".typed-cancel")?.addEventListener("click", () => closeDangerForms());
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!input || input.value !== phrase || !submit) return;
+      submit.disabled = true;
       if (dataActionStatus) {
         dataActionStatus.classList.remove("error");
-        dataActionStatus.textContent = "Local arcade rounds and feature windows deleted.";
+        dataActionStatus.textContent = "Please wait.";
       }
-      await refreshCollectionSummary();
-    } catch (error) {
-      if (dataActionStatus) {
-        dataActionStatus.classList.add("error");
-        dataActionStatus.textContent = error instanceof Error ? error.message : "Could not delete local data.";
-      }
-    }
-  });
+      void fetch(path, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: phrase })
+      }).then(async (response) => {
+        if (!response.ok) throw new Error(responseError(await response.json().catch(() => null), response.status));
+        closeDangerForms();
+        if (dataActionStatus) {
+          dataActionStatus.classList.remove("error");
+          dataActionStatus.textContent = success;
+        }
+        try {
+          await refreshCollectionSummary();
+        } catch (error) {
+          if (dataActionStatus) {
+            dataActionStatus.classList.add("error");
+            dataActionStatus.textContent = error instanceof Error ? error.message : "The action finished, but saved windows could not be reloaded.";
+          }
+        }
+      }).catch((error) => {
+        if (dataActionStatus) {
+          dataActionStatus.classList.add("error");
+          dataActionStatus.textContent = error instanceof TypeError ? "Could not reach the server. Nothing was changed." : error instanceof Error ? error.message : "Could not complete that action.";
+        }
+        if (submit) submit.disabled = !input || input.value !== phrase;
+      });
+    });
+  }
+  dangerForms.forEach(wireDangerForm);
   updateControls();
-  void refreshCollectionSummary().catch((error) => {
-    setCollectionStatus(error instanceof Error ? error.message : "Could not load saved windows.", true);
-  });
+  void (async () => {
+    setCollectionStatus("Loading saved windows\u2026");
+    try {
+      await refreshCollectionSummary();
+      if (!collectionActive) setCollectionStatus("Collection is off. Choose a mode and opt in to begin.");
+    } catch (error) {
+      setCollectionStatus(
+        error instanceof Error ? error.message : "Could not load saved windows. The server did not respond.",
+        true
+      );
+    }
+  })();
 })();

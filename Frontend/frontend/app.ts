@@ -5,10 +5,10 @@ type ArenaEnemy = { x: number; y: number; radius: number; speed: number };
 type ArenaBullet = { x: number; y: number; vx: number; vy: number };
 type ArenaPoint = { x: number; y: number };
 const modes: Mode[] = [
-  { id: "aim", name: "Aim Trainer", description: "Hit as many targets as you can.", keys: "Mouse" },
+  { id: "aim", name: "Aim Trainer", description: "Hit as many targets as you can.", keys: "Mouse, Space, or A" },
   { id: "tetris", name: "Block Stack", description: "Stack blocks and clear rows.", keys: "Arrow keys" },
   { id: "typing", name: "Word Sprint", description: "Type each word as quickly as you can.", keys: "Keyboard" },
-  { id: "arena", name: "Arena Rush", description: "Move, aim, and shoot.", keys: "WASD + mouse" },
+  { id: "arena", name: "Arena Rush", description: "Move, aim, and shoot.", keys: "WASD, Q/E, Space" },
 ];
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 const grid = $("#gameGrid");
@@ -30,6 +30,28 @@ grid.innerHTML = modes
 
 const overlay = $("#gameOverlay"),
   stage = $("#gameStage");
+let returnFocus: HTMLElement | null = null;
+
+function trapGameFocus(event: KeyboardEvent) {
+  if (event.key !== "Tab" || overlay.classList.contains("hidden")) return;
+  const nodes = Array.from(
+    overlay.querySelectorAll<HTMLElement>(
+      "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex='0']",
+    ),
+  ).filter((node) => !node.classList.contains("hidden") && !node.hidden);
+  if (!nodes.length) return;
+  const first = nodes[0];
+  const last = nodes[nodes.length - 1];
+  const focused = document.activeElement;
+  if (event.shiftKey && (focused === first || !overlay.contains(focused))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && focused === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+overlay.addEventListener("keydown", trapGameFocus);
 let active: GameId | null = null,
   sprint = false,
   running = false,
@@ -170,19 +192,69 @@ function openGame(id: GameId, isSprint = false) {
   stage.className = `game-stage stage-${id}`;
   renderStage();
   overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+  const current = document.activeElement;
+  if (current instanceof HTMLElement && !overlay.contains(current)) returnFocus = current;
+  $("#startGame").focus();
 }
 function instruction(id: GameId) {
   return (
     {
-      aim: "Click or tap each target",
+      aim: "Click, tap, or press Space or A",
       tetris: "← → move · ↓ soft drop · ↑ rotate · SPACE hard drop",
       typing: "Type each word; correct letters turn green",
-      arena: "Move with WASD or arrows; aim and fire with the mouse",
+      arena: "Move with WASD or arrows. Aim with the mouse or Q and E. Fire with click, Space, or F",
     } as Record<GameId, string>
   )[id];
 }
+let onboardingActive = false;
+let onboardingQueue = Promise.resolve();
+let serverWarning: string | null = null;
+function setArcadeStatus(message: string, isError = false) {
+  const status = document.getElementById("arcadeStatus");
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("error", isError);
+}
+function reportRound(path: string, body: object = {}) {
+  if (!onboardingActive) return;
+  // Queued so a sprint's finish and next start reach the server in order.
+  onboardingQueue = onboardingQueue
+    .then(async () => {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(`Could not report this round (${response.status}).`);
+    })
+    .catch((error: unknown) => {
+      serverWarning =
+        error instanceof TypeError
+          ? "Could not report this round. The server did not respond."
+          : error instanceof Error
+            ? error.message
+            : "Could not report this round.";
+      setArcadeStatus(serverWarning, true);
+    });
+}
+async function checkOnboarding() {
+  try {
+    const response = await fetch("/api/onboarding");
+    if (response.status === 404) return;
+    if (!response.ok) throw new Error(`Could not check setup (${response.status}).`);
+    onboardingActive = ((await response.json()) as { state: string }).state === "collecting";
+  } catch (error) {
+    serverWarning =
+      error instanceof Error && error.message.startsWith("Could not check setup")
+        ? error.message
+        : "Could not check setup. The server did not respond.";
+    setArcadeStatus(serverWarning, true);
+  }
+}
 function start() {
   if (!active) return;
+  reportRound("/api/onboarding/rounds", { game: active });
   clearInterval(timerId);
   clearInterval(gravityTimerId);
   cancelAnimationFrame(animation);
@@ -245,15 +317,20 @@ function finish() {
   }
 }
 function close() {
+  if (running) reportRound("/api/onboarding/rounds/current/cancel");
   running = false;
   clearInterval(timerId);
   clearInterval(gravityTimerId);
   cancelAnimationFrame(animation);
   arenaKeys.clear();
   overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
   active = null;
   sprint = false;
+  const restore = returnFocus;
+  returnFocus = null;
   refreshSummary();
+  restore?.focus();
 }
 $("#gameGrid").addEventListener("click", (e) => {
   const btn = (e.target as HTMLElement).closest("[data-game]") as HTMLElement | null;
@@ -277,6 +354,7 @@ window.addEventListener("keydown", (e) => {
     const key = e.key.toLowerCase();
     if (active === "arena" && ["arrowleft", "arrowright", "arrowup", "arrowdown", "a", "d", "w", "s"].includes(key))
       arenaKeys.add(key);
+    if (active === "arena" && (key === "q" || key === "e")) aimArena(key === "q" ? -0.2 : 0.2);
     if (e.repeat) return;
     recordInput("keyboard");
     down.set(e.code, performance.now());
@@ -295,8 +373,10 @@ window.addEventListener("keyup", (e) => {
 function handleAction(key: string) {
   if (!active) return;
   if (active === "aim") {
-    if (key === " " || key.toLowerCase() === "a") hitTarget();
+    const focusedControl = document.activeElement instanceof HTMLButtonElement;
+    if (key === " " || key.toLowerCase() === "a" || (key === "Enter" && !focusedControl)) hitTarget();
   }
+  if (active === "arena" && (key === " " || key.toLowerCase() === "f")) fireArena();
   if (active === "tetris") {
     if (["ArrowLeft", "a", "A"].includes(key)) moveTetris(-1);
     if (["ArrowRight", "d", "D"].includes(key)) moveTetris(1);
@@ -308,7 +388,7 @@ function handleAction(key: string) {
 function renderStage() {
   if (!active) return;
   if (active === "aim") {
-    stage.innerHTML = `<div class="aim-field"><div class="aim-cross">+</div><div class="target" id="target" aria-label="target"></div><div class="aim-caption">CLICK THE TARGET</div></div>`;
+    stage.innerHTML = `<div class="aim-field"><div class="aim-cross">+</div><div class="target" id="target" role="button" tabindex="0" aria-label="Hit the target"></div><div class="aim-caption">SPACE, A, OR CLICK</div></div>`;
     $("#target")?.addEventListener("click", hitTarget);
   }
   if (active === "typing") {
@@ -350,7 +430,7 @@ function renderStage() {
     updateLetters();
   }
   if (active === "arena") {
-    stage.innerHTML = `<div class="arena-game"><div class="arena-hud"><span>WASD / ARROWS MOVE</span><span>MOUSE AIM · LEFT CLICK FIRE</span><b id="arenaHull">HULL 1</b></div><canvas class="arena-canvas" id="arenaCanvas" width="720" height="316" aria-label="Arena game field"></canvas></div>`;
+    stage.innerHTML = `<div class="arena-game"><div class="arena-hud"><span>WASD / ARROWS MOVE</span><span>Q / E AIM · SPACE OR F FIRE</span><b id="arenaHull">HULL 1</b></div><canvas class="arena-canvas" id="arenaCanvas" width="720" height="316" tabindex="0" aria-label="Arena game field"></canvas></div>`;
     arenaCanvas = $("#arenaCanvas") as HTMLCanvasElement;
     const updateAim = (event: PointerEvent) => {
       if (!arenaCanvas) return;
@@ -486,6 +566,13 @@ function renderTetris() {
     .join(
       "",
     )}</div><div class="tetris-aside"><b>${score}</b><span>POINTS</span><hr><span>LINES</span><b>${linesCleared}</b><small>← → MOVE<br>↓ SOFT DROP<br>↑ ROTATE<br>SPACE HARD DROP</small></div></div>`;
+}
+function aimArena(delta: number) {
+  const dx = arenaAim.x - arenaPlayer.x;
+  const dy = arenaAim.y - arenaPlayer.y;
+  const angle = Math.atan2(dy, dx) + delta;
+  const reach = Math.max(80, Math.min(180, Math.hypot(dx, dy) || 140));
+  arenaAim = { x: arenaPlayer.x + Math.cos(angle) * reach, y: arenaPlayer.y + Math.sin(angle) * reach };
 }
 function fireArena() {
   const now = performance.now();
@@ -667,6 +754,7 @@ function endArena() {
   $("#startGame").classList.remove("hidden");
 }
 function saveSample() {
+  reportRound("/api/onboarding/rounds/current/finish");
   const avg = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
   const mean = avg(intervals),
     std = Math.sqrt(avg(intervals.map((x) => (x - mean) ** 2)));
@@ -682,17 +770,31 @@ function saveSample() {
     score,
     source: inputCounts.controller ? "mixed" : "keyboard",
   };
+  setArcadeStatus("Saving this round…");
   void fetch("/api/samples", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(d),
   })
-    .then(refreshSummary)
-    .catch(() => {});
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`Could not save this round (${response.status}).`);
+      await refreshSummary();
+    })
+    .catch((error: unknown) => {
+      setArcadeStatus(
+        error instanceof Error && error.message.startsWith("Could not save")
+          ? error.message
+          : "Could not save this round. The server did not respond.",
+        true,
+      );
+    });
 }
 async function refreshSummary() {
+  setArcadeStatus("Loading recent games…");
   try {
-    const data = await (await fetch("/api/summary")).json();
+    const response = await fetch("/api/summary");
+    if (!response.ok) throw new Error(`Could not load recent games (${response.status}).`);
+    const data = await response.json();
     $("#sampleCount").textContent = data.samples;
     const list = $("#recentList");
     list.innerHTML = data.recent.length
@@ -703,11 +805,31 @@ async function refreshSummary() {
           )
           .join("")
       : `<div class="empty">No games played yet.</div>`;
-  } catch {}
+    const message = data.samples ? "Recent games loaded from this machine." : "No games saved on this machine yet.";
+    setArcadeStatus(serverWarning ? `${message} ${serverWarning}` : message, Boolean(serverWarning));
+  } catch (error) {
+    setArcadeStatus(
+      error instanceof Error && error.message.startsWith("Could not load recent games")
+        ? error.message
+        : "Could not load recent games. The server did not respond.",
+      true,
+    );
+  }
 }
 $("#clearBtn").addEventListener("click", async () => {
-  await fetch("/api/samples", { method: "DELETE" });
-  refreshSummary();
+  setArcadeStatus("Clearing saved rounds…");
+  try {
+    const response = await fetch("/api/samples", { method: "DELETE" });
+    if (!response.ok) throw new Error(`Could not clear saved rounds (${response.status}).`);
+    await refreshSummary();
+  } catch (error) {
+    setArcadeStatus(
+      error instanceof Error && error.message.startsWith("Could not clear")
+        ? error.message
+        : "Could not clear saved rounds. The server did not respond.",
+      true,
+    );
+  }
 });
 window.setInterval(() => {
   const pads = navigator.getGamepads?.() || [];
@@ -739,4 +861,7 @@ window.setInterval(() => {
     }
   });
 }, 100);
-void refreshSummary();
+void (async () => {
+  await checkOnboarding();
+  await refreshSummary();
+})();

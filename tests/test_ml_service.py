@@ -1,7 +1,9 @@
 import copy
 import json
 import os
+import sqlite3
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -35,12 +37,49 @@ class ModelServiceTests(unittest.TestCase):
     def test_authentication_and_health(self) -> None:
         self.assertEqual(self.client.get("/health").status_code, 401)
         self.assertEqual(self.client.get("/health", headers={"Authorization": "Bearer wrong"}).status_code, 401)
-        self.assertEqual(self.client.get("/health", headers=self.headers).json, {"state": "ok"})
+        self.assertEqual(self.client.get("/health", headers=self.headers).json, {
+            "state": "ok", "database": "available", "model_store": "available",
+        })
         with (
             patch.dict(os.environ, {"ML_TOKEN_FILE": str(Path(self.temporary.name) / "missing")}),
             self.assertRaises(FileNotFoundError),
         ):
             create_app()
+
+    def test_health_reports_each_dependency_failure(self) -> None:
+        with patch("backend.ml.app.AccountStore.check_available", side_effect=sqlite3.OperationalError("offline")):
+            response = create_app().test_client().get("/health", headers=self.headers)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json, {
+            "state": "degraded", "database": "unavailable", "model_store": "available",
+        })
+
+        with patch("backend.ml.app.ModelStore.check_available", side_effect=OSError("offline")):
+            response = create_app().test_client().get("/health", headers=self.headers)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json, {
+            "state": "degraded", "database": "available", "model_store": "unavailable",
+        })
+
+    def test_security_headers_and_body_user_id_rejected(self) -> None:
+        denied = self.client.get("/health")
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(denied.headers["X-Content-Type-Options"], "nosniff")
+        self.assertIn("frame-ancestors 'none'", denied.headers["Content-Security-Policy"])
+        self.assertNotIn("Strict-Transport-Security", denied.headers)
+        plain = self.client.get("/health", headers=self.headers)
+        policy = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+        self.assertEqual(plain.headers["Content-Security-Policy"], policy)
+        secured = self.client.get("/health", headers=self.headers, base_url="https://ml.example")
+        self.assertIn("max-age=31536000", secured.headers["Strict-Transport-Security"])
+        rejected = self.client.post("/windows", headers=self.headers, json={"window": {}, "user_id": "other-user"})
+        self.assertEqual(rejected.status_code, 422)
+        retention = self.client.put(
+            "/retention",
+            headers=self.headers,
+            json={"monitoring_retention_seconds": 60, "user_id": "other-user"},
+        )
+        self.assertEqual(retention.status_code, 422)
 
     def test_shared_schema_fixtures(self) -> None:
         for version in (1, 2):
@@ -73,9 +112,55 @@ class ModelServiceTests(unittest.TestCase):
             store = ModelStore(Path(self.temporary.name) / "disabled")
             with self.assertRaises(RuntimeError):
                 store.train([], "user", "device", "validation")
+            windows = generate_windows(49, 30)
+            for env in ({}, {"ML_TRAIN_ASYNC": "1"}):
+                with self.subTest(env=env), patch.dict(os.environ, env):
+                    response = self.client.post("/models/train", headers=self.headers, json={
+                        "windows": windows, "validation_session_id": windows[0]["session_id"],
+                    })
+                    self.assertEqual(response.status_code, 503)
+            self.assertEqual([path for path in (Path(self.temporary.name) / "models").iterdir() if len(path.name) == 32], [])
+
+    def finished_async_job(self, validation: str) -> dict[str, object]:
+        windows = generate_windows(49, 20) + generate_windows(50, 10)
+        for index, window in enumerate(windows):
+            window["session_id"] = "training" if index < 20 else "validation"
+        for _ in range(200):
+            response = self.client.post("/models/train", headers=self.headers, json={
+                "windows": windows, "validation_session_id": validation,
+            })
+            if response.status_code != 503:
+                break
+            time.sleep(0.05)
+        self.assertEqual(response.status_code, 202, response.json)
+        self.assertEqual(response.json["state"], "queued")
+        url = "/models/" + response.json["model_id"]
+        for _ in range(200):
+            metadata = self.client.get(url, headers=self.headers).json
+            if metadata["state"] in ("ready", "failed"):
+                return metadata
+            time.sleep(0.05)
+        self.fail("training job did not finish")
+
+    def test_async_job_failure_is_reported_and_releases_the_lock(self) -> None:
+        # Validation fails before any model is fitted, so this runs without a training host.
+        with patch.dict(os.environ, {"ML_ALLOW_TRAINING": "1", "ML_TRAIN_ASYNC": "1"}):
+            first = self.finished_async_job("missing")
+            second = self.finished_async_job("missing")
+        for failed in (first, second):
+            self.assertEqual(failed["state"], "failed")
+            self.assertIn("validation session", failed["error"])
+            self.assertEqual(self.client.put(f"/models/{failed['model_id']}/active", headers=self.headers).status_code, 422)
+
+    @unittest.skipUnless(os.environ.get("ML_ALLOW_TRAINING") == "1", "training checks run on the designated host only")
+    def test_async_training_reaches_ready(self) -> None:
+        with patch.dict(os.environ, {"ML_TRAIN_ASYNC": "1"}):
+            ready = self.finished_async_job("validation")
+        self.assertEqual(ready["state"], "ready")
+        self.assertEqual(self.client.put(f"/models/{ready['model_id']}/active", headers=self.headers).status_code, 200)
 
     def test_published_api_auth_ownership_and_score_contract(self) -> None:
-        artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v2.json"
+        artifact = Path(__file__).resolve().parents[1] / "archive_models/labeled-overlap-v2.json"
         with patch.dict(os.environ, {"ML_PUBLISHED_MODEL_FILE": str(artifact),
                                     "ML_PUBLISHED_USER_ID": "synthetic-user", "ML_PUBLISHED_DEVICE_ID": "synthetic-device"}):
             client = create_app().test_client()
@@ -102,7 +187,7 @@ class ModelServiceTests(unittest.TestCase):
         self.assertEqual(client.post("/score", headers=self.headers, json={"window": window}).json["state"], "INSUFFICIENT_DATA")
 
     def test_published_unusual_window_is_explained(self) -> None:
-        artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v1.json"
+        artifact = Path(__file__).resolve().parents[1] / "archive_models/labeled-overlap-v1.json"
         window = generate_windows(49, 1)[0]
         window["features"]["press_overlap_fraction"] = 0.9
         result = PublishedModel(artifact).score(window, "synthetic-device")
@@ -140,7 +225,7 @@ class ModelServiceTests(unittest.TestCase):
         self.assertEqual(self.client.get("/models/active", headers=self.headers).status_code, 404)
 
     def test_published_artifact_validation_and_portable_hash(self) -> None:
-        artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v1.json"
+        artifact = Path(__file__).resolve().parents[1] / "archive_models/labeled-overlap-v1.json"
         original = PublishedModel(artifact)
         copy_path = Path(self.temporary.name) / "weights.json"
         value = json.loads(artifact.read_text(encoding="utf-8"))
