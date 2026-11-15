@@ -61,7 +61,7 @@
         {% if signed_in %}
         <section class="dashboard-panel" aria-labelledby="pairTitle">
           <h2 id="pairTitle">2. Connect the agent</h2>
-          <p class="dashboard-panel-copy">Download the Windows agent, run it, and accept its setup terms. Then choose <strong>Connect</strong> in its tray menu and enter this site's address and the code. Codes expire after 10 minutes and work once.</p>
+          <p class="dashboard-panel-copy">Download the Windows agent, run it, and accept its setup terms. Then choose <strong>Connect to account...</strong> in its tray menu and enter this site's address and the code. Codes expire after 10 minutes and work once.</p>
           <p><a class="button secondary-button" href="https://github.com/hack-the-nest-but-happier/Inquisitor/releases/latest/download/Inquisitor-windows-x64.exe" rel="noopener">Download the Windows agent</a> <a href="https://github.com/hack-the-nest-but-happier/Inquisitor/releases/latest" rel="noopener">Release notes and checksum</a></p>
           <button id="createCode" class="button primary" type="button">Get pairing code</button>
           <p><strong id="pairingCode" class="pairing-code"></strong> <span id="pairingExpiry" role="timer"></span></p>
@@ -82,15 +82,16 @@
             <p class="dashboard-panel-copy">This step explains the measurement before any sample starts. A score compares a window with this device's enrollment. It is an anomaly signal, not an identity.</p>
             <div class="wizard-lists">
               <div>
-                <h3>What is collected</h3>
+                <h3>What the agent sends</h3>
                 <ul>
-                  <li>Keyboard timing summaries: hold times, gaps between presses, pauses, and bursts.</li>
-                  <li>Counts for the window, such as how many presses occurred and how long the window lasted.</li>
-                  <li>Mouse timing aggregates only when mouse collection is enabled.</li>
+                  <li>One summary per 30 seconds of activity.</li>
+                  <li>Keyboard: how many keys were pressed, and the average and spread of hold times and of the gaps between presses.</li>
+                  <li>Mouse: speed, how much the pointer turns, how straight its path is, and click count and timing.</li>
+                  <li>The summary's start time, identifiers for this PC and session, and whether collection is paused.</li>
                 </ul>
               </div>
               <div>
-                <h3>What is not collected</h3>
+                <h3>What is never sent</h3>
                 <ul>
                   <li>Typed text, passwords, key names, and the order of individual keys.</li>
                   <li>Screenshots, application names, and page addresses.</li>

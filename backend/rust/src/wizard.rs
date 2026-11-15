@@ -102,8 +102,8 @@ values the device reports, which can include where a finger or pen touches \
 the device.\r\n\
 - For every event: the time, the kind of device, and a short device number \
 that changes each session.\r\n\r\n\
-These records are saved as CSV files in the data folder on this PC \
-(%APPDATA%\\inquisitor unless you change it). They are not uploaded.\r\n\r\n\
+These records are saved as CSV files in the data folder on this PC (Open \
+data location in the tray menu). They are not uploaded.\r\n\r\n\
 WHAT IS SENT TO YOUR ACCOUNT\r\n\
 Only to an account you connect this PC to from the tray. Inquisitor also \
 works without an account: then nothing is sent, and the CSV files above are \
@@ -114,13 +114,14 @@ between presses.\r\n\
 - Mouse, in the same summary: speed, how much the pointer turns, how \
 straight its path is, and how many clicks and the time between them, as \
 averages for the 30 seconds.\r\n\
-- The time each summary starts, and whether collection is paused.\r\n\
+- The time each summary starts, identifiers for this PC and the collection \
+session, the app version, and whether collection is paused.\r\n\
 - When connecting: this PC's name, so you can tell your devices apart.\r\n\
 Individual key presses, mouse movements, controllers, touch, and pen input \
 are never sent.\r\n\r\n\
 Summaries are held on this PC until they can be sent: while offline, across \
-restarts, and before you connect an account (in \
-%APPDATA%\\inquisitor\\outbox.jsonl, the same numbers that are sent). \
+restarts, and before you connect an account. They hold the same numbers \
+that are sent. \
 Once connected, summaries from an enrollment round go to that round, and all \
 others are sent for monitoring after your model is trained, however old they \
 are. Nothing is held while paused.\r\n\r\n\
@@ -130,8 +131,9 @@ WHAT IS NEVER COLLECTED\r\n\
 - Window titles, websites, or anything shown on screen\r\n\
 - Clipboard contents, files, microphone, camera, or location\r\n\r\n\
 WHAT HAPPENS TO THE SUMMARIES\r\n\
-- The website stores them with your account. Enrollment summaries train a \
-model of your rhythm, and monitoring summaries are scored against it.\r\n\
+- The website stores them with your account and passes them to its model \
+service. Enrollment summaries train a model of your rhythm, and monitoring \
+summaries are scored against it.\r\n\
 - When several recent summaries look unusual, your account shows an alert. \
 An alert is a signal to check, not proof of who used the PC. Inquisitor never \
 locks Windows or blocks input.\r\n\
