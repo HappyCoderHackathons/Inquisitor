@@ -48,3 +48,27 @@ Run focused checks:
 ```powershell
 uv run --with 'jsonschema[format]>=4.18,<5' python -m unittest discover -s tests
 ```
+
+## Replaying recorded windows
+
+`scripts/replay_windows.py` is the demo fallback for when live capture fails. It posts
+previously recorded aggregate windows to the hosted `/api/agent/windows` route, so they
+go through the same validation, storage, and scoring as live monitoring windows.
+
+```powershell
+$env:INQUISITOR_DEVICE_TOKEN = "<paired device token>"
+uv run --project backend python scripts/replay_windows.py C:\demo\guest.jsonl `
+  --url https://<hosted app> --device-id <paired device ID> --speed 4
+```
+
+Each window is rewritten as a `monitoring` window for the paired device, gets the next
+sequence number in a new `replay-<random>` session, and is restamped to end now. Features
+are sent unchanged. Stored results keep that session prefix, so replayed rows can be told
+apart from live ones. `--speed 1` waits each window's recorded duration; higher values
+shorten the wait. Ingestion accepts 60 windows per device per minute, and the script stops
+at the first rejected window.
+
+Every output line starts with `REPLAY (recorded windows, not live input)`. Keep that
+label visible during a demo and say that replay proves integration, not live detection.
+Record replay files only from consenting people, aggregate-only, and keep them outside
+the repository. Synthetic files from the generator above are fine for rehearsing.
