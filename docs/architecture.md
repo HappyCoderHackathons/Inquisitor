@@ -29,6 +29,30 @@ computer/session groups; selection CV must not be presented as an untouched fina
 
 ## Component boundaries and data flow
 
+```mermaid
+flowchart LR
+    subgraph PC["User's Windows PC"]
+        Agent["Rust agent<br/>(opt-in, pause/exit)"]
+    end
+    Browser["Browser dashboard<br/>and arcade"]
+    subgraph Hosted["Hosted service (HTTPS)"]
+        Flask["Flask app<br/>pairing, status, relay"]
+        Auth["Better Auth<br/>Node, loopback only"]
+    end
+    Atlas[("MongoDB Atlas")]
+    ML["Private Flask ML service<br/>training and inference"]
+
+    Agent -- "outbound WSS and HTTPS<br/>aggregate windows, device token" --> Flask
+    Browser -- "HTTPS session cookie" --> Flask
+    Flask -- "/api/auth/ forward" --> Auth
+    Auth --> Atlas
+    Flask -- "accounts, devices, results" --> Atlas
+    Flask -- "server-only credential<br/>HTTPS or SSH tunnel" --> ML
+```
+
+Arrows show who opens each connection. Only aggregate numeric windows cross the
+agent-to-hosted and hosted-to-ML boundaries. Nothing connects inbound to the PC.
+
 1. The consenting user enables the visible Windows agent. Rust captures transient
    keyboard timing and, when mouse collection is enabled, mouse motion and click
    timing. It pairs events in memory and produces numeric feature windows. Key
