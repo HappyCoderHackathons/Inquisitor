@@ -64,7 +64,7 @@
         {% if signed_in %}
         <section class="dashboard-panel" aria-labelledby="pairTitle">
           <h2 id="pairTitle">2. Connect the agent</h2>
-          <p class="dashboard-panel-copy">Download the Windows agent, run it, and accept its setup terms. Then choose <strong>Connect</strong> in its tray menu and enter this site's address and the code. Codes expire after 10 minutes and work once.</p>
+          <p class="dashboard-panel-copy">Download the Windows agent, run it, and accept its setup terms. Then choose <strong>Connect to account...</strong> in its tray menu and enter this site's address and the code. Codes expire after 10 minutes and work once.</p>
           <p><a class="button secondary-button" href="https://github.com/hack-the-nest-but-happier/Inquisitor/releases/latest/download/Inquisitor-windows-x64.exe" rel="noopener">Download the Windows agent</a> <a href="https://github.com/hack-the-nest-but-happier/Inquisitor/releases/latest" rel="noopener">Release notes and checksum</a></p>
           <button id="createCode" class="button primary" type="button">Get pairing code</button>
           <p><strong id="pairingCode" class="pairing-code"></strong> <span id="pairingExpiry" role="timer"></span></p>
@@ -76,9 +76,8 @@
           <p id="agentStatus" class="collection-status" role="status">Agent status: offline</p>
           <nav class="wizard-steps" aria-label="Enrollment steps">
             <button class="wizard-step" type="button" data-step-tab="warmup" aria-current="step">1. Warm-up</button>
-            <button class="wizard-step" type="button" data-step-tab="typing" disabled>2. Typing Sample</button>
-            <button class="wizard-step" type="button" data-step-tab="activity" disabled>3. Natural Activity</button>
-            <button class="wizard-step" type="button" data-step-tab="train" disabled>4. Train Model</button>
+            <button class="wizard-step" type="button" data-step-tab="activity" disabled>2. Natural Activity</button>
+            <button class="wizard-step" type="button" data-step-tab="train" disabled>3. Train Model</button>
           </nav>
 
           <div class="wizard-panel" data-step-panel="warmup">
@@ -86,33 +85,24 @@
             <p class="dashboard-panel-copy">This step explains the measurement before any sample starts. A score compares a window with this device's enrollment. It is an anomaly signal, not an identity.</p>
             <div class="wizard-lists">
               <div>
-                <h3>What is collected</h3>
+                <h3>What the agent sends</h3>
                 <ul>
-                  <li>Keyboard timing summaries: hold times, gaps between presses, pauses, and bursts.</li>
-                  <li>Counts for the window, such as how many presses occurred and how long the window lasted.</li>
-                  <li>Mouse timing aggregates only when mouse collection is enabled.</li>
+                  <li>One summary per 30 seconds of activity.</li>
+                  <li>Keyboard: how many keys were pressed, and the average and spread of hold times and of the gaps between presses.</li>
+                  <li>Mouse: speed, how much the pointer turns, how straight its path is, and click count and timing.</li>
+                  <li>The summary's start time, identifiers for this PC and session, and whether collection is paused.</li>
                 </ul>
               </div>
               <div>
-                <h3>What is not collected</h3>
+                <h3>What is never sent</h3>
                 <ul>
                   <li>Typed text, passwords, key names, and the order of individual keys.</li>
                   <li>Screenshots, application names, and page addresses.</li>
                   <li>The pointer path and absolute pointer position.</li>
-                  <li>The practice text on Typing Sample. It stays in this browser.</li>
                 </ul>
               </div>
             </div>
             <p class="dashboard-footnote">The field names and units are on the <a href="/privacy">privacy page</a>.</p>
-          </div>
-
-          <div class="wizard-panel" data-step-panel="typing" hidden>
-            <h3>Typing Sample</h3>
-            <p class="dashboard-panel-copy">Type in the box if you want a neutral passage to practice on. The words stay in this browser. The page does not save them and does not send them. The agent, when it is running, can send only timing summaries.</p>
-            <label class="practice-field">Practice text
-              <textarea id="practiceText" maxlength="500" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-describedby="practiceNote"></textarea>
-            </label>
-            <p id="practiceNote" class="dashboard-footnote">Nothing you type here is included in a request.</p>
           </div>
 
           <div class="wizard-panel" data-step-panel="activity" hidden>
@@ -124,7 +114,7 @@
 
           <div class="wizard-panel" data-step-panel="train" hidden>
             <h3>Train Model</h3>
-            <p class="dashboard-panel-copy">Train stays off until each game has its time and the usable windows cover training and calibration. Training uses those summaries, not the practice text.</p>
+            <p class="dashboard-panel-copy">Train stays off until each game has its time and the usable windows cover training and calibration. Training uses only those summaries.</p>
             <button id="trainModel" class="button primary" type="button" disabled>Train my model</button>
           </div>
 

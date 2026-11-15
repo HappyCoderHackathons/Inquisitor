@@ -7,6 +7,8 @@ import server
 
 ROOT = Path(__file__).parents[2]
 V2_SCHEMA = json.loads((ROOT / "shared" / "feature-window-v2.schema.json").read_text(encoding="utf-8"))
+# What the Windows agent sends; the page must list every field of it.
+V4_SCHEMA = json.loads((ROOT / "shared" / "feature-window-v4.schema.json").read_text(encoding="utf-8"))
 FIXTURE = json.loads((ROOT / "shared" / "fixtures" / "feature-window-v2.json").read_text(encoding="utf-8"))
 
 
@@ -47,6 +49,10 @@ class PrivacyPageTests(unittest.TestCase):
                            "Ordered keydown and keyup", "Screenshots", "browser URLs",
                            "absolute pointer positions", "without their informed consent"):
             self.assertIn(prohibited, page)
+        for name in V4_SCHEMA["properties"]["features"]["properties"]:
+            self.assertIn(f"<code>{name}</code>", page)
+        self.assertIn("The Windows agent sends version 4", page)
+        self.assertIn("counts per second", page)
         self.assertIn("not an identity", page)
         self.assertIn("are not accepted and are not collected", page)
         self.assertNotIn("hold_p50_ms", page)

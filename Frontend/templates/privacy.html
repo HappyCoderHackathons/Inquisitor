@@ -27,7 +27,7 @@
         <section class="intro-hero">
           <p class="eyebrow"><span class="eyebrow-line"></span> PRIVACY</p>
           <h1>Exact fields, and nothing else.</h1>
-          <p class="intro-lede">The Windows agent and the model service accept a feature window. Version 1 is keyboard aggregates. Version 2 adds mouse aggregates when mouse collection is enabled. Extra fields are rejected. A score compares a window with that device's enrollment. It is an anomaly signal, not an identity. See <a href="/#limitations">what this does not claim</a>.</p>
+          <p class="intro-lede">Only feature windows leave the PC. The Windows agent sends version 4: keyboard and mouse aggregates for each 30 seconds of activity. Versions 1 and 2 are the browser arcade's formats; version 2 adds mouse aggregates when its mouse collection is enabled. Extra fields are rejected. A score compares a window with that device's enrollment. It is an anomaly signal, not an identity. See <a href="/#limitations">what this does not claim</a>.</p>
         </section>
 
         <section class="intro-section" aria-labelledby="windowFields">
@@ -42,15 +42,47 @@
                 <tr><th scope="col">Field</th><th scope="col">Unit</th><th scope="col">Meaning</th></tr>
               </thead>
               <tbody>
-                <tr><th scope="row"><code>schema_version</code></th><td>integer</td><td>1 for keyboard only. 2 when <code>mouse_features</code> is included.</td></tr>
+                <tr><th scope="row"><code>schema_version</code></th><td>integer</td><td>4 from the Windows agent. From the browser arcade, 1 for keyboard only and 2 when <code>mouse_features</code> is included.</td></tr>
                 <tr><th scope="row"><code>device_id</code></th><td>text</td><td>Paired device identifier.</td></tr>
                 <tr><th scope="row"><code>session_id</code></th><td>text</td><td>Session this window belongs to.</td></tr>
-                <tr><th scope="row"><code>sequence</code></th><td>count</td><td>Zero-based order of the window in the session.</td></tr>
+                <tr><th scope="row"><code>sequence</code></th><td>count</td><td>Window number. The browser counts from zero in each session. The Windows agent uses the window's 30-second slot since 1970, so the number stays unique across restarts.</td></tr>
                 <tr><th scope="row"><code>mode</code></th><td>enrollment or monitoring</td><td>Why the window was collected.</td></tr>
                 <tr><th scope="row"><code>started_at</code></th><td>UTC timestamp</td><td>RFC 3339 start of the window.</td></tr>
                 <tr><th scope="row"><code>duration_ms</code></th><td>milliseconds</td><td>Length of the window. Integer, at least 1.</td></tr>
-                <tr><th scope="row"><code>features</code></th><td>object</td><td>Keyboard aggregates in the next table.</td></tr>
-                <tr><th scope="row"><code>mouse_features</code></th><td>object</td><td>Required on version 2. Mouse collection is a separate opt-in. Version 1 omits this object.</td></tr>
+                <tr><th scope="row"><code>features</code></th><td>object</td><td>Version 4: the keyboard and mouse aggregates in the next table. Versions 1 and 2: the browser keyboard aggregates further down.</td></tr>
+                <tr><th scope="row"><code>mouse_features</code></th><td>object</td><td>Browser version 2 only, where mouse collection is a separate opt-in. Version 1 omits it, and version 4 carries mouse aggregates inside <code>features</code>.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="intro-section" aria-labelledby="agentFields">
+          <div class="intro-section-heading">
+            <h2 id="agentFields">Windows agent features (version 4)</h2>
+            <p>Every agent window has these fifteen fields, computed over 30 seconds. Windows with no presses, no movement, and no clicks are not sent. Mouse movement is summed into 20 ms segments of relative sensor counts, not screen pixels. Absolute pointer coordinates, click targets, and key names are not fields.</p>
+          </div>
+          <div class="table-scroll">
+            <table class="field-table">
+              <caption>Keyboard and mouse aggregates inside <code>features</code> (version 4)</caption>
+              <thead>
+                <tr><th scope="col">Field</th><th scope="col">Unit</th><th scope="col">Meaning</th></tr>
+              </thead>
+              <tbody>
+                <tr><th scope="row"><code>key_count</code></th><td>presses</td><td>Press events in the window.</td></tr>
+                <tr><th scope="row"><code>hold_sample_count</code></th><td>holds</td><td>Completed holds that started in the window.</td></tr>
+                <tr><th scope="row"><code>hold_mean_ms</code></th><td>milliseconds</td><td>Mean duration of those holds.</td></tr>
+                <tr><th scope="row"><code>hold_std_ms</code></th><td>milliseconds</td><td>Population standard deviation of those holds.</td></tr>
+                <tr><th scope="row"><code>press_interval_mean_ms</code></th><td>milliseconds</td><td>Mean time from one press to the next.</td></tr>
+                <tr><th scope="row"><code>press_interval_std_ms</code></th><td>milliseconds</td><td>Population standard deviation of press intervals.</td></tr>
+                <tr><th scope="row"><code>mouse_sample_count</code></th><td>count</td><td>20 ms segments with movement.</td></tr>
+                <tr><th scope="row"><code>mouse_click_count</code></th><td>clicks</td><td>Button presses in the window. The click target is not stored.</td></tr>
+                <tr><th scope="row"><code>mouse_speed_mean_counts_s</code></th><td>counts per second</td><td>Mean speed of the moving segments.</td></tr>
+                <tr><th scope="row"><code>mouse_speed_std_counts_s</code></th><td>counts per second</td><td>Population standard deviation of that speed.</td></tr>
+                <tr><th scope="row"><code>mouse_click_interval_mean_ms</code></th><td>milliseconds</td><td>Mean time between clicks.</td></tr>
+                <tr><th scope="row"><code>mouse_click_interval_std_ms</code></th><td>milliseconds</td><td>Population standard deviation of click intervals.</td></tr>
+                <tr><th scope="row"><code>mouse_turn_mean_rad</code></th><td>radians, 0 to π</td><td>Mean direction change between nearby segments.</td></tr>
+                <tr><th scope="row"><code>mouse_turn_std_rad</code></th><td>radians, 0 to π</td><td>Population standard deviation of that direction change.</td></tr>
+                <tr><th scope="row"><code>mouse_path_straightness</code></th><td>fraction, 0 to 1</td><td>Straight-line distance divided by path length. The path itself is not sent.</td></tr>
               </tbody>
             </table>
           </div>
@@ -58,8 +90,8 @@
 
         <section class="intro-section" aria-labelledby="keyboardFields">
           <div class="intro-section-heading">
-            <h2 id="keyboardFields">Keyboard features</h2>
-            <p>Every version requires these eleven fields. Pauses are inter-press gaps longer than 1,000 ms. Standard deviations use the population formula. The 90th percentile uses nearest rank. Hold percentiles, <code>press_interval_p50_ms</code>, and <code>burst_length_mean</code> are not accepted and are not collected.</p>
+            <h2 id="keyboardFields">Browser arcade keyboard features (versions 1 and 2)</h2>
+            <p>Browser versions 1 and 2 require these eleven fields. Pauses are inter-press gaps longer than 1,000 ms. Standard deviations use the population formula. The 90th percentile uses nearest rank. Hold percentiles, <code>press_interval_p50_ms</code>, and <code>burst_length_mean</code> are not accepted and are not collected.</p>
           </div>
           <div class="table-scroll">
             <table class="field-table">
@@ -86,8 +118,8 @@
 
         <section class="intro-section" aria-labelledby="mouseFields">
           <div class="intro-section-heading">
-            <h2 id="mouseFields">Mouse features</h2>
-            <p>Version 2 requires these fields. Movement is summarized from relative segments of 20 ms. Absolute pointer coordinates are not a field.</p>
+            <h2 id="mouseFields">Browser arcade mouse features (version 2)</h2>
+            <p>Browser version 2 requires these fields. Movement is summarized from relative segments of 20 ms. Absolute pointer coordinates are not a field.</p>
           </div>
           <div class="table-scroll">
             <table class="field-table">

@@ -44,10 +44,11 @@
     }
   }
   overlay.addEventListener("keydown", trapGameFocus);
+  var ROUND_SECONDS = 150;
   var active = null;
   var sprint = false;
   var running = false;
-  var remaining = 60;
+  var remaining = ROUND_SECONDS;
   var score = 0;
   var tick = 0;
   var timerId = 0;
@@ -161,7 +162,7 @@
     active = id;
     sprint = isSprint;
     running = false;
-    remaining = 60;
+    remaining = ROUND_SECONDS;
     score = 0;
     intervals = [];
     holds = [];
@@ -175,7 +176,7 @@
     const m = modes.find((x) => x.id === id);
     $("#modalMode").textContent = isSprint ? "Sprint" : "";
     $("#modalTitle").textContent = m.name;
-    $("#gameTimer").textContent = "60";
+    $("#gameTimer").textContent = String(ROUND_SECONDS);
     $("#gameScore").textContent = "0";
     $("#gameInstruction").textContent = instruction(id);
     $("#gameHint").textContent = isSprint ? "Next game starts automatically \xB7 Esc to close" : "Esc to close";
@@ -238,7 +239,7 @@
     clearInterval(gravityTimerId);
     cancelAnimationFrame(animation);
     running = true;
-    remaining = 60;
+    remaining = ROUND_SECONDS;
     score = 0;
     tick = Date.now();
     intervals = [];
@@ -249,7 +250,7 @@
     linesCleared = 0;
     arenaKeys.clear();
     if (active === "typing") wordDeck = shuffleWords(wordDeck);
-    $("#gameTimer").textContent = "60";
+    $("#gameTimer").textContent = String(ROUND_SECONDS);
     $("#gameScore").textContent = "0";
     $("#startGame").classList.add("hidden");
     stage.focus();
