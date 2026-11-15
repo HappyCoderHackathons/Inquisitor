@@ -1,4 +1,5 @@
 import copy
+import json
 import os
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from unittest.mock import patch
 
 from backend.ml.app import create_app
 from backend.ml.model import ModelStore, validate_window
+from backend.ml.published import PublishedModel
 from scripts.generate_sample_windows import generate_windows
 
 
@@ -52,6 +54,88 @@ class ModelServiceTests(unittest.TestCase):
             store = ModelStore(Path(self.temporary.name) / "disabled")
             with self.assertRaises(RuntimeError):
                 store.train([], "user", "device", "validation")
+
+    def test_published_api_auth_ownership_and_score_contract(self) -> None:
+        artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v1.json"
+        with patch.dict(os.environ, {"ML_PUBLISHED_MODEL_FILE": str(artifact),
+                                    "ML_PUBLISHED_USER_ID": "synthetic-user", "ML_PUBLISHED_DEVICE_ID": "synthetic-device"}):
+            client = create_app().test_client()
+        self.assertEqual(client.get("/model").status_code, 401)
+        self.assertEqual(client.get("/model", headers=self.headers).json["model_version"], "labeled-overlap-v1")
+        window = generate_windows(49, 1)[0]
+        response = client.post("/score", headers=self.headers, json={"window": window})
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertAlmostEqual(response.json["score_delta"], response.json["score"] - response.json["threshold"])
+        self.assertEqual(client.post("/score", headers={**self.headers, "X-User-ID": "another-user"}, json={"window": window}).status_code, 403)
+        window["device_id"] = "other-device"
+        self.assertEqual(client.post("/score", headers=self.headers, json={"window": window}).status_code, 403)
+        window["device_id"] = "synthetic-device"
+        window["features"]["key_count"] = 1
+        self.assertEqual(client.post("/score", headers=self.headers, json={"window": window}).json["state"], "INSUFFICIENT_DATA")
+
+    def test_published_artifact_validation_and_portable_hash(self) -> None:
+        artifact = Path(__file__).resolve().parents[1] / "backend/artifacts/labeled-overlap-v1.json"
+        original = PublishedModel(artifact)
+        copy_path = Path(self.temporary.name) / "weights.json"
+        value = json.loads(artifact.read_text(encoding="utf-8"))
+        copy_path.write_text(json.dumps(value, separators=(",", ":")), encoding="utf-8")
+        self.assertEqual(original.digest, PublishedModel(copy_path).digest)
+        value["scaler_scale"][0] = 0
+        copy_path.write_text(json.dumps(value), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            PublishedModel(copy_path)
+
+    @unittest.skipUnless(os.environ.get("ML_ALLOW_TRAINING") == "1", "training checks run on the designated host only")
+    def test_labeled_training_uses_both_classes_and_persists_preprocessing(self) -> None:
+        genuine, impostor = [], []
+        for prefix, target, seeds in (("genuine", genuine, (49, 50)), ("impostor", impostor, (51, 52))):
+            for seed in seeds:
+                rows = generate_windows(seed, 10)
+                for row in rows:
+                    row["session_id"] = f"{prefix}-{seed}"
+                    if prefix == "impostor":
+                        row["features"]["press_overlap_fraction"] = 0.8
+                target.extend(rows)
+        payload = {"profile": "labeled-overlap", "windows": genuine, "impostor_windows": impostor}
+        response = self.client.post("/models/train", headers=self.headers, json=payload)
+        self.assertEqual(response.status_code, 201, response.json)
+        metadata = response.json
+        self.assertEqual(metadata["algorithm"], "LogisticRegression")
+        self.assertEqual(metadata["training_window_count"], 40)
+        self.assertEqual(metadata["impostor_training_window_count"], 20)
+        self.assertEqual(metadata["validation_window_count"], 0)
+        self.assertLessEqual(metadata["training_false_rejection_rate"], .02)
+        url = "/models/" + metadata["model_id"] + "/score"
+        normal = self.client.post(url, headers=self.headers, json={"window": genuine[0]}).json
+        guest = create_app().test_client().post(url, headers=self.headers, json={"window": impostor[0]}).json
+        self.assertGreater(guest["score"], normal["score"])
+        invalid = copy.deepcopy(payload)
+        invalid["impostor_windows"][0]["device_id"] = "other-device"
+        self.assertEqual(self.client.post("/models/train", headers=self.headers, json=invalid).status_code, 422)
+
+    @unittest.skipUnless(os.environ.get("ML_ALLOW_TRAINING") == "1", "training checks run on the designated host only")
+    def test_cadence_profile_and_multiple_calibration_sessions(self) -> None:
+        windows = []
+        for session, seed, count in (("train", 49, 20), ("calibration-a", 50, 10), ("calibration-b", 51, 10)):
+            rows = generate_windows(seed, count)
+            for row in rows:
+                row["session_id"] = session
+            windows.extend(rows)
+        response = self.client.post("/models/train", headers=self.headers, json={
+            "windows": windows, "validation_session_ids": ["calibration-a", "calibration-b"],
+            "profile": "cadence-overlap",
+        })
+        self.assertEqual(response.status_code, 201, response.json)
+        metadata = response.json
+        self.assertEqual(metadata["selected_features"], ["presses_per_second", "press_overlap_fraction"])
+        self.assertEqual(metadata["transform"], "log1p")
+        self.assertEqual(metadata["validation_sessions"], ["calibration-a", "calibration-b"])
+        self.assertLessEqual(metadata["calibration_false_rejection_rate"], 0.05)
+        url = "/models/" + metadata["model_id"] + "/score"
+        prediction = self.client.post(url, headers=self.headers, json={"window": windows[-1]}).json
+        changed = copy.deepcopy(windows[-1])
+        changed["features"]["hold_mean_ms"] = 5000
+        self.assertEqual(prediction, create_app().test_client().post(url, headers=self.headers, json={"window": changed}).json)
 
     @unittest.skipUnless(os.environ.get("ML_ALLOW_TRAINING") == "1", "training checks run on the designated host only")
     def test_train_reload_score_and_ownership(self) -> None:

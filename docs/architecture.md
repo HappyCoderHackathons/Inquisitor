@@ -10,7 +10,7 @@ These are implementation decisions, not claims that the integrations already wor
 | Area | Decision | Reason and source |
 | --- | --- | --- |
 | Windows agent | Rust, with native Windows keyboard input and a visible pause/exit control | The local client and system I/O are assigned to Rust in [#43](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/43#issuecomment-6882866683) and [#46](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/46#issuecomment-6882888019). |
-| ML | Python 3.13+ with scikit-learn Isolation Forest | Updated direction: train once per user/device and reuse the saved model. Training and inference run on the designated remote host. Deployment identity stays in local configuration. |
+| ML | Python 3.13+ with scikit-learn; logistic regression for the current labeled pilot | Fit on genuine and consenting second-user examples, then reuse the saved model. Training and inference run on the designated remote host. Isolation Forest artifacts remain compatible for comparison. Deployment identity stays in local configuration. |
 | Website | SvelteKit, TypeScript, Vite, Tailwind CSS, Iconify, and Prettier at 120 columns | Follow the project's preferred web stack. |
 | Backend arrangement | Rust collector, hosted application backend, and private remote Flask ML service | The application backend owns user/device authorization and forwards aggregate windows to the remote model service using a server-only credential. |
 | Database | MongoDB Atlas | [#44](https://github.com/hack-the-nest-but-happier/Inquisitor/issues/44#issuecomment-6882901927) selects Atlas. Use MongoDB collections rather than adding PostgreSQL or Drizzle. |
@@ -20,8 +20,11 @@ These are implementation decisions, not claims that the integrations already wor
 
 The remote ML arrangement supersedes the initial local-model interpretation of
 #42, #43, and #46. Rust owns system I/O and transport; Python owns model execution
-on the designated remote host. Isolation Forest is the first implemented model.
-The spec's statistical baseline comparison remains separate evaluation work.
+on the designated remote host. Isolation Forest was the first implemented model;
+the current labeled pilot selects logistic regression using hold-time variability
+and press overlap. Its performance on other people is not established. Model
+selection uses grouped sessions; estimates from selection CV must be labeled as
+such rather than presented as an untouched final test.
 
 ## Component boundaries and data flow
 

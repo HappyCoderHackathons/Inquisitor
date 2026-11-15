@@ -1,0 +1,16 @@
+[Unit]
+Description=Inquisitor private model API
+After=network.target
+
+[Service]
+WorkingDirectory=%h/inquisitor-model/app
+EnvironmentFile=%h/inquisitor-model/service.env
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=OMP_NUM_THREADS=1
+ExecStart=%h/inquisitor-model/.venv/bin/gunicorn backend.ml.app:create_app() --bind 127.0.0.1:8765 --workers 1 --threads 4 --timeout 120
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
