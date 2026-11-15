@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "esbuild frontend/app.ts frontend/dashboard.ts --bundle --outdir=static --target=es2020",
-    "dev": "esbuild frontend/app.ts frontend/dashboard.ts --bundle --outdir=static --target=es2020 --watch",
+    "build": "esbuild frontend/app.ts frontend/dashboard.ts frontend/onboarding.ts --bundle --outdir=static --target=es2020",
+    "dev": "esbuild frontend/app.ts frontend/dashboard.ts frontend/onboarding.ts --bundle --outdir=static --target=es2020 --watch",
     "typecheck": "tsc",
     "format": "prettier --write frontend",
     "format:check": "prettier --check frontend"

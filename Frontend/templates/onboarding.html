@@ -7,6 +7,7 @@
     <meta name="description" content="Sign in, pair the Inquisitor agent, and complete calibration games.">
     <title>Inquisitor | Setup</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/onboarding.js" defer></script>
   </head>
   <body>
     <div class="arcade-layout">
@@ -36,6 +37,15 @@
             <a class="button primary" href="/login">Sign in</a>
           {% endif %}
         </section>
+
+        {% if signed_in %}
+        <section class="dashboard-panel" aria-labelledby="pairTitle">
+          <h2 id="pairTitle">2. Connect the agent</h2>
+          <p class="dashboard-panel-copy">Start the agent on this PC and enter the code when it asks. Codes expire after 10 minutes and work once.</p>
+          <button id="createCode" class="button primary" type="button">Get pairing code</button>
+          <p><strong id="pairingCode" class="pairing-code"></strong></p>
+        </section>
+        {% endif %}
       </main>
     </div>
   </body>

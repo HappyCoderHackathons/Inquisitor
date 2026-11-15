@@ -1,6 +1,6 @@
 import os
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -31,6 +31,32 @@ class OnboardingTests(unittest.TestCase):
         self.database.users.insert_one({"_id": user_id, "email": f"{user_id}@example.test"})
         with self.client.session_transaction() as session:
             session["user_id"] = user_id
+
+    def pair(self):
+        self.sign_in()
+        code = self.client.post("/api/pairing-codes", json={}).get_json()["code"]
+        paired = self.client.post("/api/agent/pair", json={"code": code.lower()})
+        self.assertEqual(paired.status_code, 201)
+        self.assertEqual(self.client.post("/api/agent/pair", json={"code": code}).status_code, 404)
+        body = paired.get_json()
+        return body["device_id"], {"Authorization": "Bearer " + body["token"]}
+
+    def test_pairing_requires_sign_in_json_and_live_codes(self):
+        self.assertEqual(self.client.post("/api/pairing-codes", json={}).status_code, 401)
+        self.sign_in()
+        self.assertEqual(self.client.post("/api/pairing-codes", data="{}").status_code, 415)
+        code = self.client.post("/api/pairing-codes", json={}).get_json()["code"]
+        self.clock += timedelta(minutes=11)
+        self.assertEqual(self.client.post("/api/agent/pair", json={"code": code}).status_code, 404)
+        self.assertEqual(self.client.post("/api/agent/pair", json={"code": "WRONG123"}).status_code, 404)
+
+    def test_paired_device_belongs_to_code_owner_and_stores_only_token_hash(self):
+        device_id, agent = self.pair()
+        token = agent["Authorization"].removeprefix("Bearer ")
+        device = self.database.devices.find_one({"_id": device_id})
+        self.assertEqual(device["user_id"], "user-a")
+        self.assertEqual(device["token_hash"], hosted.digest(token))
+        self.assertNotIn(token, str(list(self.database.devices.find())))
 
     def test_partial_configuration_fails_loudly(self):
         with patch.dict(os.environ, {"SSOJET_AUTHORITY": "https://sso.example.test"}, clear=True):
