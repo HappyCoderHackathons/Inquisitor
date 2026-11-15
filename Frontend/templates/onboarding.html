@@ -28,7 +28,7 @@
         <section class="dashboard-heading">
           <p class="eyebrow"><span class="eyebrow-line"></span> {% if signed_in %}SETUP{% elif mode|default('login') == 'signup' %}CREATE ACCOUNT{% else %}LOG IN{% endif %}</p>
           <h1>{% if signed_in %}Set up your model{% elif mode|default('login') == 'signup' %}Create an account{% else %}Sign in{% endif %}</h1>
-          <p>{% if signed_in %}Connect the Windows agent, then follow the enrollment steps. The agent measures aggregate timing. It does not receive the characters you type. Play each of the four games for 2.5 minutes. Your model trains when enough usable windows are collected.{% elif mode|default('login') == 'signup' %}Create an account to pair the Windows agent and keep this PC's calibration with you. A password needs at least 8 characters.{% else %}Sign in to link the agent and your calibration data to your account.{% endif %}</p>
+          <p>{% if signed_in %}Connect the Windows agent, then follow the enrollment steps. The agent measures aggregate timing. It does not receive the characters you type. Play Block Stack, Word Sprint, and Arena twice, then one more round of any of them: about 7 rounds of 2.5 minutes. Aim Trainer is optional. Your model trains when enough usable windows are collected.{% elif mode|default('login') == 'signup' %}Create an account to pair the Windows agent and keep this PC's calibration with you. A password needs at least 8 characters.{% else %}Sign in to link the agent and your calibration data to your account.{% endif %}</p>
         </section>
 
         <section class="dashboard-panel" aria-labelledby="signInTitle">
@@ -107,7 +107,7 @@
 
           <div class="wizard-panel" data-step-panel="activity" hidden>
             <h3>Natural Activity</h3>
-            <p class="dashboard-panel-copy">Use this PC as you usually would, or play the calibration games. Usable windows are keyboard summaries with at least 30 presses. This demo asks for 30 of them before training.</p>
+            <p class="dashboard-panel-copy">Use this PC as you usually would, or play the calibration games. Usable windows are keyboard summaries with at least 30 presses, so Aim Trainer adds none. Training needs 30 of them: 10 from the latest round of each game for calibration, and 20 from earlier rounds.</p>
             <ul id="gameProgress" class="collection-summary"></ul>
             <a id="playGames" class="button primary" href="/arcade" hidden>Open the games</a>
           </div>
@@ -119,8 +119,8 @@
           </div>
 
           <div class="collector-progress-row">
-            <progress id="enrollmentProgress" max="30" value="0">0 of 30 usable windows</progress>
-            <span id="enrollmentProgressLabel">0 of 30 usable windows · 0 s recorded</span>
+            <progress id="enrollmentProgress" max="30" value="0">0 of 30 windows toward training</progress>
+            <span id="enrollmentProgressLabel">0 of 30 windows toward training · 0 s recorded</span>
           </div>
           <p id="windowProgress" class="dashboard-footnote"></p>
           <div class="collection-actions">
