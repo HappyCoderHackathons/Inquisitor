@@ -226,7 +226,11 @@
       const response = await fetch("/api/onboarding");
       if (response.status === 404) return;
       if (!response.ok) throw new Error(`Could not check setup (${response.status}).`);
-      onboardingActive = (await response.json()).state === "collecting";
+      const status = await response.json();
+      onboardingActive = status.state === "collecting";
+      document.querySelectorAll(".back-to-setup").forEach((link) => {
+        link.hidden = !(onboardingActive && status.ready_to_train);
+      });
     } catch (error) {
       serverWarning = error instanceof Error && error.message.startsWith("Could not check setup") ? error.message : "Could not check setup. The server did not respond.";
       setArcadeStatus(serverWarning, true);
@@ -711,6 +715,7 @@
   }
   function saveSample() {
     reportRound("/api/onboarding/rounds/current/finish");
+    onboardingQueue = onboardingQueue.then(checkOnboarding);
     const avg = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
     const mean = avg(intervals), std = Math.sqrt(avg(intervals.map((x) => (x - mean) ** 2)));
     const d = {

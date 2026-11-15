@@ -46,6 +46,7 @@
               <button id="clearBtn" class="text-button">Clear</button>
             </div>
             <p id="arcadeStatus" class="collection-status" role="status" aria-live="polite">Loading recent games…</p>
+            <a class="button primary back-to-setup" href="/onboarding" hidden>Back to setup: ready to train</a>
             <div class="sample-total"><strong id="sampleCount">0</strong><span>rounds played</span></div>
             <div id="recentList" class="recent-list"><div class="empty">No games played yet.</div></div>
             <p class="privacy-note">Scores and input timing are saved locally.</p>
@@ -66,7 +67,7 @@
           <span class="score">SCORE <b id="gameScore">0</b></span>
         </div>
         <div id="gameStage" class="game-stage" tabindex="-1"></div>
-        <div class="modal-foot"><span id="gameHint">Esc to close</span><button id="startGame" class="button primary">Start</button></div>
+        <div class="modal-foot"><span id="gameHint">Esc to close</span><a class="button secondary-button back-to-setup" href="/onboarding" hidden>Back to setup</a><button id="startGame" class="button primary">Start</button></div>
       </section>
     </div>
     <script src="/static/app.js"></script>
