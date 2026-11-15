@@ -68,9 +68,11 @@ class OnboardingTests(unittest.TestCase):
                 raise self.delete_error
             self.deleted.append((user_id, device_id))
 
+        self.trainer = trainer
+        self.deleter = deleter
         app = Flask(__name__, template_folder=str(Path(server.__file__).parent / "templates"))
         with patch.dict(os.environ, ENV):
-            hosted.register(app, self.database, trainer, self.score, server.onboarding_window_error, deleter)
+            hosted.register(app, self.database, self.trainer, self.score, server.onboarding_window_error, self.deleter)
         self.client = app.test_client()
 
     def score(self, user_id, device_id, value):
@@ -142,9 +144,10 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(device["token_hash"], hosted.digest(token))
         self.assertNotIn(token, str(list(self.database.devices.find())))
         self.client.get("/api/agent/onboarding", headers=agent)
+        expected_heartbeat = self.clock.replace(microsecond=(self.clock.microsecond // 1000) * 1000)
         self.assertEqual(
             self.database.devices.find_one({"_id": device_id})["last_heartbeat_at"],
-            self.clock,
+            expected_heartbeat,
         )
 
     def play(self, game, windows, device_id, agent):
@@ -171,21 +174,55 @@ class OnboardingTests(unittest.TestCase):
         valid = window(device_id, session_id, 0)
         self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=valid).status_code, 201)
         self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=valid).status_code, 409)
+        session = self.database.rounds.find_one({"_id": session_id})
+        self.assertEqual(session["device_id"], device_id)
+        self.assertEqual(session["status"], "active")
+        self.assertEqual(session["valid_window_count"], 1)
         self.sign_in("user-b")
         self.assertEqual(self.client.get("/api/onboarding").status_code, 404)
+
+    def test_legacy_round_documents_are_migrated_to_enrollment_sessions(self):
+        device_id, _ = self.pair()
+        onboarding = self.database.onboarding.find_one({"device_id": device_id})
+        self.database.rounds.insert_one({
+            "_id": "legacy-session",
+            "onboarding_id": onboarding["_id"],
+            "game": "typing",
+            "started_at": self.clock - timedelta(seconds=30),
+            "ended_at": self.clock,
+            "credited_ms": 30_000,
+            "usable_windows": 5,
+        })
+
+        with patch.dict(os.environ, ENV):
+            hosted.register(
+                Flask(__name__), self.database, self.trainer, self.score, server.onboarding_window_error, self.deleter,
+            )
+
+        session = self.database.rounds.find_one({"_id": "legacy-session"})
+        self.assertEqual(session["device_id"], device_id)
+        self.assertEqual(session["status"], "completed")
+        self.assertEqual(session["valid_window_count"], 5)
 
     def test_rounds_credit_server_time_and_pick_latest_round_per_game_for_calibration(self):
         device_id, agent = self.pair()
         first, _ = self.play("typing", [40] * 4, device_id, agent)
         latest, status = self.play("typing", [40] * 4, device_id, agent)
+        first_session = self.database.rounds.find_one({"_id": first})
+        self.assertEqual(first_session["device_id"], device_id)
+        self.assertEqual(first_session["status"], "completed")
+        self.assertEqual(first_session["valid_window_count"], 4)
         self.assertEqual(status["seconds"]["typing"], 120)
         self.assertEqual(status["validation_sessions"], [latest])
         self.assertEqual((status["training_windows"], status["validation_windows"]), (4, 4))
-        self.client.post("/api/onboarding/rounds", json={"game": "aim"})
+        cancelled_session_id = self.client.post("/api/onboarding/rounds", json={"game": "aim"}).get_json()["session_id"]
         self.clock += timedelta(seconds=30)
         cancelled = self.client.post("/api/onboarding/rounds/current/cancel", json={}).get_json()
         self.assertEqual(cancelled["seconds"]["aim"], 0)
         self.assertFalse(cancelled["ready_to_train"])
+        cancelled_session = self.database.rounds.find_one({"_id": cancelled_session_id})
+        self.assertEqual(cancelled_session["status"], "cancelled")
+        self.assertEqual(cancelled_session["valid_window_count"], 0)
 
     def test_ten_minutes_of_games_trains_and_activates_model(self):
         device_id, agent = self.pair()
