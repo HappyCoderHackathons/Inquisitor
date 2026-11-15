@@ -532,13 +532,18 @@ class AgentLink:
 
     Agent to server: `{"v": 1, "type": "hello" | "heartbeat", "paused": bool}`; hello may add
     `agent_version`. Server to agent: `status` with the onboarding fields after hello and whenever
-    they change, or `revoked` once the device is revoked. Anything else closes the socket (1008).
+    they change, `monitoring` with only the monitoring state whenever it changes, or `revoked` once
+    the device is revoked. Anything else closes the socket (1008).
     """
 
-    def __init__(self, database: Database, device_id: str) -> None:
+    def __init__(
+        self, database: Database, device_id: str, monitoring: Callable[[Document], str | None] | None = None,
+    ) -> None:
         self.database = database
         self.device_id = device_id
+        self.monitoring = monitoring
         self.last_status: Document | None = None
+        self.last_monitoring: str | None = None
         self.done = False
         self.close_code: int | None = None
 
@@ -571,10 +576,15 @@ class AgentLink:
         status = agent_onboarding_status(self.database, self.device_id) or {
             "state": None, "session_id": None, "collection": None,
         }
+        replies: list[Document] = []
         if message["type"] == "hello" or status != self.last_status:
             self.last_status = status
-            return [{"v": AGENT_PROTOCOL, "type": "status", **status}]
-        return []
+            replies.append({"v": AGENT_PROTOCOL, "type": "status", **status})
+        state = self.monitoring(device) if self.monitoring is not None else None
+        if state is not None and state != self.last_monitoring:
+            self.last_monitoring = state
+            replies.append({"v": AGENT_PROTOCOL, "type": "monitoring", "state": state})
+        return replies
 
     def closed(self) -> None:
         self.database.devices.update_one({"_id": self.device_id}, {"$set": {"ws_connected": False}})
@@ -1448,7 +1458,10 @@ def register(
 
     @sock.route("/api/agent/ws", bp=blueprint)
     def agent_socket(ws):
-        link = AgentLink(database, g.agent_device["_id"])
+        link = AgentLink(
+            database, g.agent_device["_id"],
+            lambda device: monitoring_state(device["user_id"], device, agent_state(device)[0]),
+        )
         try:
             while not link.done:
                 raw = ws.receive(timeout=AGENT_SOCKET_IDLE.total_seconds())

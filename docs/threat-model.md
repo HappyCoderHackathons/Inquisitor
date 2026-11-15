@@ -140,6 +140,7 @@ The agent socket carries presence only, as JSON text frames with `"v": 1`:
 | --- | --- | --- |
 | Agent to server | `hello {paused, agent_version?}`, then `heartbeat {paused}` every 30 seconds | Sets `status: "online"`, `last_heartbeat_at`, `ws_connected`, and `agent_paused` on the device; publishes an updated owner-scoped monitoring snapshot |
 | Server to agent | `status {state, collection, session_id}` | Sent after `hello` and whenever it changes. The same fields as `GET /api/agent/onboarding` |
+| Server to agent | `monitoring {state}` | Sent whenever the monitoring state changes (no score). On `needs_verification` the tray shows one balloon that opens the website login; it never locks Windows or blocks input |
 | Server to agent | `revoked` | The device was revoked. The agent deletes its credential and stops |
 
 Any other message, an extra field, or a message over 4 KiB closes the socket with 1008. A socket silent for

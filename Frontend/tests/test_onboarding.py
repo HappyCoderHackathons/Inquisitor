@@ -1460,6 +1460,17 @@ class OnboardingTests(unittest.TestCase):
                          [{"v": 1, "type": "revoked"}])
         self.assertTrue(again.done)
 
+    def test_agent_socket_sends_monitoring_state_only_when_it_changes(self):
+        device_id, _agent = self.ready_monitor()
+        states = iter(["normal", "needs_verification", "needs_verification", "normal"])
+        link = hosted.AgentLink(self.database, device_id, lambda device: next(states))
+        heartbeat = '{"v": 1, "type": "heartbeat", "paused": false}'
+        self.assertIn({"v": 1, "type": "monitoring", "state": "normal"},
+                      link.receive('{"v": 1, "type": "hello", "paused": false}'))
+        self.assertEqual(link.receive(heartbeat), [{"v": 1, "type": "monitoring", "state": "needs_verification"}])
+        self.assertEqual(link.receive(heartbeat), [])
+        self.assertEqual(link.receive(heartbeat), [{"v": 1, "type": "monitoring", "state": "normal"}])
+
     def test_agent_socket_closes_on_malformed_messages(self):
         device_id, _agent = self.pair()
         for raw in ("not json", "[]", '{"v": 2, "type": "hello", "paused": false}',
