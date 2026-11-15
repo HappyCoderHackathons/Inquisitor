@@ -104,3 +104,21 @@ Limits (not verified by this path):
 - No live Rust tray binary or WSS session; this replays the HTTP upload path only
 - Ignored Rust `live_*` tests still require a manual test server and real agent for full transport
   coverage
+## Rust agent traffic capture (#157)
+
+`scripts/agent_link_test_server.py` can record what the agent sends: with
+`INQUISITOR_CAPTURE=<file>` it appends every agent HTTP request (method, path, raw body; the
+`Authorization` header is never recorded) and every agent WebSocket message, before the server
+parses it. [`scripts/check_agent_traffic.py`](../scripts/check_agent_traffic.py) then fails on
+anything outside the protocol: socket messages may only carry `v`, `type`, `paused`, and
+`agent_version`; pairing sends only `code` and `name`; uploads must pass `validate_window`
+(schema v4 aggregates, no extra fields); heartbeats carry no body.
+
+Recorded run (2026-11-15): the three Rust `live_*` tests, which use the real link worker and
+WinHTTP client, against the capturing server. 18 records: 3 pairing requests, 7 window uploads,
+and 8 socket messages. Result: `agent traffic check: ok`. No characters, key names, key codes,
+window titles, URLs, or event sequences appeared.
+
+Limits: the windows are synthetic test windows, not real typing; the server was local plain HTTP,
+so this does not cover TLS or the deployed host; the capture is taken at the receiving application
+after HTTP and WebSocket framing are decoded, not by an intercepting proxy.

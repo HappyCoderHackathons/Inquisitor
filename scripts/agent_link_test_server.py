@@ -10,11 +10,16 @@ sign-in. It seeds the pairing code ABCD2345 (single use, 10 minutes) and adds
     INQUISITOR_TEST_SERVER=http://127.0.0.1:5077 cargo test -- --ignored live_
 
 Restart it before each run: the code works once.
+
+Set INQUISITOR_CAPTURE=<file> to append every agent request (method, path, body; Authorization is
+never recorded) and every agent WebSocket message to that JSONL file, for scripts/check_agent_traffic.py.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -130,6 +135,33 @@ def create_app() -> Flask:
     return app
 
 
+def capture(app: Flask, path: Path) -> None:
+    """Record what the agent sends: request bodies as received, and socket messages before parsing."""
+    lock = threading.Lock()
+
+    def write(record: dict[str, object]) -> None:
+        with lock, path.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(record) + "\n")
+
+    @app.before_request
+    def record_request() -> None:
+        from flask import request
+        if request.path.startswith("/api/agent/") and request.path != "/api/agent/ws":
+            write({"kind": "http", "method": request.method, "path": request.path,
+                   "body": request.get_data(as_text=True)})
+
+    receive = hosted.AgentLink.receive
+
+    def record_message(self: hosted.AgentLink, raw: str | bytes) -> list[dict[str, object]]:
+        write({"kind": "ws", "message": raw if isinstance(raw, str) else raw.decode("utf-8", "replace")})
+        return receive(self, raw)
+
+    hosted.AgentLink.receive = record_message
+
+
 if __name__ == "__main__":
     with patch("hosted.requests.request", side_effect=no_session):
-        create_app().run(ADDRESS, PORT, threaded=True)
+        application = create_app()
+        if os.environ.get("INQUISITOR_CAPTURE"):
+            capture(application, Path(os.environ["INQUISITOR_CAPTURE"]))
+        application.run(ADDRESS, PORT, threaded=True)

@@ -1254,7 +1254,13 @@ mod tests {
         socket
             .send(r#"{"v":1,"type":"heartbeat","paused":false}"#)
             .unwrap();
-        let status: Value = serde_json::from_str(&socket.receive().unwrap().unwrap()).unwrap();
+        // The server also reports monitoring state changes; skip those to reach the next status.
+        let status: Value = loop {
+            let message: Value = serde_json::from_str(&socket.receive().unwrap().unwrap()).unwrap();
+            if message["type"] != "monitoring" {
+                break message;
+            }
+        };
         let mode = mode_from(
             status["state"].as_str(),
             status["collection"].as_str(),
@@ -1292,7 +1298,12 @@ mod tests {
         socket
             .send(r#"{"v":1,"type":"heartbeat","paused":false}"#)
             .unwrap();
-        let revoked: Value = serde_json::from_str(&socket.receive().unwrap().unwrap()).unwrap();
+        let revoked: Value = loop {
+            let message: Value = serde_json::from_str(&socket.receive().unwrap().unwrap()).unwrap();
+            if message["type"] != "monitoring" {
+                break message;
+            }
+        };
         assert_eq!(revoked["type"], "revoked");
         assert_eq!(socket.receive().unwrap(), None);
         assert_eq!(classify(upload(&body)), UploadOutcome::FailClosed);

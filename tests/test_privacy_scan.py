@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts.check_agent_traffic import problems
 from scripts.scan_privacy_payloads import scan_paths, scan_value
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -128,3 +129,16 @@ class PrivacyScanTests(unittest.TestCase):
             self.assertEqual(dirty.returncode, 1)
             self.assertIn("privacy scan: forbidden data detected", dirty.stderr)
             self.assertIn(f"{handle.name}:key_code: field is outside the allowlist", dirty.stderr)
+
+
+class AgentTrafficTests(unittest.TestCase):
+    def test_protocol_traffic_passes_and_extra_fields_fail(self) -> None:
+        window = json.loads((ROOT / "shared" / "fixtures" / "tray-capture.v4.json").read_text())[0]
+        upload = {"kind": "http", "method": "POST", "path": "/api/agent/windows", "body": json.dumps(window)}
+        hello = {"kind": "ws", "message": '{"v": 1, "type": "hello", "paused": false, "agent_version": "0.1.0"}'}
+        self.assertEqual(problems(upload) + problems(hello), [])
+        leaked = window | {"keys": "hunter2"}
+        self.assertTrue(problems(upload | {"body": json.dumps(leaked)}))
+        self.assertTrue(problems({"kind": "ws", "message": '{"v": 1, "type": "hello", "paused": false, "title": "x"}'}))
+        self.assertTrue(problems({"kind": "http", "method": "POST", "path": "/api/agent/pair",
+                                  "body": '{"code": "A", "name": "pc", "user": "me"}'}))
