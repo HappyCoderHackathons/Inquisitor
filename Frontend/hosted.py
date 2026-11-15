@@ -1254,7 +1254,8 @@ def register(
     def resume_enrollment():
         onboarding = user_onboarding(current_user())
         json_body()
-        if onboarding["state"] != "collecting" or collection_state(onboarding) != "paused":
+        # A finished collection can be reopened to add more rounds.
+        if onboarding["state"] != "collecting" or collection_state(onboarding) not in ("paused", "finished"):
             return jsonify(progress(database, onboarding)), 409
         return jsonify(mark_collection(onboarding, "active"))
 
@@ -1281,6 +1282,10 @@ def register(
         if collection_state(onboarding) == "finished":
             return jsonify(progress(database, onboarding))
         close_open_round(onboarding, credit=True)
+        status = progress(database, onboarding)
+        # Finishing early would end collection before training is possible.
+        if not status["ready_to_train"]:
+            return jsonify(status), 409
         return jsonify(mark_collection(onboarding, "finished"))
 
     @blueprint.post("/api/onboarding/retrain")
