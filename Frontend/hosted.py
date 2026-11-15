@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import secrets
 import threading
@@ -41,6 +42,7 @@ from models import (
 from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
+from werkzeug.exceptions import RequestEntityTooLarge
 
 GAMES = ("aim", "tetris", "typing", "arena")
 GAME_SECONDS = 150
@@ -54,6 +56,7 @@ HEARTBEAT_ONLINE = timedelta(seconds=90)
 LOGIN_LIMIT = (30, timedelta(minutes=1))
 PAIR_LIMIT = (10, timedelta(minutes=10))
 UPLOAD_LIMIT = (60, timedelta(minutes=1))
+AGENT_WINDOW_MAX_BYTES = 64 * 1024
 PAIRING_TTL = timedelta(minutes=10)
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ENV = (
@@ -64,6 +67,25 @@ Document = dict[str, Any]
 Trainer = Callable[[str, str, list[Document], list[str]], str]
 Scorer = Callable[[str, str, Document], Document]
 Deleter = Callable[[str, str], None]
+logger = logging.getLogger(__name__)
+
+
+def audit_agent_window(
+    device_id: str,
+    outcome: str,
+    reason: str | None = None,
+    window: Document | None = None,
+) -> None:
+    metadata = [f"outcome={outcome}", f"device_id={device_id}"]
+    if reason is not None:
+        metadata.append(f"reason={reason}")
+    if window is not None:
+        metadata.extend((
+            f"sequence={window['sequence']}",
+            f"schema_version={window['schema_version']}",
+            f"mode={window['mode']}",
+        ))
+    logger.info("agent_window_ingestion %s", " ".join(metadata))
 
 
 def configured() -> bool:
@@ -670,13 +692,20 @@ def register(
 
     @blueprint.post("/api/agent/windows")
     def upload_window():
+        request.max_content_length = AGENT_WINDOW_MAX_BYTES
         device = device_auth()
         throttle(f"upload:{device['_id']}", UPLOAD_LIMIT)
-        window = json_body()
+        try:
+            window = json_body()
+        except RequestEntityTooLarge:
+            audit_agent_window(device["_id"], "rejected", "request_too_large")
+            return jsonify(error="Request body exceeds the allowed size"), 413
         error = window_error(window)
         if error:
+            audit_agent_window(device["_id"], "rejected", "invalid_payload")
             return jsonify(error=error), 422
         if window["device_id"] != device["_id"]:
+            audit_agent_window(device["_id"], "rejected", "device_mismatch")
             return jsonify(error="window belongs to another device"), 422
         if window["mode"] == "monitoring":
             return score_window(device, window)
@@ -687,6 +716,7 @@ def register(
             {"_id": window["session_id"], "onboarding_id": onboarding["_id"], "status": "active"}
         )
         if not active:
+            audit_agent_window(device["_id"], "rejected", "inactive_session")
             return jsonify(error="no active game round for this session"), 409
         usable = cast(dict[str, int], window["features"])["key_count"] >= 30
         try:
@@ -695,13 +725,16 @@ def register(
                                          "sequence": window["sequence"], "game": active["game"],
                                          "usable": usable, "window": window, "created_at": now()})
         except DuplicateKeyError:
+            audit_agent_window(device["_id"], "rejected", "duplicate_sequence", window=window)
             return jsonify(error="This device/session/sequence window already exists"), 409
         if usable:
             database.rounds.update_one({"_id": active["_id"]}, {"$inc": {"valid_window_count": 1}})
+        audit_agent_window(device["_id"], "accepted", window=window)
         return jsonify(ok=True, usable=usable), 201
 
     def score_window(device: Document, window: Document):
         if database.onboarding.find_one({"device_id": device["_id"], "state": "ready"}) is None:
+            audit_agent_window(device["_id"], "rejected", "model_not_ready", window=window)
             return jsonify(error="monitoring starts after onboarding trains a model"), 409
         try:
             record = database.monitoring_windows.insert_one({
@@ -709,18 +742,21 @@ def register(
                 "sequence": window["sequence"], "window": window, "created_at": now(),
             })
         except DuplicateKeyError:
+            audit_agent_window(device["_id"], "rejected", "duplicate_sequence", window=window)
             return jsonify(error="This device/session/sequence window already exists"), 409
         try:
             result = scorer(device["user_id"], device["_id"], window)
         except (RuntimeError, OSError):
             # Remove the unscored window so the agent can retry the same sequence.
             database.monitoring_windows.delete_one({"_id": record.inserted_id})
+            audit_agent_window(device["_id"], "failed", "scoring_unavailable", window=window)
             return jsonify(error="scoring is unavailable; retry later"), 502
         stamp = now()
         record_inference(
             database, user_id=device["user_id"], device_id=device["_id"], window=window, result=result, created_at=stamp,
         )
         database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"result": result}})
+        audit_agent_window(device["_id"], "accepted", window=window)
         return jsonify(result), 201
 
     app.register_blueprint(blueprint)

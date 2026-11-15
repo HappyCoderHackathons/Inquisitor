@@ -29,6 +29,38 @@ def window(device_id, session_id, sequence, key_count=40):
     }
 
 
+def native_window(device_id, session_id, sequence, schema_version=4):
+    features = {
+        "key_count": 40,
+        "hold_mean_ms": 100.0,
+        "hold_std_ms": 20.0,
+        "press_interval_mean_ms": 250.0,
+        "press_interval_std_ms": 50.0,
+        "hold_sample_count": 40,
+        "mouse_sample_count": 10,
+        "mouse_click_count": 2,
+        "mouse_speed_mean_counts_s": 100.0,
+        "mouse_speed_std_counts_s": 20.0,
+        "mouse_click_interval_mean_ms": 300.0,
+        "mouse_click_interval_std_ms": 20.0,
+        "mouse_turn_mean_rad": 1.0,
+        "mouse_turn_std_rad": 0.2,
+        "mouse_path_straightness": 0.8,
+    }
+    if schema_version == 3:
+        features = {name: value for name, value in features.items() if not name.startswith("mouse_")}
+    return {
+        "schema_version": schema_version,
+        "device_id": device_id,
+        "session_id": session_id,
+        "sequence": sequence,
+        "mode": "enrollment",
+        "started_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+        "duration_ms": 10_000,
+        "features": features,
+    }
+
+
 class SyncThread:
     def __init__(self, target, daemon):
         self.target = target
@@ -171,15 +203,71 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=other_device).status_code, 422)
         forged = window(device_id, session_id, 0) | {"key": "a"}
         self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=forged).status_code, 422)
+        self.assertEqual(self.database.windows.count_documents({}), 0)
         valid = window(device_id, session_id, 0)
         self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=valid).status_code, 201)
         self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=valid).status_code, 409)
+        self.assertEqual(self.database.windows.count_documents({}), 1)
+        stored = self.database.windows.find_one({"session_id": session_id})
+        self.assertEqual(
+            (stored["device_id"], stored["user_id"], stored["session_id"], stored["sequence"]),
+            (device_id, "better-auth:user-a", session_id, 0),
+        )
         session = self.database.rounds.find_one({"_id": session_id})
         self.assertEqual(session["device_id"], device_id)
         self.assertEqual(session["status"], "active")
         self.assertEqual(session["valid_window_count"], 1)
         self.sign_in("user-b")
         self.assertEqual(self.client.get("/api/onboarding").status_code, 404)
+
+    def test_agent_window_accepts_current_native_schemas(self):
+        device_id, agent = self.pair()
+        session_id = self.client.post("/api/onboarding/rounds", json={"game": "typing"}).get_json()["session_id"]
+        for schema_version in (3, 4):
+            with self.subTest(schema_version=schema_version):
+                response = self.client.post(
+                    "/api/agent/windows",
+                    headers=agent,
+                    json=native_window(device_id, session_id, schema_version, schema_version),
+                )
+                self.assertEqual(response.status_code, 201, response.get_json())
+                stored = self.database.windows.find_one({"session_id": session_id, "sequence": schema_version})
+                self.assertEqual(stored["window"]["schema_version"], schema_version)
+                self.assertEqual((stored["device_id"], stored["session_id"]), (device_id, session_id))
+
+    def test_invalid_agent_window_is_not_persisted_or_logged_as_input(self):
+        device_id, agent = self.pair()
+        session_id = self.client.post("/api/onboarding/rounds", json={"game": "typing"}).get_json()["session_id"]
+        payload = window(device_id, session_id, 0) | {"private_field": "sensitive-window-content"}
+
+        with self.assertLogs(hosted.__name__, level="INFO") as logs:
+            response = self.client.post("/api/agent/windows", headers=agent, json=payload)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(self.database.windows.count_documents({}), 0)
+        log_output = "\n".join(logs.output)
+        self.assertIn("reason=invalid_payload", log_output)
+        self.assertNotIn("private_field", log_output)
+        self.assertNotIn("sensitive-window-content", log_output)
+
+    def test_agent_window_request_size_is_limited_before_persistence(self):
+        device_id, agent = self.pair()
+        body = b"x" * (hosted.AGENT_WINDOW_MAX_BYTES + 1)
+
+        with self.assertLogs(hosted.__name__, level="INFO") as logs:
+            response = self.client.post(
+                "/api/agent/windows",
+                headers=agent,
+                data=body,
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(self.database.windows.count_documents({}), 0)
+        self.assertEqual(self.database.monitoring_windows.count_documents({}), 0)
+        log_output = "\n".join(logs.output)
+        self.assertIn("reason=request_too_large", log_output)
+        self.assertNotIn("x" * 100, log_output)
 
     def test_legacy_round_documents_are_migrated_to_enrollment_sessions(self):
         device_id, _ = self.pair()
@@ -259,6 +347,10 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.scored, [("better-auth:user-a", device_id, 0)])
         self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=monitoring).status_code, 409)
         stored = self.database.monitoring_windows.find_one({"session_id": "monitor-1"})
+        self.assertEqual(
+            (stored["user_id"], stored["device_id"], stored["session_id"], stored["sequence"]),
+            ("better-auth:user-a", device_id, "monitor-1", 0),
+        )
         self.assertEqual(stored["result"]["state"], "NORMAL")
 
     def test_monitoring_waits_for_a_trained_model(self):

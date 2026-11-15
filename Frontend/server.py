@@ -26,13 +26,14 @@ import security
 LOCAL_USER_ID = "local-user"
 LOCAL_DEVICE_ID = "local-device"
 DB_PATH = Path(os.environ.get("INPUTPRINT_DB", ROOT / "inputprint.sqlite3"))
-FEATURE_VALIDATORS = {
+AGENT_FEATURE_VALIDATORS = {
     version: Draft202012Validator(
         json.loads((ROOT.parent / "shared" / f"feature-window-v{version}.schema.json").read_text(encoding="utf-8")),
         format_checker=FormatChecker(),
     )
-    for version in (1, 2)
+    for version in (1, 2, 3, 4)
 }
+FEATURE_VALIDATORS = {version: AGENT_FEATURE_VALIDATORS[version] for version in (1, 2)}
 SAMPLE_FEATURE_WINDOW = json.loads(
     (ROOT.parent / "shared" / "fixtures" / "feature-window-v2.json").read_text(encoding="utf-8")
 )["valid"]["enrollment"]
@@ -79,11 +80,15 @@ def initialize():
         )""")
 
 
-def feature_window_error(value: object) -> str | None:
+def _validated_feature_window_error(
+    value: object,
+    validators: dict[int, Draft202012Validator],
+    version_error: str,
+) -> str | None:
     version = value.get("schema_version") if isinstance(value, dict) else None
-    validator = FEATURE_VALIDATORS.get(version) if isinstance(version, int) else None
+    validator = validators.get(version) if isinstance(version, int) else None
     if validator is None:
-        return "Feature window schema_version must be 1 or 2"
+        return version_error
     error = next(validator.iter_errors(value), None)
     if error:
         return f"Feature window does not match schema v{version}: {error.message}"
@@ -98,11 +103,23 @@ def feature_window_error(value: object) -> str | None:
             return "Window duration cannot exceed 10 minutes"
         if any(number > duration for name, number in [*features.items(), *mouse.items()] if name.endswith("_ms")):
             return "Timing features cannot exceed window duration"
-        if features["presses_per_second"] > 50:
+        if features.get("presses_per_second", 0) > 50:
             return "Press rate is implausible"
     except OverflowError:
         return "Feature values must be finite numbers"
     return None
+
+
+def feature_window_error(value: object) -> str | None:
+    return _validated_feature_window_error(
+        value, FEATURE_VALIDATORS, "Feature window schema_version must be 1 or 2",
+    )
+
+
+def agent_feature_window_error(value: object) -> str | None:
+    return _validated_feature_window_error(
+        value, AGENT_FEATURE_VALIDATORS, "Feature window schema_version must be 1, 2, 3, or 4",
+    )
 
 
 def started_at_error(window: dict[str, object], now: datetime) -> str | None:
@@ -307,7 +324,7 @@ def purge_retention():
 
 
 def onboarding_window_error(window: dict[str, object]) -> str | None:
-    return feature_window_error(window) or started_at_error(window, datetime.now(timezone.utc))
+    return agent_feature_window_error(window) or started_at_error(window, datetime.now(timezone.utc))
 
 
 if hosted.configured():
