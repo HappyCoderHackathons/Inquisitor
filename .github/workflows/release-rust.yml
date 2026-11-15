@@ -2,15 +2,16 @@ name: Release Windows tray
 
 # Push a version tag to publish a GitHub release with the tray exe:
 #   1. Set `version` in backend/rust/Cargo.toml (for example 0.2.0) and commit.
-#   2. git tag v0.2.0 && git push origin v0.2.0
-# The tag must match the Cargo.toml version exactly, which the setup wizard
-# shows and records in Apps & features. For a prerelease, put the suffix in both
-# (version 0.2.0-rc.1, tag v0.2.0-rc.1); a tag with a hyphen is published as a
-# prerelease.
+#   2. git tag 0.2.0 && git push origin 0.2.0   (v0.2.0 works too)
+# The tag, with or without a leading v, must match the Cargo.toml version
+# exactly, which the setup wizard shows and records in Apps & features. For a
+# prerelease, put the suffix in both (version 0.2.0-rc.1, tag 0.2.0-rc.1); a tag
+# with a hyphen is published as a prerelease.
 on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+*'
+      - '[0-9]+.[0-9]+.[0-9]+*'
 
 permissions:
   contents: read
@@ -42,8 +43,8 @@ jobs:
         id: version
         run: |
           version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' backend/rust/Cargo.toml | head -n 1)
-          if [ "$TAG" != "v$version" ]; then
-            echo "::error::Tag $TAG does not match backend/rust/Cargo.toml version $version"
+          if [ "${TAG#v}" != "$version" ]; then
+            echo "::error::Tag $TAG does not match backend/rust/Cargo.toml version $version. Set version = \"${TAG#v}\" there, or tag the crate's version."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
