@@ -30,14 +30,28 @@ Enrollment and test data:
 1. Sign in and show device paired / monitoring active.
 2. Explain aggregate-only capture in one sentence, and show the raw window JSON.
 3. Play or type briefly to show a stable `NORMAL` state.
-4. Switch to the consenting second user or replay clearly labeled windows.
+4. Switch to the consenting second user, or run the replay fallback below.
 5. Show an `UNUSUAL` result and read the short explanation text.
 6. Pause the agent to show user control.
 
 ## Fallback
 
-If the network or ML host fails, use the arcade replay path with the replay banner visible.
-State that replay proves integration, not field accuracy.
+If live capture or the agent fails but the hosted app and ML host are up, replay recorded
+windows through the normal scoring path:
+
+```powershell
+$env:INQUISITOR_DEVICE_TOKEN = "<token from pairing>"
+uv run --project backend python scripts/replay_windows.py C:\demo\guest.jsonl `
+  --url https://<hosted app> --device-id <device ID from pairing> --speed 4
+```
+
+Every output line reads `REPLAY (recorded windows, not live input)`. Keep the terminal
+visible and say that replay proves integration, not live detection or field accuracy.
+At `--speed 4`, 30-second windows post about every 8 seconds; check the timing during rehearsal.
+
+If the hosted app or ML host is down, replay cannot score either. Switch to the hotspot
+and retry. If that fails, present the recorded rehearsal output and the
+[model evaluation](model-evaluation.md) report, and say they are recorded results.
 
 ## After demo
 
