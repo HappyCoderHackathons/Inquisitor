@@ -1,0 +1,11 @@
+node_modules/
+stack/run/
+out/*
+!out/inquisitor-demo.mp4
+takes/
+vo/*.wav
+vo/raw/
+vo/durations.json
+build/tmp/
+# Team photos and raw voice takes stay local; the rendered video already contains them.
+assets/team/
