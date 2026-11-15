@@ -4,6 +4,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=%h/inquisitor-model/app
+# service.env sets ML_TOKEN_FILE, ML_DATA_DIR, MONGODB_URI, and MONGODB_DB (see README.md).
 EnvironmentFile=%h/inquisitor-model/service.env
 Environment=OPENBLAS_NUM_THREADS=1
 Environment=OMP_NUM_THREADS=1

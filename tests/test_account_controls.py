@@ -1,13 +1,13 @@
 import json
 import os
-import sqlite3
 import tempfile
 import unittest
-from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
+
+import mongomock
 
 from backend.account.store import AccountStore
 from backend.ml.app import create_app
@@ -26,18 +26,22 @@ class AccountControlTests(unittest.TestCase):
             "ML_TOKEN_FILE": str(token_file),
             "ML_DATA_DIR": str(self.data_dir),
             "INQUISITOR_MONITORING_RETENTION_SECONDS": "604800",
+            "MONGODB_URI": "mongodb://synthetic",
+            "MONGODB_DB": "inquisitor-test",
         })
         self.environment.start()
         self.addCleanup(self.environment.stop)
+        client = mongomock.MongoClient(tz_aware=True)
+        mongo = patch("backend.ml.app.MongoClient", return_value=client)
+        mongo.start()
+        self.addCleanup(mongo.stop)
         self.client = create_app().test_client()
         self.headers = {
             "Authorization": "Bearer " + token_file.read_text(encoding="utf-8"),
             "X-User-ID": "synthetic-user",
             "X-Device-ID": "synthetic-device",
         }
-        self.account = AccountStore(
-            self.data_dir / "account.sqlite3", self.data_dir / "account-artifacts", 604800,
-        )
+        self.account = AccountStore(client["inquisitor-test"], "ml_", self.data_dir / "account-artifacts", 604800)
 
     def plant_model(self, user_id: str, device_id: str) -> tuple[str, Path]:
         model_id = uuid4().hex
@@ -183,36 +187,6 @@ class AccountControlTests(unittest.TestCase):
         self.assertEqual(self.account.counts("synthetic-user")["enrollment"], 1)
         self.assertEqual(self.account.counts("synthetic-user")["inference_results"], 1)
         self.assertEqual(self.account.counts("synthetic-user")["alerts"], 0)
-
-    def test_legacy_database_gains_device_foreign_keys_and_keeps_rows(self) -> None:
-        database = Path(self.temporary.name) / "legacy.sqlite3"
-        with closing(sqlite3.connect(database)) as conn:
-            conn.executescript("""
-                CREATE TABLE windows (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
-                    session_id TEXT NOT NULL, sequence INTEGER NOT NULL, mode TEXT NOT NULL, created_at TEXT NOT NULL,
-                    window_json TEXT NOT NULL, UNIQUE(user_id, device_id, session_id, sequence));
-                CREATE TABLE inference_results (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
-                    model_id TEXT NOT NULL, created_at TEXT NOT NULL, result_json TEXT NOT NULL);
-                CREATE TABLE alerts (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
-                    created_at TEXT NOT NULL, alert_json TEXT NOT NULL);
-                CREATE TABLE models (model_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
-                    active INTEGER NOT NULL, created_at TEXT NOT NULL);
-                INSERT INTO windows VALUES (1, 'u', 'd', 's', 1, 'enrollment', 't', '{}');
-                INSERT INTO inference_results VALUES (1, 'u', 'd2', 'm', 't', '{}');
-                INSERT INTO alerts VALUES (1, 'u', 'd2', 't', '{}');
-                INSERT INTO models VALUES ('m', 'u', 'd', 1, 't');
-            """)
-        store = AccountStore(database, Path(self.temporary.name) / "legacy-artifacts", 604800)
-        self.assertEqual(store.counts("u"), {
-            "windows": 1, "enrollment": 1, "monitoring": 0, "inference_results": 1,
-            "alerts": 1, "models": 1, "active_models": 1,
-        })
-        with closing(sqlite3.connect(database)) as conn:
-            for table in ("windows", "inference_results", "alerts", "models"):
-                self.assertEqual(conn.execute(f"PRAGMA foreign_key_list({table})").fetchone()[2], "devices")
-            self.assertEqual(conn.execute("SELECT job_state FROM models").fetchone()[0], "ready")
-        store.delete_device("u", "d2")
-        self.assertEqual((store.counts("u")["inference_results"], store.counts("u")["windows"]), (0, 1))
 
     def test_monitoring_window_requires_an_active_model(self) -> None:
         monitoring = self.window(mode="monitoring", session_id="monitor", sequence=3)

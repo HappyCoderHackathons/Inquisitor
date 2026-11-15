@@ -13,7 +13,7 @@ On the model host, place this repository at `~/inquisitor-model/app`, install
 Python 3.13+ and uv, and create the locked environment from that directory:
 
 ```sh
-UV_PROJECT_ENVIRONMENT="$HOME/inquisitor-model/.venv" uv sync --project backend --locked
+UV_PROJECT_ENVIRONMENT="$HOME/inquisitor-model/.venv" uv sync --project backend --locked --no-dev
 ```
 
 Create `~/inquisitor-model/service.env`, readable only by the deployment user.
@@ -22,6 +22,8 @@ Set these values to real server-local paths and authorized identity values:
 ```text
 ML_TOKEN_FILE=/absolute/private/path/to/service.token
 ML_DATA_DIR=/absolute/private/path/to/model-artifacts
+MONGODB_URI=the-private-mongodb-connection-string
+MONGODB_DB=the-ml-database-name
 ML_PUBLISHED_MODEL_FILE=/absolute/path/to/app/backend/artifacts/tray-two-device-v1.json
 ML_PUBLISHED_USER_ID=the-enrolled-account-id
 ML_PUBLISHED_DEVICE_ID=the-paired-device-id
@@ -29,6 +31,11 @@ ML_PUBLISHED_MODEL_ID=the-owned-service-model-id
 ML_ALLOW_TRAINING=0
 ML_TRAIN_ASYNC=0
 ```
+
+`MONGODB_URI` and `MONGODB_DB` select the database for account windows, scores,
+alerts, model versions, and the retention policy, in collections prefixed `ml_`.
+The service refuses to start if either is unset. Model artifact files stay under
+`ML_DATA_DIR` on this host.
 
 The token file must contain a dedicated random URL-safe token of at least 32
 characters. Keep this file, the environment file, and deployment identity out of

@@ -16,7 +16,7 @@ timing, per-user models, and dashboard alerts.
 | --- | --- | --- |
 | Arcade / local Flask app | `Frontend/` | `python3 -m pip install -r requirements.txt`, `npm install`, `npm run build`, then `python3 server.py` |
 | Better Auth (hosted) | `Frontend/` | `npm ci`, then `npm run auth` with `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `MONGODB_URI`, and `MONGODB_DB` set |
-| ML service | repo root | `ML_TOKEN_FILE=... ML_DATA_DIR=... ML_ALLOW_TRAINING=0 uv run --project backend python -m flask --app backend.ml.app:create_app run` |
+| ML service | repo root | `ML_TOKEN_FILE=... ML_DATA_DIR=... MONGODB_URI=... MONGODB_DB=... ML_ALLOW_TRAINING=0 uv run --project backend python -m flask --app backend.ml.app:create_app run` |
 | Backend tests | repo root | `uv sync --project backend --locked` then `uv run --project backend python -m unittest discover -s tests -v` |
 | Rust agent | `backend/rust/` | `cargo build --release` (see README there) |
 

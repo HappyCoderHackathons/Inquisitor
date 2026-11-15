@@ -1,6 +1,10 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import mongomock
 
 import server
 
@@ -25,6 +29,15 @@ class SecurityHeaderTests(unittest.TestCase):
         self.previous_account = server.account
         server.DB_PATH = Path(self.temporary.name) / "test.sqlite3"
         server.account = None
+        environment = patch.dict(os.environ, {
+            "MONGODB_URI": "mongodb://synthetic",
+            "MONGODB_DB": "inquisitor-test",
+            "INQUISITOR_ARTIFACT_DIR": str(Path(self.temporary.name) / "account-artifacts"),
+        })
+        mongo = patch("pymongo.MongoClient", return_value=mongomock.MongoClient(tz_aware=True))
+        for patcher in (environment, mongo):
+            patcher.start()
+            self.addCleanup(patcher.stop)
         server.initialize()
         self.client = server.app.test_client()
 

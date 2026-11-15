@@ -1,10 +1,14 @@
 import copy
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
+
+import mongomock
 
 import server
 
@@ -39,6 +43,15 @@ class FeatureWindowApiTests(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.previous_database_path = server.DB_PATH
         server.DB_PATH = Path(self.temporary_directory.name) / "test.sqlite3"
+        environment = patch.dict(os.environ, {
+            "MONGODB_URI": "mongodb://synthetic",
+            "MONGODB_DB": "inquisitor-test",
+            "INQUISITOR_ARTIFACT_DIR": str(Path(self.temporary_directory.name) / "account-artifacts"),
+        })
+        mongo = patch("pymongo.MongoClient", return_value=mongomock.MongoClient(tz_aware=True))
+        for patcher in (environment, mongo):
+            patcher.start()
+            self.addCleanup(patcher.stop)
         server.initialize()
         self.client = server.app.test_client()
 

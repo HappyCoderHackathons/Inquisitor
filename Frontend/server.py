@@ -58,8 +58,11 @@ def db() -> Iterator[sqlite3.Connection]:
 
 def open_account() -> AccountStore:
     global account
-    artifact_root = Path(os.environ.get("INQUISITOR_ARTIFACT_DIR", DB_PATH.parent / "account-artifacts"))
-    account = AccountStore(DB_PATH.parent / "account.sqlite3", artifact_root, retention_seconds_from_env())
+    from pymongo import MongoClient
+
+    database = MongoClient(os.environ["MONGODB_URI"], tz_aware=True)[os.environ["MONGODB_DB"]]
+    artifact_root = Path(os.environ.get("INQUISITOR_ARTIFACT_DIR", ROOT / "account-artifacts"))
+    account = AccountStore(database, "local_account_", artifact_root, retention_seconds_from_env())
     return account
 
 

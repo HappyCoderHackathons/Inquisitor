@@ -1,9 +1,11 @@
 # Data persistence
 
-The hosted stack uses MongoDB Atlas collections. The ML service and local arcade prototype
-use SQLite through `backend/account/store.py`. Account, device, window, score, alert,
-and model rows are scoped to `user_id` and `device_id`. The monitoring retention period
-is one process-wide row. A purge deletes monitoring rows older than that period for every
+The hosted stack uses MongoDB Atlas collections. The ML service and the local arcade prototype
+keep account rows in MongoDB through `backend/account/store.py`, in collections prefixed
+`ml_` (ML service) or `local_account_` (local prototype) so they stay apart from the hosted
+website's collections. The ML service's connection to Atlas has not been verified on the ML host.
+Window, score, alert, and model documents are scoped to `user_id` and `device_id`. The
+monitoring retention period is one document per store. A purge deletes monitoring rows older than that period for every
 account on that store.
 
 ## Model versions
@@ -24,13 +26,11 @@ Monitoring windows produce an inference result with model ID, score, threshold, 
 classification (`NORMAL`, `UNUSUAL`, or `INSUFFICIENT_DATA`). `UNUSUAL` also creates an
 alert row for dashboard review.
 
-## Foreign keys
+## Device scoping
 
-In SQLite, `devices` holds each `(user_id, device_id)` pair. `windows`, `inference_results`,
-`alerts`, and `models` reference it with `ON DELETE CASCADE`, so deleting a device row
-removes its dependent rows. Opening an older database rebuilds those tables with the keys
-and keeps existing rows. Atlas has no foreign keys; every document stores `user_id` and
-`device_id`, and the application deletes dependents explicitly.
+MongoDB has no foreign keys. Every document stores `user_id` and `device_id`, and the
+application deletes dependents explicitly. A unique index on user, device, session, and
+sequence rejects duplicate windows. Model artifact files stay on the ML host disk.
 
 ## Deletion cascade
 

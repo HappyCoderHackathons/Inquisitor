@@ -24,7 +24,8 @@ uv sync --project backend --locked
 ```
 
 Configure `ML_TOKEN_FILE` with the path to a dedicated service token file (at least
-32 URL-safe characters), and `ML_DATA_DIR` with a private artifact directory.
+32 URL-safe characters), `ML_DATA_DIR` with a private artifact directory, and
+`MONGODB_URI` and `MONGODB_DB` for the account store (collections prefixed `ml_`).
 Missing credentials prevent startup. Never use an SSH password as the API token.
 Set `ML_ALLOW_TRAINING=1` only on the designated training host.
 
