@@ -37,6 +37,7 @@ ENV = (
 
 Document = dict[str, Any]
 Trainer = Callable[[str, str, list[Document], list[str]], str]
+Scorer = Callable[[str, str, Document], Document]
 
 
 def configured() -> bool:
@@ -55,7 +56,7 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def ml_trainer(base_url: str, token: str) -> Trainer:
+def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer]:
     def call(method: str, path: str, user_id: str, device_id: str, body: object | None = None) -> Document:
         request_ = urllib.request.Request(
             base_url.rstrip("/") + path, method=method,
@@ -77,7 +78,10 @@ def ml_trainer(base_url: str, token: str) -> Trainer:
         call("PUT", f"/models/{model_id}/active", user_id, device_id)
         return model_id
 
-    return train
+    def score(user_id: str, device_id: str, window: Document) -> Document:
+        return call("POST", "/models/active/score", user_id, device_id, {"window": window})
+
+    return train, score
 
 
 def progress(database: Database, onboarding: Document) -> Document:
@@ -103,7 +107,9 @@ def progress(database: Database, onboarding: Document) -> Document:
     }
 
 
-def register(app: Flask, database: Database, trainer: Trainer, window_error: Callable[[Document], str | None]) -> None:
+def register(
+    app: Flask, database: Database, trainer: Trainer, scorer: Scorer, window_error: Callable[[Document], str | None],
+) -> None:
     from authlib.integrations.flask_client import OAuth
 
     app.secret_key = os.environ["SESSION_SECRET"]
@@ -122,9 +128,10 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
     database.pairing_codes.create_index("code_hash", unique=True)
     database.devices.create_index("token_hash", unique=True)
     database.onboarding.create_index([("user_id", ASCENDING), ("device_id", ASCENDING)], unique=True)
-    database.windows.create_index(
-        [("device_id", ASCENDING), ("session_id", ASCENDING), ("sequence", ASCENDING)], unique=True
-    )
+    for collection in (database.windows, database.monitoring_windows):
+        collection.create_index(
+            [("device_id", ASCENDING), ("session_id", ASCENDING), ("sequence", ASCENDING)], unique=True
+        )
     blueprint = Blueprint("hosted", __name__)
 
     def start_training(onboarding: Document, status: Document) -> None:
@@ -329,8 +336,10 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
         error = window_error(window)
         if error:
             return jsonify(error=error), 422
-        if window["device_id"] != device["_id"] or window["mode"] != "enrollment":
-            return jsonify(error="onboarding windows must be enrollment windows from this device"), 422
+        if window["device_id"] != device["_id"]:
+            return jsonify(error="window belongs to another device"), 422
+        if window["mode"] == "monitoring":
+            return score_window(device, window)
         onboarding = database.onboarding.find_one({"device_id": device["_id"], "state": "collecting"})
         active = onboarding and database.rounds.find_one(
             {"_id": window["session_id"], "onboarding_id": onboarding["_id"], "ended_at": None}
@@ -348,5 +357,23 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
         if usable:
             database.rounds.update_one({"_id": active["_id"]}, {"$inc": {"usable_windows": 1}})
         return jsonify(ok=True, usable=usable), 201
+
+    def score_window(device: Document, window: Document):
+        if database.onboarding.find_one({"device_id": device["_id"], "state": "ready"}) is None:
+            return jsonify(error="monitoring starts after onboarding trains a model"), 409
+        try:
+            record = database.monitoring_windows.insert_one({
+                "user_id": device["user_id"], "device_id": device["_id"], "session_id": window["session_id"],
+                "sequence": window["sequence"], "window": window, "created_at": now(),
+            })
+        except DuplicateKeyError:
+            return jsonify(error="This device/session/sequence window already exists"), 409
+        try:
+            result = scorer(device["user_id"], device["_id"], window)
+        except (RuntimeError, OSError) as error:
+            database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"error": str(error)}})
+            return jsonify(error="scoring is unavailable; retry later"), 502
+        database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"result": result}})
+        return jsonify(result), 201
 
     app.register_blueprint(blueprint)
