@@ -46,6 +46,7 @@ class OnboardingTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
         self.database = mongomock.MongoClient(tz_aware=True).db
         self.trained = []
+        self.scored = []
         self.training_error = None
 
         def trainer(user_id, device_id, windows, validation_sessions):
@@ -56,13 +57,20 @@ class OnboardingTests(unittest.TestCase):
 
         app = Flask(__name__, template_folder=str(Path(server.__file__).parent / "templates"))
         with patch.dict(os.environ, ENV):
-            hosted.register(app, self.database, trainer, server.onboarding_window_error)
+            hosted.register(app, self.database, trainer, self.score, server.onboarding_window_error)
         self.client = app.test_client()
+
+    def score(self, user_id, device_id, value):
+        self.scored.append((user_id, device_id, value["sequence"]))
+        return {"model_id": "model-1", "state": "NORMAL", "score": -0.4, "threshold": 0.1, "score_delta": -0.5}
 
     def sign_in(self, user_id="user-a"):
         self.database.users.insert_one({"_id": user_id, "email": f"{user_id}@example.test"})
+        sid = f"session-{user_id}"
+        self.database.sessions.insert_one({"_id": hosted.digest(sid), "user_id": user_id,
+                                           "expires_at": self.clock + hosted.SESSION_LIFETIME})
         with self.client.session_transaction() as session:
-            session["user_id"] = user_id
+            session["sid"] = sid
 
     def pair(self):
         self.sign_in()
@@ -145,6 +153,9 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.trained, [])
         self.clock += timedelta(seconds=1)
         _, status = self.play("aim", [0], device_id, agent)
+        self.assertTrue(status["ready_to_train"])
+        self.assertEqual(self.trained, [], "training waits for the user")
+        status = self.client.post("/api/onboarding/train", json={}).get_json()
         self.assertEqual(status["state"], "ready")
         self.assertEqual(status["model_id"], "model-1")
         user_id, trained_device, windows, validation = self.trained[0]
@@ -154,16 +165,44 @@ class OnboardingTests(unittest.TestCase):
         self.assertNotIn(cancelled, {item["session_id"] for item in windows})
         self.assertTrue(all(item["features"]["key_count"] >= 30 for item in windows))
         self.assertEqual(self.client.post("/api/onboarding/rounds", json={"game": "aim"}).status_code, 409)
+        enrollment = window(device_id, "after-ready", 0)
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=enrollment).status_code, 409)
+        monitoring = window(device_id, "monitor-1", 0) | {"mode": "monitoring"}
+        scored = self.client.post("/api/agent/windows", headers=agent, json=monitoring)
+        self.assertEqual((scored.status_code, scored.get_json()["state"]), (201, "NORMAL"))
+        self.assertEqual(self.scored, [("user-a", device_id, 0)])
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=monitoring).status_code, 409)
+        stored = self.database.monitoring_windows.find_one({"session_id": "monitor-1"})
+        self.assertEqual(stored["result"]["state"], "NORMAL")
+
+    def test_monitoring_waits_for_a_trained_model(self):
+        device_id, agent = self.pair()
+        monitoring = window(device_id, "monitor-1", 0) | {"mode": "monitoring"}
+        self.assertEqual(self.client.post("/api/agent/windows", headers=agent, json=monitoring).status_code, 409)
+        self.assertEqual(self.scored, [])
 
     def test_training_failure_is_reported(self):
         self.training_error = RuntimeError("model service returned 422: all training features are constant")
         device_id, agent = self.pair()
+        self.assertEqual(self.client.post("/api/onboarding/train", json={}).status_code, 409)
         for _ in range(3):
             for game in ("aim", "tetris", "typing", "arena"):
-                _, status = self.play(game, [40] * 4, device_id, agent)
+                self.play(game, [40] * 4, device_id, agent)
+        status = self.client.post("/api/onboarding/train", json={}).get_json()
         self.assertEqual(status["state"], "failed")
         self.assertIn("all training features are constant", status["error"])
         self.assertEqual(len(self.trained), 1)
+
+    def test_pairing_and_uploads_are_rate_limited(self):
+        statuses = [self.client.post("/api/agent/pair", json={"code": "WRONG123"}).status_code for _ in range(11)]
+        self.assertEqual(statuses, [404] * 10 + [429])
+        self.clock += hosted.PAIR_LIMIT[1]
+        device_id, agent = self.pair()
+        session_id = self.client.post("/api/onboarding/rounds", json={"game": "typing"}).get_json()["session_id"]
+        uploads = [self.client.post("/api/agent/windows", headers=agent, json=window(device_id, session_id, n))
+                   for n in range(61)]
+        self.assertEqual(uploads[59].status_code, 201)
+        self.assertEqual(uploads[60].status_code, 429)
 
     def test_partial_configuration_fails_loudly(self):
         with patch.dict(os.environ, {"SSOJET_AUTHORITY": "https://sso.example.test"}, clear=True):
@@ -176,7 +215,13 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/me").status_code, 401)
         self.sign_in()
         self.assertEqual(self.client.get("/api/me").get_json()["email"], "user-a@example.test")
-        self.client.post("/logout")
+        cookie = self.client.get_cookie("session").value
+        self.assertEqual(self.client.post("/logout").status_code, 302)
+        self.assertEqual(self.client.get("/api/me").status_code, 401)
+        self.client.set_cookie("session", cookie)
+        self.assertEqual(self.client.get("/api/me").status_code, 401, "logout must revoke the server-side session")
+        self.sign_in("user-b")
+        self.clock += hosted.SESSION_LIFETIME
         self.assertEqual(self.client.get("/api/me").status_code, 401)
 
 

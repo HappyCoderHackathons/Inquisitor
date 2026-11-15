@@ -14,7 +14,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 from flask import Blueprint, Flask, abort, jsonify, redirect, render_template, request, session, url_for
-from pymongo import ASCENDING
+from pymongo import ASCENDING, ReturnDocument
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 
@@ -24,6 +24,10 @@ ROUND_MS = 60_000
 MIN_TRAINING_WINDOWS = 20
 MIN_VALIDATION_WINDOWS = 10
 SESSION_LIFETIME = timedelta(hours=12)
+# (requests, window) per key; generous for real use, tight enough to stop guessing and floods.
+LOGIN_LIMIT = (30, timedelta(minutes=1))
+PAIR_LIMIT = (10, timedelta(minutes=10))
+UPLOAD_LIMIT = (60, timedelta(minutes=1))
 PAIRING_TTL = timedelta(minutes=10)
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ENV = (
@@ -33,6 +37,7 @@ ENV = (
 
 Document = dict[str, Any]
 Trainer = Callable[[str, str, list[Document], list[str]], str]
+Scorer = Callable[[str, str, Document], Document]
 
 
 def configured() -> bool:
@@ -51,7 +56,7 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def ml_trainer(base_url: str, token: str) -> Trainer:
+def ml_client(base_url: str, token: str) -> tuple[Trainer, Scorer]:
     def call(method: str, path: str, user_id: str, device_id: str, body: object | None = None) -> Document:
         request_ = urllib.request.Request(
             base_url.rstrip("/") + path, method=method,
@@ -73,7 +78,10 @@ def ml_trainer(base_url: str, token: str) -> Trainer:
         call("PUT", f"/models/{model_id}/active", user_id, device_id)
         return model_id
 
-    return train
+    def score(user_id: str, device_id: str, window: Document) -> Document:
+        return call("POST", "/models/active/score", user_id, device_id, {"window": window})
+
+    return train, score
 
 
 def progress(database: Database, onboarding: Document) -> Document:
@@ -89,6 +97,7 @@ def progress(database: Database, onboarding: Document) -> Document:
     training = sum(usable.values()) - validation
     return {
         "state": onboarding["state"], "error": onboarding.get("error"), "model_id": onboarding.get("model_id"),
+        "device_id": onboarding["device_id"],
         "seconds": seconds, "required_seconds": GAME_SECONDS,
         "sessions": sorted(usable), "validation_sessions": sorted(latest.values()),
         "training_windows": training, "validation_windows": validation,
@@ -98,7 +107,9 @@ def progress(database: Database, onboarding: Document) -> Document:
     }
 
 
-def register(app: Flask, database: Database, trainer: Trainer, window_error: Callable[[Document], str | None]) -> None:
+def register(
+    app: Flask, database: Database, trainer: Trainer, scorer: Scorer, window_error: Callable[[Document], str | None],
+) -> None:
     from authlib.integrations.flask_client import OAuth
 
     app.secret_key = os.environ["SESSION_SECRET"]
@@ -111,13 +122,16 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
         server_metadata_url=os.environ["SSOJET_AUTHORITY"].rstrip("/") + "/.well-known/openid-configuration",
         client_kwargs={"scope": "openid profile email", "code_challenge_method": "S256"},
     )
+    database.sessions.create_index("expires_at", expireAfterSeconds=0)
+    database.rate_limits.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("expires_at", expireAfterSeconds=0)
     database.pairing_codes.create_index("code_hash", unique=True)
     database.devices.create_index("token_hash", unique=True)
     database.onboarding.create_index([("user_id", ASCENDING), ("device_id", ASCENDING)], unique=True)
-    database.windows.create_index(
-        [("device_id", ASCENDING), ("session_id", ASCENDING), ("sequence", ASCENDING)], unique=True
-    )
+    for collection in (database.windows, database.monitoring_windows):
+        collection.create_index(
+            [("device_id", ASCENDING), ("session_id", ASCENDING), ("sequence", ASCENDING)], unique=True
+        )
     blueprint = Blueprint("hosted", __name__)
 
     def start_training(onboarding: Document, status: Document) -> None:
@@ -143,9 +157,30 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
         # shortcut: in-process thread loses the job on restart; move to a job queue if training gets slow.
         threading.Thread(target=run, daemon=True).start()
 
+    def throttle(key: str, limit: tuple[int, timedelta]) -> None:
+        count, window = limit
+        bucket = int(now().timestamp() // window.total_seconds())
+        record = database.rate_limits.find_one_and_update(
+            {"_id": f"{key}:{bucket}"}, {"$inc": {"count": 1}, "$setOnInsert": {"expires_at": now() + 2 * window}},
+            upsert=True, return_document=ReturnDocument.AFTER,
+        )
+        if record["count"] > count:
+            abort(429)
+
+    def client_ip() -> str:
+        # shortcut: uses the socket peer address; add ProxyFix when deployed behind a trusted proxy.
+        return request.remote_addr or "unknown"
+
+    def signed_in_user() -> str | None:
+        # The cookie holds only a random session ID; the record in Atlas is what logout and expiry revoke.
+        sid = session.get("sid")
+        record = database.sessions.find_one({"_id": digest(sid), "expires_at": {"$gt": now()}}) \
+            if isinstance(sid, str) else None
+        return record["user_id"] if record else None
+
     def current_user() -> str:
-        user_id = session.get("user_id")
-        if not isinstance(user_id, str):
+        user_id = signed_in_user()
+        if user_id is None:
             abort(401)
         return user_id
 
@@ -172,10 +207,12 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
 
     @blueprint.get("/login")
     def login():
+        throttle(f"login:{client_ip()}", LOGIN_LIMIT)
         return oauth.ssojet.authorize_redirect(os.environ["SSOJET_REDIRECT_URI"])
 
     @blueprint.get("/auth/callback")
     def callback():
+        throttle(f"login:{client_ip()}", LOGIN_LIMIT)
         token = oauth.ssojet.authorize_access_token()
         claims = token.get("userinfo") or oauth.ssojet.userinfo(token=token)
         subject = claims.get("sub")
@@ -185,19 +222,24 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
             "$set": {"email": claims.get("email"), "last_login_at": now()},
             "$setOnInsert": {"created_at": now()},
         }, upsert=True)
+        sid = secrets.token_urlsafe(32)
+        database.sessions.insert_one({"_id": digest(sid), "user_id": subject, "expires_at": now() + SESSION_LIFETIME})
         session.clear()
         session.permanent = True
-        session["user_id"] = subject
+        session["sid"] = sid
         return redirect(url_for("hosted.onboarding_page"))
 
     @blueprint.post("/logout")
     def logout():
+        sid = session.get("sid")
+        if isinstance(sid, str):
+            database.sessions.delete_one({"_id": digest(sid)})
         session.clear()
-        return {"ok": True}
+        return redirect(url_for("hosted.onboarding_page"))
 
     @blueprint.get("/onboarding")
     def onboarding_page():
-        return render_template("onboarding.html", signed_in=isinstance(session.get("user_id"), str))
+        return render_template("onboarding.html", signed_in=signed_in_user() is not None)
 
     @blueprint.get("/api/me")
     def me():
@@ -246,14 +288,21 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
         started = cast(datetime, active["started_at"]).replace(tzinfo=timezone.utc)
         credited = min(int((ended - started).total_seconds() * 1000), ROUND_MS) if outcome == "finish" else 0
         database.rounds.update_one({"_id": active["_id"]}, {"$set": {"ended_at": ended, "credited_ms": credited}})
+        return jsonify(progress(database, onboarding))
+
+    @blueprint.post("/api/onboarding/train")
+    def train():
+        onboarding = user_onboarding(current_user())
+        json_body()
         status = progress(database, onboarding)
-        if status["ready_to_train"]:
-            start_training(onboarding, status)
-            status = progress(database, user_onboarding(onboarding["user_id"]))
-        return jsonify(status)
+        if onboarding["state"] != "collecting" or not status["ready_to_train"]:
+            return jsonify(status), 409
+        start_training(onboarding, status)
+        return jsonify(progress(database, user_onboarding(onboarding["user_id"]))), 202
 
     @blueprint.post("/api/agent/pair")
     def pair():
+        throttle(f"pair:{client_ip()}", PAIR_LIMIT)
         code = json_body().get("code")
         if not isinstance(code, str):
             abort(422)
@@ -282,12 +331,15 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
     @blueprint.post("/api/agent/windows")
     def upload_window():
         device = device_auth()
+        throttle(f"upload:{device['_id']}", UPLOAD_LIMIT)
         window = json_body()
         error = window_error(window)
         if error:
             return jsonify(error=error), 422
-        if window["device_id"] != device["_id"] or window["mode"] != "enrollment":
-            return jsonify(error="onboarding windows must be enrollment windows from this device"), 422
+        if window["device_id"] != device["_id"]:
+            return jsonify(error="window belongs to another device"), 422
+        if window["mode"] == "monitoring":
+            return score_window(device, window)
         onboarding = database.onboarding.find_one({"device_id": device["_id"], "state": "collecting"})
         active = onboarding and database.rounds.find_one(
             {"_id": window["session_id"], "onboarding_id": onboarding["_id"], "ended_at": None}
@@ -305,5 +357,23 @@ def register(app: Flask, database: Database, trainer: Trainer, window_error: Cal
         if usable:
             database.rounds.update_one({"_id": active["_id"]}, {"$inc": {"usable_windows": 1}})
         return jsonify(ok=True, usable=usable), 201
+
+    def score_window(device: Document, window: Document):
+        if database.onboarding.find_one({"device_id": device["_id"], "state": "ready"}) is None:
+            return jsonify(error="monitoring starts after onboarding trains a model"), 409
+        try:
+            record = database.monitoring_windows.insert_one({
+                "user_id": device["user_id"], "device_id": device["_id"], "session_id": window["session_id"],
+                "sequence": window["sequence"], "window": window, "created_at": now(),
+            })
+        except DuplicateKeyError:
+            return jsonify(error="This device/session/sequence window already exists"), 409
+        try:
+            result = scorer(device["user_id"], device["_id"], window)
+        except (RuntimeError, OSError) as error:
+            database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"error": str(error)}})
+            return jsonify(error="scoring is unavailable; retry later"), 502
+        database.monitoring_windows.update_one({"_id": record.inserted_id}, {"$set": {"result": result}})
+        return jsonify(result), 201
 
     app.register_blueprint(blueprint)

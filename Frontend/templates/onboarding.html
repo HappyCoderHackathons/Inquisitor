@@ -43,7 +43,7 @@
           <h2 id="pairTitle">2. Connect the agent</h2>
           <p class="dashboard-panel-copy">Start the agent on this PC and enter the code when it asks. Codes expire after 10 minutes and work once.</p>
           <button id="createCode" class="button primary" type="button">Get pairing code</button>
-          <p><strong id="pairingCode" class="pairing-code"></strong></p>
+          <p><strong id="pairingCode" class="pairing-code"></strong> <span id="pairingExpiry" role="timer"></span></p>
         </section>
 
         <section class="dashboard-panel" aria-labelledby="gamesTitle">
@@ -52,6 +52,7 @@
           <ul id="gameProgress" class="collection-summary"></ul>
           <p id="windowProgress" class="dashboard-footnote"></p>
           <a id="playGames" class="button primary" href="/arcade" hidden>Open the games</a>
+          <button id="trainModel" class="button primary" type="button" disabled>Train my model</button>
         </section>
         {% endif %}
       </main>

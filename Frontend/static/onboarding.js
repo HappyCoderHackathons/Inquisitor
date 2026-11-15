@@ -8,12 +8,37 @@
     arena: "Arena Rush"
   };
   var stateText = {
-    collecting: "Agent connected. Play each game until its timer is complete.",
+    collecting: "Agent connected. Play each game until its timer is complete, then train your model.",
     training: "Collection complete. Your model is training.",
     ready: "Setup complete. Your model is active.",
     failed: "Training failed."
   };
   var element = (id) => document.getElementById(id);
+  var countdownId = 0;
+  var currentDevice = null;
+  var deviceBeforeCode = null;
+  var waitingForPair = false;
+  function startCountdown(expiresAt) {
+    window.clearInterval(countdownId);
+    const update = () => {
+      const expiry = element("pairingExpiry");
+      const button = element("createCode");
+      const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1e3));
+      if (remaining === 0) {
+        window.clearInterval(countdownId);
+        if (expiry) expiry.textContent = "Code expired.";
+        const code = element("pairingCode");
+        if (code) code.textContent = "";
+        if (button) button.textContent = "Get a new code";
+        waitingForPair = false;
+        return;
+      }
+      if (expiry)
+        expiry.textContent = `Expires in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`;
+    };
+    update();
+    countdownId = window.setInterval(update, 1e3);
+  }
   async function post(path) {
     return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   }
@@ -22,6 +47,15 @@
     if (response.status === 404) return;
     if (!response.ok) throw new Error(`Could not load setup status (${response.status}).`);
     const status = await response.json();
+    if (waitingForPair && status.device_id !== deviceBeforeCode) {
+      waitingForPair = false;
+      window.clearInterval(countdownId);
+      const code = element("pairingCode");
+      if (code) code.textContent = "Agent paired.";
+      const expiry = element("pairingExpiry");
+      if (expiry) expiry.textContent = "";
+    }
+    currentDevice = status.device_id;
     const stateLabel = element("onboardingState");
     if (stateLabel) {
       stateLabel.textContent = status.error ? `${stateText[status.state]} ${status.error}` : stateText[status.state];
@@ -43,6 +77,11 @@
     }
     const play = element("playGames");
     if (play) play.hidden = status.state !== "collecting";
+    const train = element("trainModel");
+    if (train) {
+      train.hidden = status.state !== "collecting";
+      train.disabled = !status.ready_to_train;
+    }
   }
   element("createCode")?.addEventListener("click", async () => {
     const response = await post("/api/pairing-codes");
@@ -52,7 +91,21 @@
       target.textContent = `Could not create a code (${response.status}).`;
       return;
     }
-    target.textContent = (await response.json()).code;
+    const created = await response.json();
+    target.textContent = created.code;
+    deviceBeforeCode = currentDevice;
+    waitingForPair = true;
+    startCountdown(Date.parse(created.expires_at));
+  });
+  element("trainModel")?.addEventListener("click", async () => {
+    const button = element("trainModel");
+    button.disabled = true;
+    const response = await post("/api/onboarding/train");
+    if (!response.ok) {
+      const label = element("onboardingState");
+      if (label) label.textContent = `Could not start training (${response.status}).`;
+    }
+    await refresh();
   });
   if (element("gameProgress")) {
     const tick = () => refresh().catch((error) => {

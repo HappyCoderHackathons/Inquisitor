@@ -54,7 +54,11 @@ The user signs in at `/onboarding` and gets a single-use pairing code that expir
 
 Pairing opens an onboarding enrollment for that device. Each arcade round the user starts becomes a session. The agent reads the active session from `GET /api/agent/onboarding` and uploads enrollment windows to `POST /api/agent/windows`. A finished round is credited by server time, capped at 60 seconds; cancelled rounds earn no time. `GET /api/onboarding` reports seconds per game and counts the usable windows (30 or more key presses). Aim Trainer rounds count toward time but rarely produce usable windows.
 
-Training starts once each of the four games has 150 seconds credited and there are at least 20 training windows and 10 calibration windows. The latest keyboard-active round of each game is the calibration set. The server sends the usable windows to the ML service's genuine-only model and activates the result; the ML host must run with `ML_ALLOW_TRAINING=1`. A failed training run ends that onboarding, and pairing again starts a new one.
+The **Train my model** button turns on once each of the four games has 150 seconds credited and there are at least 20 training windows and 10 calibration windows (`POST /api/onboarding/train` returns 409 before then). The latest keyboard-active round of each game is the calibration set. The server sends the usable windows to the ML service's genuine-only model and activates the result; the ML host must run with `ML_ALLOW_TRAINING=1`. A failed training run ends that onboarding, and pairing again starts a new one.
+
+After training, the agent sends `monitoring` windows to the same upload endpoint. Each is scored by the active model, and the result is stored in `monitoring_windows`. Monitoring windows before training, and enrollment windows after it, return 409.
+
+The session cookie holds only a random ID. Its hash is stored in `sessions` with a 12-hour TTL, and logout deletes it. Requests are rate-limited, returning 429, at 30 per minute per IP for login, 10 per 10 minutes per IP for pairing attempts, and 60 per minute per device for window uploads. Behind a reverse proxy, add Werkzeug's `ProxyFix` so limits use the client address.
 
 Store Atlas and SSOJet credentials only in deployment configuration.
 

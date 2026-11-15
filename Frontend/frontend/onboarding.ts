@@ -7,6 +7,8 @@ type OnboardingStatus = {
   validation_windows: number;
   required_training_windows: number;
   required_validation_windows: number;
+  ready_to_train: boolean;
+  device_id: string;
 };
 
 const gameNames: Record<string, string> = {
@@ -16,13 +18,39 @@ const gameNames: Record<string, string> = {
   arena: "Arena Rush",
 };
 const stateText: Record<OnboardingStatus["state"], string> = {
-  collecting: "Agent connected. Play each game until its timer is complete.",
+  collecting: "Agent connected. Play each game until its timer is complete, then train your model.",
   training: "Collection complete. Your model is training.",
   ready: "Setup complete. Your model is active.",
   failed: "Training failed.",
 };
 
 const element = (id: string) => document.getElementById(id);
+let countdownId = 0;
+let currentDevice: string | null = null;
+let deviceBeforeCode: string | null = null;
+let waitingForPair = false;
+
+function startCountdown(expiresAt: number) {
+  window.clearInterval(countdownId);
+  const update = () => {
+    const expiry = element("pairingExpiry");
+    const button = element("createCode");
+    const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+    if (remaining === 0) {
+      window.clearInterval(countdownId);
+      if (expiry) expiry.textContent = "Code expired.";
+      const code = element("pairingCode");
+      if (code) code.textContent = "";
+      if (button) button.textContent = "Get a new code";
+      waitingForPair = false;
+      return;
+    }
+    if (expiry)
+      expiry.textContent = `Expires in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`;
+  };
+  update();
+  countdownId = window.setInterval(update, 1000);
+}
 
 async function post(path: string) {
   return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
@@ -33,6 +61,16 @@ async function refresh() {
   if (response.status === 404) return;
   if (!response.ok) throw new Error(`Could not load setup status (${response.status}).`);
   const status = (await response.json()) as OnboardingStatus;
+  // A new onboarding device means the code shown on this page was just redeemed.
+  if (waitingForPair && status.device_id !== deviceBeforeCode) {
+    waitingForPair = false;
+    window.clearInterval(countdownId);
+    const code = element("pairingCode");
+    if (code) code.textContent = "Agent paired.";
+    const expiry = element("pairingExpiry");
+    if (expiry) expiry.textContent = "";
+  }
+  currentDevice = status.device_id;
   const stateLabel = element("onboardingState");
   if (stateLabel) {
     stateLabel.textContent = status.error ? `${stateText[status.state]} ${status.error}` : stateText[status.state];
@@ -57,6 +95,11 @@ async function refresh() {
   }
   const play = element("playGames");
   if (play) play.hidden = status.state !== "collecting";
+  const train = element("trainModel") as HTMLButtonElement | null;
+  if (train) {
+    train.hidden = status.state !== "collecting";
+    train.disabled = !status.ready_to_train;
+  }
 }
 
 element("createCode")?.addEventListener("click", async () => {
@@ -67,7 +110,22 @@ element("createCode")?.addEventListener("click", async () => {
     target.textContent = `Could not create a code (${response.status}).`;
     return;
   }
-  target.textContent = ((await response.json()) as { code: string }).code;
+  const created = (await response.json()) as { code: string; expires_at: string };
+  target.textContent = created.code;
+  deviceBeforeCode = currentDevice;
+  waitingForPair = true;
+  startCountdown(Date.parse(created.expires_at));
+});
+
+element("trainModel")?.addEventListener("click", async () => {
+  const button = element("trainModel") as HTMLButtonElement;
+  button.disabled = true;
+  const response = await post("/api/onboarding/train");
+  if (!response.ok) {
+    const label = element("onboardingState");
+    if (label) label.textContent = `Could not start training (${response.status}).`;
+  }
+  await refresh();
 });
 
 if (element("gameProgress")) {
