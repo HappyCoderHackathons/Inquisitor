@@ -101,7 +101,7 @@ function standardDeviation(values: number[]) {
 function makeWindow(now: number): FeatureWindow | null {
   if (firstPressAt === null || keyCount < 30 || holds.length === 0 || intervals.length === 0) return null;
   const durationMs = Math.max(1, Math.ceil(now - firstPressAt));
-  const pauses = intervals.filter(gap => gap > 1000);
+  const pauses = intervals.filter((gap) => gap > 1000);
   const pauseMs = pauses.reduce((sum, gap) => sum + gap, 0);
   const activeMs = Math.max(1, durationMs - pauseMs);
   const sortedIntervals = [...intervals].sort((a, b) => a - b);
@@ -115,7 +115,7 @@ function makeWindow(now: number): FeatureWindow | null {
     duration_ms: durationMs,
     features: {
       key_count: keyCount,
-      presses_per_second: keyCount * 1000 / activeMs,
+      presses_per_second: (keyCount * 1000) / activeMs,
       hold_mean_ms: holds.reduce((sum, value) => sum + value, 0) / holds.length,
       hold_std_ms: standardDeviation(holds),
       press_interval_mean_ms: intervals.reduce((sum, value) => sum + value, 0) / intervals.length,
@@ -158,7 +158,7 @@ function localDeviceId() {
 async function refreshCollectionSummary() {
   const response = await fetch("/api/feature-windows");
   if (!response.ok) throw new Error(`Could not load feature-window summary (${response.status}).`);
-  const data = await response.json() as CollectionSummary;
+  const data = (await response.json()) as CollectionSummary;
   if (windowCount) windowCount.textContent = String(data.windows);
   if (sessionCount) sessionCount.textContent = String(data.sessions);
   if (exportLink) {
@@ -185,7 +185,7 @@ async function retrySave() {
       body: JSON.stringify(pendingWindow),
     });
     if (!response.ok) {
-      const result = await response.json() as { error?: string };
+      const result = (await response.json()) as { error?: string };
       throw new Error(result.error || `Could not save feature window (${response.status}).`);
     }
     pendingWindow = null;
@@ -232,7 +232,9 @@ function stopCollection(message = "Collection stopped.") {
   collectionPaused = false;
   window.clearInterval(timerId);
   resetWindow();
-  setCollectionStatus(pendingWindow ? "Collection stopped. Retry saving the pending aggregate window or leave it unsaved." : message);
+  setCollectionStatus(
+    pendingWindow ? "Collection stopped. Retry saving the pending aggregate window or leave it unsaved." : message,
+  );
   updateControls();
 }
 
@@ -251,7 +253,7 @@ function pauseCollection() {
   updateControls();
 }
 
-collectionSurface?.addEventListener("keydown", event => {
+collectionSurface?.addEventListener("keydown", (event) => {
   if (!collectionActive || collectionPaused || pendingWindow) return;
   if (event.key === "Escape") {
     event.preventDefault();
@@ -277,7 +279,7 @@ collectionSurface?.addEventListener("keydown", event => {
   keyCount++;
 });
 
-collectionSurface?.addEventListener("keyup", event => {
+collectionSurface?.addEventListener("keyup", (event) => {
   const pressedAt = heldKeys.get(event.code);
   if (pressedAt === undefined) return;
   holds.push(Math.max(0, performance.now() - pressedAt));
@@ -290,7 +292,7 @@ startButton?.addEventListener("click", startCollection);
 pauseButton?.addEventListener("click", pauseCollection);
 stopButton?.addEventListener("click", () => stopCollection());
 retryButton?.addEventListener("click", () => void retrySave());
-exportLink?.addEventListener("click", event => {
+exportLink?.addEventListener("click", (event) => {
   if (exportLink.getAttribute("aria-disabled") === "true") {
     event.preventDefault();
     setCollectionStatus("Collect at least one feature window before exporting.");
@@ -320,6 +322,6 @@ deleteLocalDataButton?.addEventListener("click", async () => {
 });
 
 updateControls();
-void refreshCollectionSummary().catch(error => {
+void refreshCollectionSummary().catch((error) => {
   setCollectionStatus(error instanceof Error ? error.message : "Could not load saved windows.", true);
 });

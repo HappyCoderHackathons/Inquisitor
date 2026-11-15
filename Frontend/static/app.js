@@ -1,3 +1,4 @@
+"use strict";
 (() => {
   // frontend/app.ts
   var modes = [
@@ -9,12 +10,17 @@
   var $ = (s) => document.querySelector(s);
   var grid = $("#gameGrid");
   function gamePreview(id) {
-    if (id === "aim") return `<div class="game-preview preview-aim" aria-hidden="true"><i></i><i></i><span>+</span><b></b></div>`;
-    if (id === "tetris") return `<div class="game-preview preview-tetris" aria-hidden="true">${Array.from({ length: 20 }, (_, i) => `<i class="preview-cell${[1, 2, 5, 6, 7, 11, 12, 16, 17, 18].includes(i) ? " filled" : ""}"></i>`).join("")}</div>`;
-    if (id === "typing") return `<div class="game-preview preview-typing" aria-hidden="true"><small>TYPE THIS WORD</small><strong><i>OR</i>BIT</strong><span>3 WORDS CLEARED</span></div>`;
+    if (id === "aim")
+      return `<div class="game-preview preview-aim" aria-hidden="true"><i></i><i></i><span>+</span><b></b></div>`;
+    if (id === "tetris")
+      return `<div class="game-preview preview-tetris" aria-hidden="true">${Array.from({ length: 20 }, (_, i) => `<i class="preview-cell${[1, 2, 5, 6, 7, 11, 12, 16, 17, 18].includes(i) ? " filled" : ""}"></i>`).join("")}</div>`;
+    if (id === "typing")
+      return `<div class="game-preview preview-typing" aria-hidden="true"><small>TYPE THIS WORD</small><strong><i>OR</i>BIT</strong><span>3 WORDS CLEARED</span></div>`;
     return `<div class="game-preview preview-arena" aria-hidden="true"><i class="preview-ship"></i><b></b><b></b><span></span></div>`;
   }
-  grid.innerHTML = modes.map((m) => `<article class="game-card">${gamePreview(m.id)}<div class="card-copy"><h3>${m.name}</h3><p>${m.description}</p><div class="card-bottom"><span>${m.keys}</span><button class="play-button" data-game="${m.id}" aria-label="Play ${m.name}">Play</button></div></div></article>`).join("");
+  grid.innerHTML = modes.map(
+    (m) => `<article class="game-card">${gamePreview(m.id)}<div class="card-copy"><h3>${m.name}</h3><p>${m.description}</p><div class="card-bottom"><span>${m.keys}</span><button class="play-button" data-game="${m.id}" aria-label="Play ${m.name}">Play</button></div></div></article>`
+  ).join("");
   var overlay = $("#gameOverlay");
   var stage = $("#gameStage");
   var active = null;
@@ -46,17 +52,77 @@
   var arenaLastFrame = 0;
   var arenaLastSpawn = 0;
   var arenaLastShot = 0;
-  var arenaPlayerShape = [{ x: 15, y: 0 }, { x: -10, y: -9 }, { x: -7, y: 0 }, { x: -10, y: 9 }];
+  var arenaPlayerShape = [
+    { x: 15, y: 0 },
+    { x: -10, y: -9 },
+    { x: -7, y: 0 },
+    { x: -10, y: 9 }
+  ];
   var tetrominoes = [
     [[1, 1, 1, 1]],
-    [[1, 1], [1, 1]],
-    [[0, 1, 0], [1, 1, 1]],
-    [[0, 1, 1], [1, 1, 0]],
-    [[1, 1, 0], [0, 1, 1]],
-    [[1, 0, 0], [1, 1, 1]],
-    [[0, 0, 1], [1, 1, 1]]
+    [
+      [1, 1],
+      [1, 1]
+    ],
+    [
+      [0, 1, 0],
+      [1, 1, 1]
+    ],
+    [
+      [0, 1, 1],
+      [1, 1, 0]
+    ],
+    [
+      [1, 1, 0],
+      [0, 1, 1]
+    ],
+    [
+      [1, 0, 0],
+      [1, 1, 1]
+    ],
+    [
+      [0, 0, 1],
+      [1, 1, 1]
+    ]
   ];
-  var wordGoals = ["ORBIT", "VELVET", "LANTERN", "MEADOW", "COPPER", "DRIFT", "MANGO", "POCKET", "RIPPLE", "COMET", "GARDEN", "SIGNAL", "BRIDGE", "CANDLE", "PLANET", "MARBLE", "RIVER", "CASTLE", "BREEZE", "PILLOW", "CLOUD", "SPARK", "FOREST", "BUTTON", "CIRCLE", "THUNDER", "PEBBLE", "SILVER", "HARBOR", "MELLOW", "JOURNEY", "ORANGE", "SPRING", "ANCHOR", "STREAM", "GALAXY"];
+  var wordGoals = [
+    "ORBIT",
+    "VELVET",
+    "LANTERN",
+    "MEADOW",
+    "COPPER",
+    "DRIFT",
+    "MANGO",
+    "POCKET",
+    "RIPPLE",
+    "COMET",
+    "GARDEN",
+    "SIGNAL",
+    "BRIDGE",
+    "CANDLE",
+    "PLANET",
+    "MARBLE",
+    "RIVER",
+    "CASTLE",
+    "BREEZE",
+    "PILLOW",
+    "CLOUD",
+    "SPARK",
+    "FOREST",
+    "BUTTON",
+    "CIRCLE",
+    "THUNDER",
+    "PEBBLE",
+    "SILVER",
+    "HARBOR",
+    "MELLOW",
+    "JOURNEY",
+    "ORANGE",
+    "SPRING",
+    "ANCHOR",
+    "STREAM",
+    "GALAXY"
+  ];
   function shuffleWords(previousDeck = []) {
     const shuffled = [...wordGoals];
     for (let index = shuffled.length - 1; index > 0; index--) {
@@ -99,7 +165,12 @@
     overlay.classList.remove("hidden");
   }
   function instruction(id) {
-    return { aim: "Click or tap each target", tetris: "\u2190 \u2192 move \xB7 \u2193 soft drop \xB7 \u2191 rotate \xB7 SPACE hard drop", typing: "Type each word; correct letters turn green", arena: "Move with WASD or arrows; aim and fire with the mouse" }[id];
+    return {
+      aim: "Click or tap each target",
+      tetris: "\u2190 \u2192 move \xB7 \u2193 soft drop \xB7 \u2191 rotate \xB7 SPACE hard drop",
+      typing: "Type each word; correct letters turn green",
+      arena: "Move with WASD or arrows; aim and fire with the mouse"
+    }[id];
   }
   function start() {
     if (!active) return;
@@ -195,7 +266,8 @@
     }
     if (!overlay.classList.contains("hidden") && running && active) {
       const key = e.key.toLowerCase();
-      if (active === "arena" && ["arrowleft", "arrowright", "arrowup", "arrowdown", "a", "d", "w", "s"].includes(key)) arenaKeys.add(key);
+      if (active === "arena" && ["arrowleft", "arrowright", "arrowup", "arrowdown", "a", "d", "w", "s"].includes(key))
+        arenaKeys.add(key);
       if (e.repeat) return;
       recordInput("keyboard");
       down.set(e.code, performance.now());
@@ -232,7 +304,9 @@
     }
     if (active === "typing") {
       const word = wordDeck[wordIndex];
-      stage.innerHTML = `<div class="typing-game"><div class="word-label">TYPE THIS WORD</div><div class="word-prompt">${word.split("").map((letter) => `<span>${letter}</span>`).join("")}</div><div class="type-progress">${wordIndex} WORDS CLEARED <span>\xB7</span> CORRECT LETTERS TURN GREEN</div><input class="typing-input" id="typingInput" maxlength="${word.length}" autocomplete="off" autocapitalize="characters" placeholder="start typing here\u2026" aria-label="Type the prompt" /></div>`;
+      stage.innerHTML = `<div class="typing-game"><div class="word-label">TYPE THIS WORD</div><div class="word-prompt">${word.split("").map((letter) => `<span>${letter}</span>`).join(
+        ""
+      )}</div><div class="type-progress">${wordIndex} WORDS CLEARED <span>\xB7</span> CORRECT LETTERS TURN GREEN</div><input class="typing-input" id="typingInput" maxlength="${word.length}" autocomplete="off" autocapitalize="characters" placeholder="start typing here\u2026" aria-label="Type the prompt" /></div>`;
       const input = $("#typingInput");
       const letters = stage.querySelectorAll(".word-prompt span");
       let completionPending = false;
@@ -303,11 +377,13 @@
     spawnPiece();
   }
   function canPlace(shape, x, y) {
-    return shape.every((row, rowIndex) => row.every((cell, colIndex) => {
-      if (!cell) return true;
-      const nextX = x + colIndex, nextY = y + rowIndex;
-      return nextX >= 0 && nextX < 10 && nextY < 20 && (nextY < 0 || !board[nextY][nextX]);
-    }));
+    return shape.every(
+      (row, rowIndex) => row.every((cell, colIndex) => {
+        if (!cell) return true;
+        const nextX = x + colIndex, nextY = y + rowIndex;
+        return nextX >= 0 && nextX < 10 && nextY < 20 && (nextY < 0 || !board[nextY][nextX]);
+      })
+    );
   }
   function spawnPiece() {
     const type = Math.floor(Math.random() * tetrominoes.length) + 1;
@@ -351,9 +427,11 @@
   }
   function lockPiece() {
     if (!currentPiece) return;
-    currentPiece.shape.forEach((row, rowIndex) => row.forEach((cell, colIndex) => {
-      if (cell) board[currentPiece.y + rowIndex][currentPiece.x + colIndex] = currentPiece.type;
-    }));
+    currentPiece.shape.forEach(
+      (row, rowIndex) => row.forEach((cell, colIndex) => {
+        if (cell) board[currentPiece.y + rowIndex][currentPiece.x + colIndex] = currentPiece.type;
+      })
+    );
     const remainingRows = board.filter((row) => row.some((cell) => !cell));
     const cleared = 20 - remainingRows.length;
     if (cleared) {
@@ -384,10 +462,14 @@
     if (active !== "tetris") return;
     if (!board.length) initBoard();
     const visible = board.map((row) => [...row]);
-    currentPiece?.shape.forEach((row, rowIndex) => row.forEach((cell, colIndex) => {
-      if (cell) visible[currentPiece.y + rowIndex][currentPiece.x + colIndex] = currentPiece.type;
-    }));
-    stage.innerHTML = `<div class="tetris-wrap"><div class="tetris-board">${visible.flat().map((value) => `<i class="cell${value ? ` color-${value}` : ""}"></i>`).join("")}</div><div class="tetris-aside"><b>${score}</b><span>POINTS</span><hr><span>LINES</span><b>${linesCleared}</b><small>\u2190 \u2192 MOVE<br>\u2193 SOFT DROP<br>\u2191 ROTATE<br>SPACE HARD DROP</small></div></div>`;
+    currentPiece?.shape.forEach(
+      (row, rowIndex) => row.forEach((cell, colIndex) => {
+        if (cell) visible[currentPiece.y + rowIndex][currentPiece.x + colIndex] = currentPiece.type;
+      })
+    );
+    stage.innerHTML = `<div class="tetris-wrap"><div class="tetris-board">${visible.flat().map((value) => `<i class="cell${value ? ` color-${value}` : ""}"></i>`).join(
+      ""
+    )}</div><div class="tetris-aside"><b>${score}</b><span>POINTS</span><hr><span>LINES</span><b>${linesCleared}</b><small>\u2190 \u2192 MOVE<br>\u2193 SOFT DROP<br>\u2191 ROTATE<br>SPACE HARD DROP</small></div></div>`;
   }
   function fireArena() {
     const now = performance.now();
@@ -424,7 +506,8 @@
     let inside = false, nearestEdgeDistance = Infinity;
     for (let index = 0, previous = arenaPlayerShape.length - 1; index < arenaPlayerShape.length; previous = index++) {
       const start2 = arenaPlayerShape[previous], end = arenaPlayerShape[index];
-      if (start2.y > localY !== end.y > localY && localX < (end.x - start2.x) * (localY - start2.y) / (end.y - start2.y) + start2.x) inside = !inside;
+      if (start2.y > localY !== end.y > localY && localX < (end.x - start2.x) * (localY - start2.y) / (end.y - start2.y) + start2.x)
+        inside = !inside;
       const edgeX = end.x - start2.x, edgeY = end.y - start2.y;
       const edgeLength = edgeX * edgeX + edgeY * edgeY;
       const projection = Math.max(0, Math.min(1, ((localX - start2.x) * edgeX + (localY - start2.y) * edgeY) / edgeLength));
@@ -456,7 +539,9 @@
     arenaBullets.forEach((bullet) => {
       bullet.x += bullet.vx * elapsed;
       bullet.y += bullet.vy * elapsed;
-      const hitIndex = arenaEnemies.findIndex((enemy) => Math.hypot(enemy.x - bullet.x, enemy.y - bullet.y) < enemy.radius + 4);
+      const hitIndex = arenaEnemies.findIndex(
+        (enemy) => Math.hypot(enemy.x - bullet.x, enemy.y - bullet.y) < enemy.radius + 4
+      );
       if (hitIndex >= 0) {
         arenaEnemies.splice(hitIndex, 1);
         score += 10;
@@ -551,8 +636,23 @@
   function saveSample() {
     const avg = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
     const mean = avg(intervals), std = Math.sqrt(avg(intervals.map((x) => (x - mean) ** 2)));
-    const d = { game: active, duration_ms: Math.min(Date.now() - tick, 6e5), input_count: inputCounts.keyboard + inputCounts.controller, keyboard_count: inputCounts.keyboard, controller_count: inputCounts.controller, mean_interval_ms: Math.round(mean), interval_std_ms: Math.round(std), mean_hold_ms: Math.round(avg(holds)), score, source: inputCounts.controller ? "mixed" : "keyboard" };
-    void fetch("/api/samples", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d) }).then(refreshSummary).catch(() => {
+    const d = {
+      game: active,
+      duration_ms: Math.min(Date.now() - tick, 6e5),
+      input_count: inputCounts.keyboard + inputCounts.controller,
+      keyboard_count: inputCounts.keyboard,
+      controller_count: inputCounts.controller,
+      mean_interval_ms: Math.round(mean),
+      interval_std_ms: Math.round(std),
+      mean_hold_ms: Math.round(avg(holds)),
+      score,
+      source: inputCounts.controller ? "mixed" : "keyboard"
+    };
+    void fetch("/api/samples", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(d)
+    }).then(refreshSummary).catch(() => {
     });
   }
   async function refreshSummary() {
@@ -560,7 +660,9 @@
       const data = await (await fetch("/api/summary")).json();
       $("#sampleCount").textContent = data.samples;
       const list = $("#recentList");
-      list.innerHTML = data.recent.length ? data.recent.map((item) => `<div class="recent-item"><span><b>${modes.find((mode) => mode.id === item.game)?.name || item.game}</b><small>${new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small></span><strong>${item.score}</strong></div>`).join("") : `<div class="empty">No games played yet.</div>`;
+      list.innerHTML = data.recent.length ? data.recent.map(
+        (item) => `<div class="recent-item"><span><b>${modes.find((mode) => mode.id === item.game)?.name || item.game}</b><small>${new Date(item.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small></span><strong>${item.score}</strong></div>`
+      ).join("") : `<div class="empty">No games played yet.</div>`;
     } catch {
     }
   }
@@ -579,7 +681,16 @@
           recordInput("controller");
           down.set(key, performance.now());
           if (running) {
-            const map = { 0: " ", 1: "ArrowDown", 2: "ArrowLeft", 3: "ArrowRight", 12: "ArrowUp", 13: "ArrowDown", 14: "ArrowLeft", 15: "ArrowRight" };
+            const map = {
+              0: " ",
+              1: "ArrowDown",
+              2: "ArrowLeft",
+              3: "ArrowRight",
+              12: "ArrowUp",
+              13: "ArrowDown",
+              14: "ArrowLeft",
+              15: "ArrowRight"
+            };
             handleAction(map[index] || " ");
           }
         }
