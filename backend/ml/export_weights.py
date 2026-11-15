@@ -44,6 +44,7 @@ def main() -> None:
                              "impostor_windows": metadata["impostor_training_window_count"],
                              "genuine_sessions": len(metadata["genuine_training_sessions"]),
                              "impostor_sessions": len(metadata["impostor_training_sessions"])},
+        **({"genuine_baseline": metadata["genuine_baseline"]} if "genuine_baseline" in metadata else {}),
         "limitations": "Per-user labeled pilot. Model-selection CV is not an independent final test. No performance guarantee for other users or devices.",
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

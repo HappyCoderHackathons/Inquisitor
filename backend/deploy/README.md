@@ -1,7 +1,8 @@
 # Published model API deployment
 
-The checked-in numeric artifact is `backend/artifacts/labeled-overlap-v1.json`.
-It contains learned coefficients, scaler mean/scale, and the fixed threshold.
+The deployed numeric artifact is `backend/artifacts/labeled-overlap-v2.json`; v1 is kept for rollback.
+It contains learned coefficients, scaler mean/scale, the fixed threshold, and the
+genuine baseline median/scale used for alert explanations.
 It contains no enrollment rows, account/device/session IDs, credentials, or hostnames.
 Publishing the trained numeric weights is intentional. This is a per-user pilot,
 not a universal model. See [evaluation](../../docs/model-evaluation.md) for limitations.
@@ -19,7 +20,7 @@ Set these values to real server-local paths and authorized identity values:
 ```text
 ML_TOKEN_FILE=/absolute/private/path/to/service.token
 ML_DATA_DIR=/absolute/private/path/to/model-artifacts
-ML_PUBLISHED_MODEL_FILE=/absolute/path/to/app/backend/artifacts/labeled-overlap-v1.json
+ML_PUBLISHED_MODEL_FILE=/absolute/path/to/app/backend/artifacts/labeled-overlap-v2.json
 ML_PUBLISHED_USER_ID=the-enrolled-account-id
 ML_PUBLISHED_DEVICE_ID=the-paired-device-id
 ML_ALLOW_TRAINING=0
@@ -81,8 +82,8 @@ To export a future trusted service-created labeled artifact on the model host:
 
 ```sh
 uv run --project backend python -m backend.ml.export_weights \
-  --model-dir "$ML_DATA_DIR/MODEL_ID" --version labeled-overlap-v2 \
-  --output backend/artifacts/labeled-overlap-v2.json
+  --model-dir "$ML_DATA_DIR/MODEL_ID" --version labeled-overlap-v3 \
+  --output backend/artifacts/labeled-overlap-v3.json
 ```
 
 The exporter reads a trusted local joblib artifact, never a user-uploaded pickle.

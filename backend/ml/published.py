@@ -7,7 +7,7 @@ from typing import cast
 
 import numpy as np
 
-from .model import SCHEMA, labeled_features, validate_window
+from .model import SCHEMA, explain, labeled_features, validate_window
 
 
 def canonical_hash(value: object) -> str:
@@ -31,6 +31,12 @@ class PublishedModel:
             raise ValueError("published model requires finite two-feature vectors")
         if not (self.scale > 0).all():
             raise ValueError("published model scale must be positive")
+        self.baseline = artifact.get("genuine_baseline")
+        if self.baseline is not None:
+            median = np.asarray(self.baseline["median"], dtype=float)
+            scale = np.asarray(self.baseline["scale"], dtype=float)
+            if median.shape != (2,) or scale.shape != (2,) or not np.isfinite([median, scale]).all() or (scale < 0).any():
+                raise ValueError("published baseline requires finite two-feature median and nonnegative scale")
         self.intercept = float(artifact["intercept"])
         self.threshold = float(artifact["threshold"])
         if not np.isfinite([self.intercept, self.threshold]).all():
@@ -50,9 +56,12 @@ class PublishedModel:
                   "threshold": self.threshold}
         if cast(dict[str, float], window["features"])["key_count"] < 30:
             return {**result, "state": "INSUFFICIENT_DATA", "score": None, "score_delta": None}
-        features = (np.log1p(labeled_features([window]))[0] - self.mean) / self.scale
+        raw = labeled_features([window])[0]
+        features = (np.log1p(raw) - self.mean) / self.scale
         score = float(features @ self.coefficient + self.intercept)
         if not np.isfinite(score):
             raise ValueError("model score must be finite")
-        return {**result, "state": "UNUSUAL" if score > self.threshold else "NORMAL",
-                "score": score, "score_delta": score - self.threshold}
+        if score <= self.threshold:
+            return {**result, "state": "NORMAL", "score": score, "score_delta": score - self.threshold}
+        return {**result, "state": "UNUSUAL", "score": score, "score_delta": score - self.threshold,
+                "explanation": explain(raw, features, self.coefficient, self.baseline)}

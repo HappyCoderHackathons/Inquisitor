@@ -10,9 +10,17 @@ personal/deployment identifiers, API tokens, and SSH credentials are not include
 The model is a two-person pilot, not a general-purpose identity classifier. See
 [model evaluation](../../docs/model-evaluation.md) for selection-CV results and limits.
 
-The artifact's canonical SHA-256 is
-`27906b92e1e795dd18b8aeaa95b47bc8a66579684f63ee9aecd04f16443a4d6f`.
-It hashes parsed JSON serialized with sorted keys and compact separators, so line
+`labeled-overlap-v2.json` is the deployed version. It was retrained on the model
+host from the same 90 windows and has identical weights, scaler, and threshold. It
+adds `genuine_baseline`, the median and 1.4826 x MAD of the 60 genuine windows'
+derived features, which alert explanations use for per-feature robust z-scores.
+
+| Version | Canonical SHA-256 |
+| --- | --- |
+| v1 | `27906b92e1e795dd18b8aeaa95b47bc8a66579684f63ee9aecd04f16443a4d6f` |
+| v2 (deployed) | `d947af06823eaf65021ab817a790c929091414ad70c2f8c26c3411c51bc112b4` |
+
+Each hash covers parsed JSON serialized with sorted keys and compact separators, so line
 endings and indentation do not change the identifier. The API exposes the same hash.
 
 Create another version using the trusted-artifact export command in the
