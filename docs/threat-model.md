@@ -108,8 +108,9 @@ auth user id. An empty id is rejected.
 | `POST /api/enrollments`, `GET /api/enrollments/<id>`, `POST /api/enrollments/<id>/complete` | The signed-in account, and only sessions associated with its owned device |
 | `POST /api/onboarding/rounds` and `POST /api/onboarding/rounds/current/<outcome>` | The signed-in account's round. The body selects a game or an outcome |
 | `POST /api/onboarding/train` | The signed-in account's onboarding |
-| `GET /api/model` | The signed-in account's active model. Counts and evaluation come from that model's stored metadata |
+| `GET /api/model` | The signed-in account's active model. An optional `device_id` must belong to that account. Counts and evaluation come from that model's stored metadata |
 | `GET /api/monitoring/status`, `GET /api/monitoring/history`, `GET /monitoring/status`, and `GET /monitoring/history` | The signed-in account's latest score and chart points. A `device_id` must belong to that account |
+| `GET /api/monitoring/stream` | The signed-in account, using the session cookie. A `device_id` must belong to that account. Pushes that device's score and open alerts |
 | `GET /api/alerts` | The signed-in account's alerts, optionally filtered by status and device |
 | `POST /api/alerts/<id>/acknowledge` | One alert owned by the signed-in account. The label is `expected` or `unexpected`. It does not retrain |
 | `POST /api/onboarding/retrain` | Requires `{"approve": true}`. Starts a new collection generation and does not activate a model |
