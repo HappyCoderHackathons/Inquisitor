@@ -12,6 +12,22 @@ elif [ -z "${ML_TOKEN_FILE:-}" ] && [ -n "${ML_SERVICE_TOKEN:-}" ]; then
     export ML_TOKEN_FILE=/tmp/ml_token
 fi
 
+# Optional SSH tunnel to the private ML service. The key should be a dedicated, forwarding-only key.
+if [ -n "${ML_SSH_DESTINATION:-}" ] && [ -n "${ML_SSH_KEY:-}" ] && [ -n "${ML_SSH_KNOWN_HOSTS:-}" ]; then
+    mkdir -p /tmp/ssh && chmod 700 /tmp/ssh
+    printf '%s
+' "$ML_SSH_KEY" > /tmp/ssh/id && chmod 600 /tmp/ssh/id
+    printf '%s
+' "$ML_SSH_KNOWN_HOSTS" > /tmp/ssh/known_hosts
+    ML_SSH_FORWARD="${ML_SSH_FORWARD:-127.0.0.1:18765:127.0.0.1:8765}"
+    echo "Starting ML SSH tunnel..."
+    (while true; do
+        ssh -N -i /tmp/ssh/id -o IdentitiesOnly=yes -o UserKnownHostsFile=/tmp/ssh/known_hosts             -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30             -o ServerAliveCountMax=3 -L "$ML_SSH_FORWARD" "$ML_SSH_DESTINATION" || true
+        echo "ML SSH tunnel exited; retrying in 5s"
+        sleep 5
+    done) &
+fi
+
 # Cleanup handler for graceful shutdown
 cleanup() {
     echo "Stopping background services..."

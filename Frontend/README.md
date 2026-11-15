@@ -147,6 +147,27 @@ The hosted website runs as a containerized service on a WebSocket-capable host s
 | `GUNICORN_WORKERS` | `1` | Number of Gunicorn worker processes (keep at 1 for in-process stream dispatch) |
 | `GUNICORN_THREADS` | `16` | Number of threads per worker to maintain open WebSocket connections |
 
+### Deploy on Fly.io
+
+[`fly.toml`](../fly.toml) runs one always-on machine (the agent WebSocket and the in-process
+monitoring stream need it) and sets `ML_SERVICE_URL` to the container's own tunnel. Set the
+required variables as secrets, plus the tunnel:
+
+| Secret | Description |
+| --- | --- |
+| `ML_TOKEN` | ML service bearer token |
+| `ML_SSH_DESTINATION` | `user@host` of the private model host |
+| `ML_SSH_KEY` | Private key of a dedicated, forwarding-only key (`restrict,port-forwarding,permitopen="127.0.0.1:8765"` in `authorized_keys`) |
+| `ML_SSH_KNOWN_HOSTS` | The model host's `known_hosts` line. Host keys are checked strictly |
+
+```sh
+fly secrets set BETTER_AUTH_SECRET=... BETTER_AUTH_URL=https://<app>.fly.dev MONGODB_URI=... MONGODB_DB=...
+fly secrets set ML_TOKEN=... ML_SSH_DESTINATION=... ML_SSH_KEY="$(cat key)" ML_SSH_KNOWN_HOSTS="$(cat known_hosts)"
+fly deploy
+```
+
+Atlas must allow connections from the app's egress IP (`fly ips list` / Atlas network access).
+
 ### Deploy on Render
 
 1. Push this repository to GitHub or GitLab.
