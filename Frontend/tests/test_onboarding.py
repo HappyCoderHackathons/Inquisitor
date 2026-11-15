@@ -39,7 +39,8 @@ class SyncThread:
 
 class OnboardingTests(unittest.TestCase):
     def setUp(self):
-        self.clock = datetime.now(timezone.utc)
+        # MongoDB stores datetimes to the millisecond, so keep the test clock comparable after a round trip.
+        self.clock = datetime.now(timezone.utc).replace(microsecond=0)
         for target, value in (("hosted.now", lambda: self.clock), ("hosted.threading.Thread", SyncThread)):
             patcher = patch(target, value)
             patcher.start()
