@@ -148,9 +148,12 @@ Pairing codes are single-use, hashed, and expire after 10 minutes. The model tok
 compared with `compare_digest`. Account routes take the user from the session or the
 device record.
 
-Replay of a captured window is limited by device, session, and sequence uniqueness
-(a duplicate is HTTP 409), session expiry, sign-out revocation, and the upload limit of
-60 windows per minute per device. Pairing attempts are limited to 10 per 10 minutes per
+Agent window uploads require a strict shared feature-window schema (v1-v4), are capped
+at 64 KiB, and are limited to 60 requests per minute per device. Replay of a captured
+window is limited by device, session, and sequence uniqueness (a duplicate is HTTP 409),
+session expiry, and sign-out revocation. Audit events record only metadata such as the
+authenticated device, sequence, schema version, mode, and outcome; they omit
+feature values and request bodies. Pairing attempts are limited to 10 per 10 minutes per
 IP. A stolen device token works until that device is revoked. Score requests have no
 separate nonce. The service token stays in server configuration.
 
