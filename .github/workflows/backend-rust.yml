@@ -117,7 +117,7 @@ jobs:
     needs: release
     steps:
       - name: Download the built exe
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: inquisitor-windows-x64
           path: dist
