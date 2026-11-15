@@ -95,7 +95,11 @@
           <p class="dashboard-panel-copy">This area is reserved for an alert when a window differs from this device's enrollment. An alert asks you to verify. It does not name a person, and this prototype has no live model connection.</p>
           <div class="detection-empty">
             <span class="empty-mark" aria-hidden="true">—</span>
-            <div><strong>No anomaly signal</strong><span>Agent and model connections are not configured.</span></div>
+            <div>
+              <strong id="detectionEmptyTitle">Checking model status…</strong>
+              <span id="detectionEmptyDetail">Reading this account's enrollment.</span>
+              <a id="detectionEnrollLink" href="/onboarding" hidden>Start enrollment</a>
+            </div>
           </div>
           <p class="dashboard-footnote">Any future alert should be treated as a prompt to verify, not proof of identity. The user must remain in control of pause and exit actions.</p>
         </section>

@@ -78,6 +78,8 @@ class UxStateTests(unittest.TestCase):
         self.assertIn("Could not load saved windows. The server did not respond.", dashboard)
         self.assertIn("Could not reach the server. Nothing was changed.", dashboard)
         self.assertIn("Could not save feature window. The server did not respond.", dashboard)
+        self.assertIn("Model status unavailable", dashboard)
+        self.assertIn("No trained model is active", dashboard)
 
     def test_supported_evaluation_numbers_keep_their_limits(self):
         evaluation = (ROOT / "docs" / "model-evaluation.md").read_text(encoding="utf-8")

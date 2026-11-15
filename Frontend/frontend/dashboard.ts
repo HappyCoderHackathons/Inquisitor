@@ -535,3 +535,36 @@ void (async () => {
     );
   }
 })();
+
+const detectionTitle = $("#detectionEmptyTitle");
+const detectionDetail = $("#detectionEmptyDetail");
+const enrollLink = $("#detectionEnrollLink") as HTMLAnchorElement | null;
+
+function setDetectionState(title: string, detail: string, enroll = false) {
+  if (detectionTitle) detectionTitle.textContent = title;
+  if (detectionDetail) detectionDetail.textContent = detail;
+  if (enrollLink) enrollLink.hidden = !enroll;
+}
+
+async function refreshModelStatus() {
+  try {
+    const me = await fetch("/api/me");
+    if (!me.ok) throw new Error("not signed in");
+    const response = await fetch("/api/onboarding");
+    if (response.status === 404) {
+      setDetectionState("No anomaly signal", "No trained model is active for this account yet.", true);
+      return;
+    }
+    if (!response.ok) throw new Error("model status unavailable");
+    const status = (await response.json()) as { model_id?: string | null };
+    if (status.model_id) {
+      setDetectionState("Model active", "A trained model is active. This page does not show signals yet.");
+    } else {
+      setDetectionState("No anomaly signal", "No trained model is active for this account yet.", true);
+    }
+  } catch {
+    setDetectionState("Model status unavailable", "Sign in to check this account's model. No signal is shown.");
+  }
+}
+
+void refreshModelStatus();
