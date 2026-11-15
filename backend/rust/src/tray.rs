@@ -604,6 +604,8 @@ fn set_tooltip(hwnd: HWND, text: &str) {
 mod tests {
     use super::*;
     use std::time::Duration;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::UI::Input::{RAWINPUT, RAWINPUT_0, RAWINPUTHEADER, RAWKEYBOARD, RAWMOUSE};
 
     const ALLOWED: &str =
         r"\\?\HID#VID_046D&PID_C52B&MI_00#7&TEST#{884b96c3-56ef-11d1-bc8c-00a0c91405dd}";
@@ -665,6 +667,104 @@ mod tests {
         let mut s = state();
         s.config.terms_accepted = 0;
         assert!(s.drop_event(ALLOWED));
+    }
+
+    fn raw(kind: u32, data: RAWINPUT_0) -> RAWINPUT {
+        RAWINPUT {
+            header: RAWINPUTHEADER {
+                dwType: kind,
+                dwSize: size_of::<RAWINPUT>() as u32,
+                hDevice: HANDLE(0x10 as *mut _),
+                wParam: WPARAM(0),
+            },
+            data,
+        }
+    }
+
+    /// Typing and mouse motion through the same filter and capture as WM_INPUT,
+    /// then 30 seconds later: the feature windows that would go to the link.
+    fn type_and_wait(s: &mut AppState) -> Vec<crate::features::FeatureWindow> {
+        let p: *mut AppState = s;
+        for scan in [0x1E, 0x30, 0x2E] {
+            for flags in [0, 1] {
+                let keyboard = RAWKEYBOARD {
+                    MakeCode: scan,
+                    Flags: flags,
+                    ..Default::default()
+                };
+                let event = raw(1, RAWINPUT_0 { keyboard });
+                s.capture
+                    .process_raw(&event, |path| unsafe { !(*p).drop_event(path) });
+            }
+            let mouse = RAWMOUSE {
+                lLastX: 4,
+                lLastY: -3,
+                ..Default::default()
+            };
+            let event = raw(0, RAWINPUT_0 { mouse });
+            s.capture
+                .process_raw(&event, |path| unsafe { !(*p).drop_event(path) });
+        }
+        let now = s.capture.monotonic_s();
+        let windower = s.capture.windower_mut().unwrap();
+        windower.tick(now + 30.0);
+        windower.take_ready()
+    }
+
+    /// Input from a fake handle has no device path; allowing "" leaves only the
+    /// terms and pause rules to stop it.
+    fn state_allowing_test_input() -> AppState {
+        let mut s = state();
+        s.config.allowed_devices.insert(String::new());
+        s.capture.set_windower(Some(Windower::new()));
+        s
+    }
+
+    #[test]
+    fn paused_input_produces_no_windows() {
+        let mut s = state_allowing_test_input();
+        s.paused = true;
+        assert!(type_and_wait(&mut s).is_empty());
+        s.paused = false;
+        let windows = type_and_wait(&mut s);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].features.keyboard.key_count, 3);
+    }
+
+    #[test]
+    fn fresh_install_captures_queues_and_sends_nothing() {
+        let dir =
+            std::env::temp_dir().join(format!("inquisitor-test-{}-fresh", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let csv = dir.join("capture.csv");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = state_allowing_test_input();
+        s.config.terms_accepted = 0;
+        s.capture
+            .set_writer(Box::new(std::fs::File::create(&csv).unwrap()));
+        // A remembered website but no device credential, as after disconnecting.
+        let server = Endpoint::parse("http://127.0.0.1:9").ok();
+        s.link = Some(Link::start_with(
+            HWND::default(),
+            server,
+            None,
+            false,
+            dir.join("device.bin"),
+        ));
+
+        assert!(type_and_wait(&mut s).is_empty());
+        forward_windows(&mut s);
+        let status = s.link.as_ref().unwrap().status();
+        // No client was made, so nothing can be sent.
+        assert_eq!(
+            (status.state, status.server, status.queued),
+            (State::NotPaired, None, 0)
+        );
+        drop(s);
+        assert_eq!(std::fs::metadata(&csv).unwrap().len(), 0);
+        assert!(!dir.join("outbox.jsonl").exists());
+        assert!(!dir.join("agent.log").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -3,6 +3,7 @@
 // below so `inquisitor list` and `inquisitor capture` still print normally.
 #![windows_subsystem = "windows"]
 
+mod agent_log;
 mod capture;
 mod config;
 mod credential;
@@ -35,7 +36,9 @@ fn main() -> windows::core::Result<()> {
 
     // CLI mode: try to reattach to the parent console so println/eprintln are
     // visible. This is a no-op when there is no parent console (double-click).
-    if !windowed {
+    if windowed {
+        agent_log::install_panic_hook();
+    } else {
         unsafe {
             let _ = AttachConsole(ATTACH_PARENT_PROCESS);
         }

@@ -15,15 +15,18 @@
 //!   1 second up to 1 minute.
 //! - Fail closed: a 401 or 403, or a `revoked` message, stops uploads, clears the
 //!   held summaries, and deletes the stored credential. The tray shows Disconnected.
+//! - Messages from the socket wait at most `SOCKET_BACKLOG` deep; beyond that the
+//!   reader stops reading until the worker catches up.
+//! - State changes are recorded in `agent.log` (see `agent_log.rs`).
 //!
 //! Only aggregate numeric windows and the pause flag leave the PC.
 
 use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -32,6 +35,7 @@ use serde_json::json;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
+use crate::agent_log::AgentLog;
 use crate::capture::unix_ms_now;
 use crate::credential::{self, Credential};
 use crate::features::FeatureWindow;
@@ -46,6 +50,8 @@ const HEARTBEAT: Duration = Duration::from_secs(30);
 // about a month of non-stop activity, around 70 MB.
 const OUTBOX_CAP: usize = 100_000;
 const BACKOFF_MAX_SECS: u64 = 60;
+// Each message is at most 64 KiB (`http::MAX_MESSAGE`), so this bounds the backlog to 4 MiB.
+const SOCKET_BACKLOG: usize = 64;
 const PAIRING_ALPHABET: &str = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const PAIRING_CODE_LEN: usize = 8;
 
@@ -387,7 +393,7 @@ impl Link {
 
     /// `start` with the stored credential at `credential_path`, which is deleted
     /// when the device is disconnected or revoked. Tests pass a temporary path.
-    fn start_with(
+    pub(crate) fn start_with(
         notify: HWND,
         server: Option<Endpoint>,
         credential: Option<Credential>,
@@ -464,6 +470,8 @@ struct Worker {
     client: Option<Client>,
     credential: Option<Credential>,
     socket: Option<Arc<WebSocket>>,
+    /// One slot per socket message waiting to be handled; see `relay`.
+    socket_backlog: Option<Receiver<()>>,
     generation: u64,
     state: State,
     paused: bool,
@@ -476,6 +484,34 @@ struct Worker {
     connect_backoff: Backoff,
     connect_at: Option<Instant>,
     heartbeat_at: Instant,
+    log: AgentLog,
+}
+
+/// Forward socket messages to the worker. Each takes a backlog slot first, which
+/// blocks once `SOCKET_BACKLOG` are waiting, so a flood from the server cannot
+/// grow memory. Ends when the socket closes or the worker drops the backlog.
+fn relay(
+    generation: u64,
+    tx: &Sender<Command>,
+    backlog: &SyncSender<()>,
+    mut receive: impl FnMut() -> io::Result<Option<String>>,
+) {
+    while let Ok(Some(text)) = receive() {
+        if backlog.send(()).is_err() || tx.send(Command::SocketMessage(generation, text)).is_err() {
+            return;
+        }
+    }
+    let _ = tx.send(Command::SocketClosed(generation));
+}
+
+fn state_event(state: &State) -> &'static str {
+    match state {
+        State::NotPaired => "not connected to an account",
+        State::Connecting => "connecting",
+        State::Connected => "connected",
+        State::Offline => "offline, retrying",
+        State::Disconnected(_) => "disconnected: the website no longer accepts this device",
+    }
 }
 
 impl Worker {
@@ -488,6 +524,7 @@ impl Worker {
         // Held summaries live next to the credential, so tests using a temporary
         // credential path get a temporary outbox too.
         let outbox = Outbox::load(credential_path.with_file_name("outbox.jsonl"));
+        let log = AgentLog::at(credential_path.with_file_name("agent.log"));
         Self {
             tx,
             status,
@@ -496,6 +533,7 @@ impl Worker {
             client: None,
             credential: None,
             socket: None,
+            socket_backlog: None,
             generation: 0,
             state: State::NotPaired,
             paused: false,
@@ -507,6 +545,7 @@ impl Worker {
             connect_backoff: Backoff::default(),
             connect_at: None,
             heartbeat_at: Instant::now(),
+            log,
         }
     }
 
@@ -544,12 +583,16 @@ impl Worker {
         match command {
             Command::Window(window) => self.enqueue(&window),
             Command::Paused(paused) => {
+                if paused != self.paused {
+                    self.log.event(if paused { "paused" } else { "resumed" });
+                }
                 self.paused = paused;
                 // Tell the website now rather than at the next heartbeat.
                 self.heartbeat_at = Instant::now();
             }
             Command::Connect(server, credential) => {
                 // Summaries held from before pairing are kept and sent once monitoring starts.
+                self.log.event("paired with an account");
                 self.close_socket();
                 self.connect_to(server, credential);
             }
@@ -558,6 +601,9 @@ impl Worker {
                 self.state = State::NotPaired;
             }
             Command::SocketMessage(generation, text) if generation == self.generation => {
+                if let Some(backlog) = &self.socket_backlog {
+                    let _ = backlog.try_recv();
+                }
                 self.on_message(&text)
             }
             Command::SocketClosed(generation) if generation == self.generation => {
@@ -614,15 +660,10 @@ impl Worker {
                 let socket = Arc::new(socket);
                 self.generation += 1;
                 let (generation, reader, tx) = (self.generation, socket.clone(), self.tx.clone());
-                std::thread::spawn(move || {
-                    while let Ok(Some(text)) = reader.receive() {
-                        if tx.send(Command::SocketMessage(generation, text)).is_err() {
-                            return;
-                        }
-                    }
-                    let _ = tx.send(Command::SocketClosed(generation));
-                });
+                let (slot, backlog) = mpsc::sync_channel(SOCKET_BACKLOG);
+                std::thread::spawn(move || relay(generation, &tx, &slot, || reader.receive()));
                 self.socket = Some(socket);
+                self.socket_backlog = Some(backlog);
                 self.connect_backoff.reset();
                 self.state = State::Connected;
                 self.send_presence("hello");
@@ -762,6 +803,7 @@ impl Worker {
         if let Some(socket) = self.socket.take() {
             socket.close();
         }
+        self.socket_backlog = None;
         // Messages from the old socket's reader are ignored from now on.
         self.generation += 1;
     }
@@ -776,9 +818,12 @@ impl Worker {
         };
         let changed = {
             let mut shared = self.status.lock().unwrap_or_else(|e| e.into_inner());
-            let changed = shared.state != status.state
-                || shared.mode != status.mode
-                || shared.server != status.server;
+            let state_changed = shared.state != status.state;
+            let changed =
+                state_changed || shared.mode != status.mode || shared.server != status.server;
+            if state_changed {
+                self.log.event(state_event(&status.state));
+            }
             *shared = status;
             changed
         };
@@ -889,6 +934,29 @@ mod tests {
     }
 
     #[test]
+    fn socket_messages_wait_at_most_the_backlog() {
+        let (tx, rx) = mpsc::channel();
+        let (slot, backlog) = mpsc::sync_channel(SOCKET_BACKLOG);
+        // A server that never stops sending, to a worker that is busy.
+        std::thread::spawn(move || relay(7, &tx, &slot, || Ok(Some("{}".into()))));
+        let next = || rx.recv_timeout(Duration::from_millis(300));
+        let mut waiting = 0;
+        while let Ok(Command::SocketMessage(7, _)) = next() {
+            waiting += 1;
+        }
+        assert_eq!(waiting, SOCKET_BACKLOG);
+
+        // Handling one lets one more in; dropping the backlog ends the reader.
+        backlog.try_recv().unwrap();
+        assert!(matches!(next(), Ok(Command::SocketMessage(7, _))));
+        drop(backlog);
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_secs(5)),
+            Err(RecvTimeoutError::Disconnected)
+        ));
+    }
+
+    #[test]
     fn backoff_doubles_to_a_one_minute_cap_and_resets() {
         let mut backoff = Backoff::default();
         let delays: Vec<u64> = (0..9).map(|_| backoff.next(1.0).as_secs()).collect();
@@ -988,9 +1056,17 @@ mod tests {
         worker.enqueue(&held(unix_ms_now(), Purpose::Monitoring).window);
         assert_eq!(worker.outbox.get(0).unwrap().purpose, Purpose::Monitoring);
         // Paused input is never held.
-        worker.paused = true;
+        worker.handle(Command::Paused(true));
         worker.enqueue(&held(unix_ms_now(), Purpose::Monitoring).window);
         assert_eq!(worker.outbox.len(), 1);
+
+        // The log holds the state changes, each a fixed message after a timestamp.
+        let log = fs::read_to_string(dir.join("agent.log")).unwrap();
+        let events: Vec<&str> = log.lines().map(|l| l.split_once(' ').unwrap().1).collect();
+        assert_eq!(
+            events,
+            [state_event(&State::Disconnected(String::new())), "paused"]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

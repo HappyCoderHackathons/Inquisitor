@@ -295,7 +295,7 @@ fn delete_data_files(data_dir: &Path, app_dir: &Path) -> std::io::Result<()> {
             let path = entry?.path();
             let name = path.file_name().unwrap_or_default().to_string_lossy();
             let ours = (name.starts_with("capture-") && name.ends_with(".csv"))
-                || (dir == app_dir && name == "config.ini");
+                || (dir == app_dir && (name == "config.ini" || name.starts_with("agent.log")));
             if ours && path.is_file() {
                 fs::remove_file(&path)?;
             }
@@ -522,6 +522,8 @@ mod tests {
         fs::write(data.join("config.ini"), "keep").unwrap();
         fs::write(app.join("capture-20261115T031320Z.csv"), "x").unwrap();
         fs::write(app.join("config.ini"), "x").unwrap();
+        fs::write(app.join("agent.log"), "x").unwrap();
+        fs::write(app.join("agent.log.1"), "x").unwrap();
 
         delete_data_files(&data, &app).unwrap();
 
