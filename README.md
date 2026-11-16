@@ -3,6 +3,18 @@
 Continuous behavioral authentication prototype: aggregate keyboard and optional mouse
 timing, per-user models, and dashboard alerts.
 
+> [!NOTE]
+> The hosted deployment has been shut down. The Fly.io app was deleted, and the remote ML host's
+> model service and reverse tunnel were removed. Redeploying needs a new Fly app (`fly.toml`) and a
+> new ML host (see `backend/deploy/README.md`).
+>
+> - The model it served is committed as `backend/artifacts/tray-two-device-v1.json`; retired
+>   weights are in `archive_models/`.
+> - `backend/ml/evaluate_tray.py` was recovered from that host. It scores new genuine and impostor
+>   recordings against a frozen model without refitting or moving the threshold.
+> - Per-account models, enrollment windows, and service credentials were not committed. They were
+>   copied to a private local backup only.
+
 ## Prerequisites
 
 - Windows 10 or later for the Rust agent (see `backend/rust/README.md`)
