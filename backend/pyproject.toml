@@ -8,7 +8,7 @@ dependencies = [
     "joblib>=1.4,<2",
     "jsonschema[format]>=4.26.0,<5",
     "numpy>=2,<3",
-    "pymongo>=4.19.0,<5",
+    "pymongo>=4.20.1,<5",
     "scikit-learn>=1.6,<2",
 ]
 
