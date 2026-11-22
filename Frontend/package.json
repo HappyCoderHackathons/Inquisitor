@@ -18,7 +18,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@better-auth/mongo-adapter": "1.7.25",
+    "@better-auth/mongo-adapter": "1.7.26",
     "better-auth": "1.7.25",
     "mongodb": "7.9.0"
   }
